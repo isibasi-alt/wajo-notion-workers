@@ -1,0 +1,45 @@
+<h2>太陽光提案PDF: 必須入力の見直し</h2>
+<p class="subtitle">見た目の前に、PDFとして成立する最低情報を分けます。</p>
+
+<div class="mockup">
+  <div class="mockup-header">入力ルール案</div>
+  <div class="mockup-body">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div class="placeholder" style="min-height:190px;">
+        <h3>必須: 未入力なら生成停止</h3>
+        <p>販売価格 / 仕入れ価格</p>
+        <p>年間売電収入 または 発電量・売電単価</p>
+        <p>パネルメーカー・型式</p>
+        <p>パワコンメーカー・型式</p>
+        <p>パネル枚数</p>
+        <p>連系開始日 / 稼働年数</p>
+      </div>
+      <div class="placeholder" style="min-height:190px;">
+        <h3>任意: 空ならPDFから除外</h3>
+        <p>CO2削減量</p>
+        <p>電気代削減率・削減額</p>
+        <p>融資条件</p>
+        <p>保険 / O&amp;M</p>
+        <p>補助金メモ</p>
+        <p>備考・リスク補足</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="strict" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>必須は止める</h3>
+      <p>営業提出に必要な情報が抜けている場合、PDF生成を止めて入力待ちに戻す。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="soft" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>未確認欄に出す</h3>
+      <p>PDFは作るが、未入力の重要項目を未確認事項として明示する。</p>
+    </div>
+  </div>
+</div>

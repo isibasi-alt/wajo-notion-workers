@@ -1,0 +1,17210 @@
+import { Worker, WebhookVerificationError } from "@notionhq/workers";
+import { j } from "@notionhq/workers/schema-builder";
+import { PDFDocument, StandardFonts, rgb, type PDFImage } from "pdf-lib";
+
+const worker = new Worker();
+export default worker;
+
+const BUSINESS_CARD_DATA_SOURCE_ID =
+	process.env.BUSINESS_CARD_DATA_SOURCE_ID ??
+	"0634132a-c6cf-458d-b63c-b357489f227e";
+const INQUIRY_DATA_SOURCE_ID =
+	process.env.INQUIRY_DATA_SOURCE_ID ??
+	"0a7b4703-e62b-4e0d-9376-83cd370e69cd";
+const COMPANY_DATA_SOURCE_ID =
+	process.env.COMPANY_DATA_SOURCE_ID ??
+	"7f394672-4f1e-4f01-ab6c-c98d29bd1f90";
+const MEETING_PREP_REPORT_DATA_SOURCE_ID =
+	process.env.MEETING_PREP_REPORT_DATA_SOURCE_ID ??
+	"8db2bce8-66ab-428b-9fcb-4a36b9646922";
+const LAND_DATA_SOURCE_ID =
+	process.env.LAND_DATA_SOURCE_ID ??
+	"3dbe3c77-2e50-4639-92aa-c0741904974b";
+const DEAL_DATA_SOURCE_ID =
+	process.env.DEAL_DATA_SOURCE_ID ??
+	"7838db8a-907a-4c61-b062-109f8278b2c9";
+const PROJECT_DATA_SOURCE_ID =
+	process.env.PROJECT_DATA_SOURCE_ID ??
+	"54e869d7-ba3e-49e1-b760-af46e23499cb";
+const POWER_PLANT_EQUIPMENT_DATA_SOURCE_ID =
+	process.env.POWER_PLANT_EQUIPMENT_DATA_SOURCE_ID ??
+	"c326e9e7-e8ed-4918-b885-c5883dd3f35b";
+const PROPOSAL_REQUEST_DATA_SOURCE_ID =
+	process.env.PROPOSAL_REQUEST_DATA_SOURCE_ID ??
+	"9701e891-ffd0-43d7-b6f9-911fedc65391";
+const MEETING_DATA_SOURCE_ID =
+	process.env.MEETING_DATA_SOURCE_ID ??
+	"c22e58f6-42c9-4a2f-b24d-e65e889d59e9";
+const ACTIVITY_LOG_DATA_SOURCE_ID =
+	process.env.ACTIVITY_LOG_DATA_SOURCE_ID ??
+	"a58a107d-92e3-43f3-887d-5e3acf72e9ec";
+const CUSTOMER_CONTACT_LOG_DATA_SOURCE_ID =
+	process.env.CUSTOMER_CONTACT_LOG_DATA_SOURCE_ID ??
+	"b65c13b4-1a72-4c58-8d2d-305c3e04a561";
+const MANAGER_REVIEW_DATA_SOURCE_ID =
+	process.env.MANAGER_REVIEW_DATA_SOURCE_ID ??
+	"3574d017-81e7-8084-bbfb-000b9afc3ecc";
+const SALES_PERFORMANCE_DATA_SOURCE_ID =
+	process.env.SALES_PERFORMANCE_DATA_SOURCE_ID ??
+	"e67ec5d5-90d3-4118-9788-976a6f5c94a1";
+const MONTHLY_QUOTA_DATA_SOURCE_ID =
+	process.env.MONTHLY_QUOTA_DATA_SOURCE_ID ??
+	"27df8a65-4729-4600-bfc1-59bb1c460e73";
+const TEAM_TRACKER_DATA_SOURCE_ID =
+	process.env.TEAM_TRACKER_DATA_SOURCE_ID ??
+	"3b44d017-81e7-82c9-9f2d-87004c53d722";
+const NEWS_DATA_SOURCE_ID =
+	process.env.NEWS_DATA_SOURCE_ID ??
+	"15273928-a119-4b42-8801-185f54e55c58";
+const SALES_TALK_DATA_SOURCE_ID =
+	process.env.SALES_TALK_DATA_SOURCE_ID ??
+	"e0b4877f-ec35-46ee-a274-e4f926f2e622";
+const DAILY_REPORT_REQUEST_DATA_SOURCE_ID =
+	process.env.DAILY_REPORT_REQUEST_DATA_SOURCE_ID ??
+	"990cdd37-1217-4424-9a24-dadf64f9baa0";
+const DAILY_REPORT_DATA_SOURCE_ID =
+	process.env.DAILY_REPORT_DATA_SOURCE_ID ??
+	"8f7489a5-47fe-4e0a-833b-ee21ab033ad5";
+const DAILY_REPORT_LOG_DATA_SOURCE_ID =
+	process.env.DAILY_REPORT_LOG_DATA_SOURCE_ID ??
+	"86124854-998d-4e7f-8305-d768441de556";
+const CLOSING_REPORT_DATA_SOURCE_ID =
+	process.env.CLOSING_REPORT_DATA_SOURCE_ID ??
+	"8d5a506b-59b8-4e50-bc77-d5412774048d";
+const AI_LEARNING_LOG_DATA_SOURCE_ID =
+	process.env.AI_LEARNING_LOG_DATA_SOURCE_ID ??
+	"0577bcac-f09d-42f6-98e4-84062956abba";
+const SALES_TEAM_USER_IDS = (process.env.SALES_TEAM_USER_IDS ?? "")
+	.split(",")
+	.map((id) => id.trim())
+	.filter(Boolean);
+
+const MAX_PENDING_LIMIT = 10;
+const DEFAULT_SALES_NEWS_KEYWORDS = [
+	"系統用蓄電池",
+	"蓄電池 補助金",
+	"蓄電池 系統接続",
+	"再生可能エネルギー 制度改正",
+	"太陽光発電 FIP FIT",
+	"発電所 売買 太陽光",
+	"電力市場 容量市場",
+	"PPA 再生可能エネルギー",
+	"低圧 太陽光 発電所",
+	"脱炭素 電力 法人",
+];
+
+const PROPOSAL_PDF_FILE_PROPERTY_ALIASES = [
+	"提案シミュレーションPDF",
+	"提案PDF",
+	"シミュレーションPDF",
+	"提案書PDF",
+	"PDFファイル",
+];
+
+const PROPOSAL_PDF_URL_PROPERTY_ALIASES = [
+	"提案PDFリンク",
+	"提案PDF URL",
+	"シミュレーションPDF URL",
+	"提案書URL",
+	"PDF URL",
+];
+
+type NotionClient = {
+	dataSources: {
+		query: (args: Record<string, unknown>) => Promise<QueryResponse>;
+	};
+	pages: {
+		create: (args: Record<string, unknown>) => Promise<Page>;
+		retrieve: (args: Record<string, unknown>) => Promise<Page>;
+		update: (args: Record<string, unknown>) => Promise<Page>;
+	};
+	fileUploads?: {
+		create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+		send: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+		complete?: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+		retrieve?: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+	};
+	blocks?: {
+		children: {
+			list: (args: Record<string, unknown>) => Promise<{
+				results: Array<Record<string, unknown>>;
+				has_more?: boolean;
+				next_cursor?: string | null;
+			}>;
+			append: (args: Record<string, unknown>) => Promise<unknown>;
+		};
+	};
+	comments?: {
+		create: (args: Record<string, unknown>) => Promise<unknown>;
+	};
+};
+
+type QueryResponse = {
+	results: Page[];
+	has_more?: boolean;
+	next_cursor?: string | null;
+};
+
+type Page = {
+	id: string;
+	url?: string;
+	properties?: Record<string, unknown>;
+};
+
+type CardInput = {
+	pageId: string;
+	pageData?: Page;
+	dryRun?: boolean;
+};
+
+type CardResult = {
+	pageId: string;
+	action:
+		| "existing-linked"
+		| "created-company"
+		| "duplicate-hold"
+		| "needs-review"
+		| "skipped"
+		| "dry-run";
+	companyId: string | null;
+	companyName: string | null;
+	message: string;
+};
+
+type Candidate = {
+	page: Page;
+	name: string;
+	key: string;
+	email: string;
+	phone: string;
+	score: number;
+	reasons: string[];
+	weak: boolean;
+};
+
+type CardInfo = {
+	page: Page;
+	name: string;
+	companyName: string;
+	email: string;
+	domain: string;
+	phone: string;
+	address: string;
+	role: string;
+	key: string;
+};
+
+type InquiryInput = {
+	inquiryPageId: string;
+	pageData?: Page;
+	dryRun?: boolean;
+};
+
+type InquiryEmailIntakeInput = {
+	subject?: string;
+	from?: string;
+	to?: string;
+	body?: string;
+	receivedAt?: string;
+	gmailMessageId?: string;
+	messageId?: string;
+	threadId?: string;
+	labels?: string;
+	sourceUrl?: string;
+	dryRun?: boolean;
+	linkCompany?: boolean;
+};
+
+type InquiryResult = {
+	inquiryPageId: string;
+	action:
+		| "existing-linked"
+		| "created-company"
+		| "duplicate-hold"
+		| "target-out"
+		| "needs-review"
+		| "skipped-existing"
+		| "dry-run";
+	companyId: string | null;
+	companyName: string | null;
+	message: string;
+};
+
+type InquiryProjectCreationResult = {
+	inquiryPageId: string;
+	action: "created-project" | "skipped-existing" | "dry-run" | "error";
+	projectId: string | null;
+	created: number;
+	message: string;
+};
+
+type InquiryEmailIntakeResult = {
+	inquiryPageId: string | null;
+	action:
+		| "created-inquiry"
+		| "skipped-existing"
+		| "duplicate-hold"
+		| "needs-review"
+		| "dry-run"
+		| "error";
+	companyAction: string | null;
+	message: string;
+};
+
+type CustomerContactLogInput = {
+	sourcePageId: string;
+	sourceType: string;
+	activityType: string;
+	activityContent: string;
+	nextAction: string;
+	occurredAt: string;
+	dryRun?: boolean;
+};
+
+type CustomerContactLogResult = {
+	contactLogPageId: string | null;
+	action: "created-log" | "needs-review" | "dry-run" | "error";
+	message: string;
+};
+
+type PipelineLogSignal = {
+	id: string;
+	occurredAt: string;
+	activityType: string;
+	activityContent: string;
+	nextAction: string;
+};
+
+type PipelineAssessment = {
+	proximity: string;
+	score: number;
+	recommendedPhase: string;
+	reason: string;
+	nextAction: string;
+	stagnationHours: number;
+	stagnationDays: number;
+	stagnationAlert: string;
+	lastSignalAt: string;
+};
+
+type SalesPipelineSignalResult = {
+	pageId: string;
+	action: "updated-inquiry" | "updated-project" | "skipped" | "dry-run";
+	message: string;
+	assessment: PipelineAssessment | null;
+};
+
+type BulkCleanupResult = {
+	action: "cleaned" | "dry-run" | "numbered" | "skipped";
+	checked: number;
+	updated: number;
+	message: string;
+};
+
+type InquiryInfo = {
+	page: Page;
+	title: string;
+	companyName: string;
+	contactName: string;
+	email: string;
+	domain: string;
+	phone: string;
+	body: string;
+	summary: string;
+	firstTalk: string;
+	dealType: string;
+	inquiryType: string;
+	companyLinkStatus: string;
+	duplicateKey: string;
+	mailUniqueKey: string;
+	messageId: string;
+	threadId: string;
+	relatedCompanyIds: string[];
+};
+
+type InquiryEmailInfo = {
+	subject: string;
+	displayTitle: string;
+	attentionMemo: string;
+	attentionReasons: string[];
+	categoryCode: string;
+	receptionNumber?: string;
+	fromRaw: string;
+	fromEmail: string;
+	contactEmail: string;
+	to: string;
+	body: string;
+	receivedAt: string;
+	gmailMessageId: string;
+	messageId: string;
+	threadId: string;
+	labels: string;
+	sourceUrl: string;
+	contactName: string;
+	companyName: string;
+	phone: string;
+	inquiryType: string;
+	dealType: string;
+	duplicateKeys: string[];
+	primaryKey: string;
+};
+
+type Research = {
+	summary: string;
+	currentIssue: string;
+	futureIssue: string;
+	salesAngle: string;
+	fit: string;
+	customerMarket3c: string;
+	competitor3c: string;
+	wajoRelation3c: string;
+	source: string;
+};
+
+type MeetingPrepInput = {
+	companyPageId: string;
+	reportPageId?: string;
+	dryRun?: boolean;
+};
+
+type ResidentDocumentInput = {
+	pageId: string;
+	dryRun?: boolean;
+};
+
+type ResidentDocumentResult = {
+	pageId: string;
+	action: "prepared" | "needs-input" | "dry-run" | "error";
+	status: string;
+	missingField: string | null;
+	message: string;
+};
+
+type ProposalSimulationInput = {
+	pageId: string;
+	dryRun?: boolean;
+};
+
+type ProposalSimulationResult = {
+	pageId: string;
+	action: "prepared" | "needs-input" | "dry-run" | "error";
+	status: string;
+	missingField: string | null;
+	grossProfit: number | null;
+	expectedYield: number | null;
+	paybackYears: number | null;
+	message: string;
+};
+
+type ProjectProposalRequestInput = {
+	projectPageId: string;
+	dryRun?: boolean;
+};
+
+type ProjectDocumentRequestKind = "proposal" | "resident";
+
+type ProjectDocumentRequestConfig = {
+	kind: ProjectDocumentRequestKind;
+	documentType: string;
+	requestTitleSuffix: string;
+	statusProperty: string;
+	statusValue: string;
+	createdLabel: string;
+	nextActionMessage: string;
+	memo: string;
+	defaultProperties?: Record<string, Record<string, unknown>>;
+};
+
+type ProjectDocumentRequestResult = {
+	projectPageId: string;
+	requestPageId: string | null;
+	action: "created" | "existing" | "needs-input" | "dry-run";
+	message: string;
+};
+
+type ProjectProposalRequestResult = ProjectDocumentRequestResult;
+
+type ProjectEquipmentDetailRequestResult = {
+	projectPageId: string;
+	equipmentPageId: string | null;
+	action: "created" | "existing" | "dry-run";
+	message: string;
+};
+
+type CompanyResearchInput = {
+	companyPageId: string;
+	dryRun?: boolean;
+};
+
+type CompanyResearchResult = {
+	companyId: string;
+	action: "updated-company" | "needs-review" | "dry-run";
+	message: string;
+};
+
+type MeetingMemoFormatInput = {
+	meetingPageId: string;
+	dryRun?: boolean;
+};
+
+type MeetingMemoFormatResult = {
+	meetingPageId: string;
+	action: "formatted" | "needs-review" | "target-out" | "dry-run" | "error";
+	status: string;
+	message: string;
+};
+
+type MeetingFeedbackInput = {
+	meetingPageId: string;
+	dryRun?: boolean;
+};
+
+type MeetingFeedbackResult = {
+	meetingPageId: string;
+	action: "feedback-created" | "needs-review" | "target-out" | "dry-run" | "error";
+	status: string;
+	message: string;
+};
+
+type MeetingDealLinkInput = {
+	meetingPageId: string;
+	dryRun?: boolean;
+};
+
+type MeetingDealLinkResult = {
+	meetingPageId: string;
+	dealPageId: string | null;
+	action: "linked-existing" | "created-deal" | "needs-review" | "target-out" | "dry-run" | "error";
+	message: string;
+};
+
+type MeetingTaskInput = {
+	meetingPageId: string;
+	dryRun?: boolean;
+};
+
+type MeetingTaskResult = {
+	meetingPageId: string;
+	action: "created-tasks" | "skipped-existing" | "needs-review" | "target-out" | "dry-run" | "error";
+	created: number;
+	skipped: number;
+	message: string;
+};
+
+type ManagerReviewInput = {
+	managerReviewPageId: string;
+	dryRun?: boolean;
+};
+
+type ManagerReviewResult = {
+	managerReviewPageId: string;
+	action: "reviewed" | "needs-review" | "dry-run" | "error";
+	status: string;
+	message: string;
+};
+
+type SalesPerformanceReviewInput = {
+	salesPerformancePageId: string;
+	dryRun?: boolean;
+};
+
+type SalesPerformanceReviewResult = {
+	salesPerformancePageId: string;
+	action: "reviewed" | "needs-review" | "dry-run" | "error";
+	status: string;
+	message: string;
+};
+
+type DailyReportReceiptSyncInput = {
+	receiptPageId: string;
+	dryRun?: boolean;
+};
+
+type DailyReportReceiptSyncResult = {
+	receiptPageId: string;
+	dailyReportPageId: string | null;
+	action: "synced" | "needs-review" | "dry-run" | "error";
+	status: string;
+	message: string;
+};
+
+type DailyReportLogInput = {
+	dailyReportPageId: string;
+	dryRun?: boolean;
+};
+
+type DailyReportLogResult = {
+	dailyReportPageId: string;
+	logPageId: string | null;
+	action: "created-log" | "updated-log" | "needs-review" | "dry-run" | "error";
+	status: string;
+	message: string;
+};
+
+type MeetingPrepResult = {
+	companyId: string;
+	reportId: string | null;
+	reportUrl: string | null;
+	action: "updated-report" | "created-report" | "dry-run";
+	message: string;
+};
+
+type CompanyInfo = {
+	page: Page;
+	name: string;
+	dealType: string;
+	website: string;
+	email: string;
+	phone: string;
+	contactName: string;
+	address: string;
+	summary: string;
+	inquirySummary: string;
+	currentIssue: string;
+	futureIssue: string;
+	salesAngle: string;
+	fit: string;
+	customerMarket3c: string;
+	competitor3c: string;
+	wajoRelation3c: string;
+	source: string;
+	aiMemo: string;
+};
+
+type MeetingPrepReport = {
+	profile: string;
+	threeC: string;
+	hypothesis: string;
+	questions: string;
+	risks: string;
+	body: string;
+};
+
+type MeetingPrepAIResponse = MeetingPrepReport;
+
+type MeetingPrepQuality = {
+	ready: boolean;
+	notes: string[];
+};
+
+type LandInput = {
+	pageId: string;
+	pageData?: Page;
+	dryRun?: boolean;
+};
+
+type LandCaseInput = {
+	landPageId: string;
+	dryRun?: boolean;
+};
+
+type LandResult = {
+	pageId: string;
+	action: "evaluated" | "needs-review" | "dry-run";
+	overallGrade: string;
+	score: number;
+	bucket: string;
+	message: string;
+};
+
+type LandCaseResult = {
+	landPageId: string;
+	action: "created-project" | "skipped-existing" | "needs-review" | "dry-run" | "error";
+	projectId: string | null;
+	created: number;
+	message: string;
+};
+
+type LandInfo = {
+	page: Page;
+	name: string;
+	address: string;
+	areaTsubo: number | null;
+	powerArea: string;
+	landUse: string;
+	road: string;
+	farmland: string;
+	substationDistance: string;
+};
+
+type ProjectInfo = {
+	page: Page;
+	name: string;
+};
+
+type LandEvaluation = {
+	overallGrade: string;
+	score: number;
+	bucket: string;
+	actionBucket: string;
+	caseStatus: string;
+	projectType: string;
+	powerArea: string;
+	landRating: string;
+	powerRating: string;
+	roadRating: string;
+	subsidyRating: string;
+	demandRating: string;
+	landEvaluation: string;
+	powerEvaluation: string;
+	roadEvaluation: string;
+	subsidyEvaluation: string;
+	demandEvaluation: string;
+	nextAction: string;
+	reviewMemo: string;
+};
+
+type DealSecondReviewInput = {
+	dealPageId: string;
+	dryRun?: boolean;
+};
+
+type DealSecondReviewResult = {
+	dealPageId: string;
+	action: "reviewed" | "needs-review" | "dry-run" | "error";
+	quality: string | null;
+	message: string;
+};
+
+type DealMeetingFeedbackInput = {
+	dealPageId: string;
+	dryRun?: boolean;
+};
+
+type DealMeetingFeedbackResult = {
+	dealPageId: string;
+	action: "feedback-created" | "skipped-existing" | "needs-review" | "dry-run" | "error";
+	score: number | null;
+	message: string;
+};
+
+type DealNextActionInput = {
+	dealPageId: string;
+	dryRun?: boolean;
+};
+
+type DealNextActionResult = {
+	dealPageId: string;
+	action: "created-tasks" | "skipped-existing" | "needs-review" | "dry-run" | "error";
+	created: number;
+	skipped: number;
+	message: string;
+};
+
+type SalesTalkFinalizeInput = {
+	newsPageId: string;
+	dryRun?: boolean;
+};
+
+type SalesNewsCollectInput = {
+	limit?: number;
+	dryRun?: boolean;
+	autoGenerateTalk?: boolean;
+	autoFinalize?: boolean;
+};
+
+type SalesNewsCollectResult = {
+	action: "collected" | "dry-run" | "error";
+	fetched: number;
+	candidates: number;
+	created: number;
+	skipped: number;
+	finalized: number;
+	pages: string[];
+	message: string;
+};
+
+type SalesTalkFinalizeResult = {
+	newsPageId: string;
+	action: "finalized" | "needs-review" | "dry-run" | "error";
+	updated: number;
+	created: number;
+	message: string;
+};
+
+type DealInfo = {
+	page: Page;
+	name: string;
+	date: string;
+	dateISO: string;
+	summary: string;
+	count: string;
+	status: string;
+	relatedMeetingId: string | null;
+	assignedUserIds: string[];
+	relatedCompanyIds: string[];
+	salesScore: string;
+	salesFeedback: string;
+	improvementPoints: string;
+	nextTalkImage: string;
+	followMailHint: string;
+	closingHint: string;
+};
+
+type MeetingContext = {
+	summary: string;
+	minutes: string;
+	decisions: string;
+	actionItems: string;
+	text: string;
+};
+
+type SecondReviewAIResponse = {
+	quality: string;
+	summary: string;
+	strongPoints: string[];
+	revisionSuggestions: string[];
+	nextTalkUpgrade: string;
+	riskNotes: string[];
+	recommendedStatus: string;
+};
+
+type DealMeetingFeedbackAIResponse = {
+	score: number;
+	salesFeedback: string;
+	improvementPoints: string[];
+	nextTalkImage: string;
+	followMailHint: string;
+	closingHint: string;
+	status: "返却済" | "要確認" | "対象外";
+	memo: string;
+};
+
+type DealNextActionAIResponse = {
+	status: "作成候補あり" | "要確認" | "対象外";
+	memo: string;
+	actions: DealNextActionCandidate[];
+};
+
+type SalesTalkFinalizeAIResponse = {
+	status: "作成候補あり" | "要確認" | "対象外";
+	memo: string;
+	talks: SalesTalkDraft[];
+};
+
+type SalesTalkDraft = {
+	title: string;
+	hook: string;
+	script: string;
+	target: string;
+	objectionHandling: string;
+	nextAction: string;
+	usage: string[];
+	importance: "🔴 必ず使う" | "🟡 余裕あれば" | "⚪ ストック";
+	status: "使える" | "要修正";
+	memo: string;
+};
+
+type SalesTalkNewsInfo = {
+	page: Page;
+	title: string;
+	category: string;
+	importance: string;
+	oneLine: string;
+	articleUrl: string;
+	generatedTalk: string;
+};
+
+type SalesNewsFeed = {
+	name: string;
+	url: string;
+	defaultCategory?: string;
+};
+
+type SalesNewsItem = {
+	feedName: string;
+	title: string;
+	url: string;
+	summary: string;
+	publishedDate: string;
+};
+
+type ScoredSalesNewsItem = SalesNewsItem & {
+	score: number;
+	category: string;
+	importance: string;
+	oneLine: string;
+	shouldCreateTalk: boolean;
+};
+
+type SalesTalkPageInfo = {
+	page: Page;
+	title: string;
+	hook: string;
+	script: string;
+	target: string;
+	objectionHandling: string;
+	nextAction: string;
+};
+
+type DailyReportReceiptInfo = {
+	page: Page;
+	name: string;
+	status: string;
+	targetDate: string;
+	reportIds: string[];
+};
+
+type DailyReportInfo = {
+	page: Page;
+	title: string;
+	date: string;
+	submissionStatus: string;
+	userIds: string[];
+	bossComment: string;
+	todaySummary: string;
+	progressView: string;
+	noGo: string;
+	pitfalls: string;
+	nextMove: string;
+	factCorrection: string;
+	personComment: string;
+};
+
+type DealNextActionCandidate = {
+	title: string;
+	description: string;
+	priority: "高" | "中" | "低";
+	taskType: "確認・調査" | "書類作成" | "顧客フォロー" | "社内タスク";
+	dueText: string;
+	dueDate: string;
+	requiresHumanCheck: boolean;
+};
+
+type TeamTaskInfo = {
+	page: Page;
+	title: string;
+	status: string;
+	done: boolean;
+};
+
+type MeetingMemoAIResponse = {
+	text: string;
+	summary: string;
+	minutes: string;
+	decisions: string;
+	actionItems: string;
+	taskStatus: "未処理" | "要確認" | "対象外";
+	formatStatus: "整形済" | "要確認" | "対象外";
+	memo: string;
+};
+
+type ManagerReviewAIResponse = {
+	summary: string;
+	managerTalkingPoints: string[];
+	strengths: string[];
+	risks: string[];
+	coachingTheme: string;
+	nextMonthTheme: string;
+	confirmationItems: string[];
+	recommendedStatus: "レビュー中" | "要確認";
+};
+
+type SalesPerformanceReviewAIResponse = {
+	conclusion: string;
+	resultExplanation: string;
+	actionGuidance: string;
+	contributionView: string;
+	evidence: string[];
+	personComment: string;
+	managerConfirmationItems: string[];
+	nextMonthImprovements: string[];
+	riskNotes: string[];
+	recommendedStatus: "処理済" | "要確認";
+};
+
+type MeetingFeedbackAIResponse = {
+	directFeedback: string;
+	goodPoints: string[];
+	improvementPoints: string[];
+	nextQuestions: string[];
+	nextAction: string;
+	status: "返却済" | "要確認" | "対象外";
+	memo: string;
+};
+
+type MeetingTaskCandidate = {
+	title: string;
+	description: string;
+	taskType: string;
+	priority: string;
+	dueText: string;
+	dueDate: string;
+	requiresHumanCheck: boolean;
+};
+
+type MeetingDealLinkInfo = {
+	page: Page;
+	titleText: string;
+	meetingType: string;
+	meetingDate: string;
+	summary: string;
+	minutes: string;
+	decisions: string;
+	actionItems: string;
+	text: string;
+	relatedDealIds: string[];
+	relatedCompanyIds: string[];
+	assignedUserIds: string[];
+};
+
+export const SECOND_REVIEW_RESPONSE_FORMAT = {
+	type: "json_schema",
+	json_schema: {
+		name: "second_review",
+		strict: true,
+		schema: {
+			type: "object",
+			additionalProperties: false,
+			required: [
+				"quality",
+				"summary",
+				"strongPoints",
+				"revisionSuggestions",
+				"nextTalkUpgrade",
+				"riskNotes",
+				"recommendedStatus",
+			],
+			properties: {
+				quality: {
+					type: "string",
+					enum: ["良い", "要修正", "情報不足"],
+				},
+				summary: { type: "string" },
+				strongPoints: {
+					type: "array",
+					items: { type: "string" },
+				},
+				revisionSuggestions: {
+					type: "array",
+					items: { type: "string" },
+				},
+				nextTalkUpgrade: { type: "string" },
+				riskNotes: {
+					type: "array",
+					items: { type: "string" },
+				},
+				recommendedStatus: {
+					type: "string",
+					enum: ["レビュー済", "要確認"],
+				},
+			},
+		},
+	},
+} as const;
+
+export const MEETING_MEMO_RESPONSE_FORMAT = {
+	type: "json_schema",
+	json_schema: {
+		name: "meeting_memo_format",
+		strict: true,
+		schema: {
+			type: "object",
+			additionalProperties: false,
+			required: [
+				"text",
+				"summary",
+				"minutes",
+				"decisions",
+				"actionItems",
+				"taskStatus",
+				"formatStatus",
+				"memo",
+			],
+			properties: {
+				text: { type: "string" },
+				summary: { type: "string" },
+				minutes: { type: "string" },
+				decisions: { type: "string" },
+				actionItems: { type: "string" },
+				taskStatus: {
+					type: "string",
+					enum: ["未処理", "要確認", "対象外"],
+				},
+				formatStatus: {
+					type: "string",
+					enum: ["整形済", "要確認", "対象外"],
+				},
+				memo: { type: "string" },
+			},
+		},
+	},
+} as const;
+
+export const MANAGER_REVIEW_RESPONSE_FORMAT = {
+	type: "json_schema",
+	json_schema: {
+		name: "manager_review_wall",
+		strict: true,
+		schema: {
+			type: "object",
+			additionalProperties: false,
+			required: [
+				"summary",
+				"managerTalkingPoints",
+				"strengths",
+				"risks",
+				"coachingTheme",
+				"nextMonthTheme",
+				"confirmationItems",
+				"recommendedStatus",
+			],
+			properties: {
+				summary: { type: "string" },
+				managerTalkingPoints: {
+					type: "array",
+					items: { type: "string" },
+				},
+				strengths: {
+					type: "array",
+					items: { type: "string" },
+				},
+				risks: {
+					type: "array",
+					items: { type: "string" },
+				},
+				coachingTheme: { type: "string" },
+				nextMonthTheme: { type: "string" },
+				confirmationItems: {
+					type: "array",
+					items: { type: "string" },
+				},
+				recommendedStatus: {
+					type: "string",
+					enum: ["レビュー中", "要確認"],
+				},
+			},
+		},
+	},
+} as const;
+
+export const SALES_PERFORMANCE_REVIEW_RESPONSE_FORMAT = {
+	type: "json_schema",
+	json_schema: {
+		name: "sales_performance_review",
+		strict: true,
+		schema: {
+			type: "object",
+			additionalProperties: false,
+			required: [
+				"conclusion",
+				"resultExplanation",
+				"actionGuidance",
+				"contributionView",
+				"evidence",
+				"personComment",
+				"managerConfirmationItems",
+				"nextMonthImprovements",
+				"riskNotes",
+				"recommendedStatus",
+			],
+			properties: {
+				conclusion: { type: "string" },
+				resultExplanation: { type: "string" },
+				actionGuidance: { type: "string" },
+				contributionView: { type: "string" },
+				evidence: {
+					type: "array",
+					items: { type: "string" },
+				},
+				personComment: { type: "string" },
+				managerConfirmationItems: {
+					type: "array",
+					items: { type: "string" },
+				},
+				nextMonthImprovements: {
+					type: "array",
+					items: { type: "string" },
+				},
+				riskNotes: {
+					type: "array",
+					items: { type: "string" },
+				},
+				recommendedStatus: {
+					type: "string",
+					enum: ["処理済", "要確認"],
+				},
+			},
+		},
+	},
+} as const;
+
+export const MEETING_FEEDBACK_RESPONSE_FORMAT = {
+	type: "json_schema",
+	json_schema: {
+		name: "meeting_feedback",
+		strict: true,
+		schema: {
+			type: "object",
+			additionalProperties: false,
+			required: [
+				"directFeedback",
+				"goodPoints",
+				"improvementPoints",
+				"nextQuestions",
+				"nextAction",
+				"status",
+				"memo",
+			],
+			properties: {
+				directFeedback: { type: "string" },
+				goodPoints: {
+					type: "array",
+					items: { type: "string" },
+				},
+				improvementPoints: {
+					type: "array",
+					items: { type: "string" },
+				},
+				nextQuestions: {
+					type: "array",
+					items: { type: "string" },
+				},
+				nextAction: { type: "string" },
+				status: {
+					type: "string",
+					enum: ["返却済", "要確認", "対象外"],
+				},
+				memo: { type: "string" },
+			},
+		},
+	},
+} as const;
+
+export const MEETING_PREP_RESPONSE_FORMAT = {
+	type: "json_schema",
+	json_schema: {
+		name: "meeting_prep_report",
+		strict: true,
+		schema: {
+			type: "object",
+			additionalProperties: false,
+			required: ["profile", "threeC", "hypothesis", "questions", "risks", "body"],
+			properties: {
+				profile: { type: "string" },
+				threeC: { type: "string" },
+				hypothesis: { type: "string" },
+				questions: { type: "string" },
+				risks: { type: "string" },
+				body: { type: "string" },
+			},
+		},
+	},
+} as const;
+
+export const DEAL_MEETING_FEEDBACK_RESPONSE_FORMAT = {
+	type: "json_schema",
+	json_schema: {
+		name: "deal_meeting_feedback",
+		strict: true,
+		schema: {
+			type: "object",
+			additionalProperties: false,
+			required: [
+				"score",
+				"salesFeedback",
+				"improvementPoints",
+				"nextTalkImage",
+				"followMailHint",
+				"closingHint",
+				"status",
+				"memo",
+			],
+			properties: {
+				score: { type: "number", minimum: 0, maximum: 100 },
+				salesFeedback: { type: "string" },
+				improvementPoints: {
+					type: "array",
+					items: { type: "string" },
+				},
+				nextTalkImage: { type: "string" },
+				followMailHint: { type: "string" },
+				closingHint: { type: "string" },
+				status: {
+					type: "string",
+					enum: ["返却済", "要確認", "対象外"],
+				},
+				memo: { type: "string" },
+			},
+		},
+	},
+} as const;
+
+export const DEAL_NEXT_ACTION_RESPONSE_FORMAT = {
+	type: "json_schema",
+	json_schema: {
+		name: "deal_next_action",
+		strict: true,
+		schema: {
+			type: "object",
+			additionalProperties: false,
+			required: ["status", "memo", "actions"],
+			properties: {
+				status: {
+					type: "string",
+					enum: ["作成候補あり", "要確認", "対象外"],
+				},
+				memo: { type: "string" },
+				actions: {
+					type: "array",
+					maxItems: 5,
+					items: {
+						type: "object",
+						additionalProperties: false,
+						required: [
+							"title",
+							"description",
+							"priority",
+							"taskType",
+							"dueText",
+							"dueDate",
+							"requiresHumanCheck",
+						],
+						properties: {
+							title: { type: "string" },
+							description: { type: "string" },
+							priority: { type: "string", enum: ["高", "中", "低"] },
+							taskType: {
+								type: "string",
+								enum: ["確認・調査", "書類作成", "顧客フォロー", "社内タスク"],
+							},
+							dueText: { type: "string" },
+							dueDate: { type: "string" },
+							requiresHumanCheck: { type: "boolean" },
+						},
+					},
+				},
+			},
+		},
+	},
+} as const;
+
+export const SALES_TALK_FINALIZE_RESPONSE_FORMAT = {
+	type: "json_schema",
+	json_schema: {
+		name: "sales_talk_finalize",
+		strict: true,
+		schema: {
+			type: "object",
+			additionalProperties: false,
+			required: ["status", "memo", "talks"],
+			properties: {
+				status: {
+					type: "string",
+					enum: ["作成候補あり", "要確認", "対象外"],
+				},
+				memo: { type: "string" },
+				talks: {
+					type: "array",
+					minItems: 0,
+					maxItems: 3,
+					items: {
+						type: "object",
+						additionalProperties: false,
+						required: [
+							"title",
+							"hook",
+							"script",
+							"target",
+							"objectionHandling",
+							"nextAction",
+							"usage",
+							"importance",
+							"status",
+							"memo",
+						],
+						properties: {
+							title: { type: "string" },
+							hook: { type: "string" },
+							script: { type: "string" },
+							target: { type: "string" },
+							objectionHandling: { type: "string" },
+							nextAction: { type: "string" },
+							usage: {
+								type: "array",
+								maxItems: 3,
+								items: {
+									type: "string",
+									enum: [
+										"話題作り",
+										"初回つかみ",
+										"反論返し",
+										"クロージング前",
+										"関係構築",
+									],
+								},
+							},
+							importance: {
+								type: "string",
+								enum: ["🔴 必ず使う", "🟡 余裕あれば", "⚪ ストック"],
+							},
+							status: { type: "string", enum: ["使える", "要修正"] },
+							memo: { type: "string" },
+						},
+					},
+				},
+			},
+		},
+	},
+} as const;
+
+type SafePatch =
+	| { kind: "text"; value: string }
+	| { kind: "select"; value: string }
+	| { kind: "number"; value: number }
+	| { kind: "date"; value: string }
+	| { kind: "checkbox"; value: boolean }
+	| { kind: "multi_select"; values: string[] }
+	| { kind: "people"; ids: string[] }
+	| { kind: "relation"; ids: string[] }
+	| { kind: "clear" };
+
+worker.tool("processBusinessCardById", {
+	title: "WAJO 名刺1件を処理",
+	description:
+		"指定した名刺ページIDをWorker本流で処理します。テスト時はdryRun=trueで書き込みなし確認ができます。",
+	schema: j.object({
+		pageId: j.string().describe("名刺管理DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		pageId: j.string(),
+		action: j.string(),
+		companyId: j.string().nullable(),
+		companyName: j.string().nullable(),
+		message: j.string(),
+	}),
+	execute: async ({ pageId, dryRun }, { notion }) => {
+		return processBusinessCard(
+			{ pageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processPendingBusinessCards", {
+	title: "WAJO 未処理名刺をまとめて処理",
+	description:
+		"名刺管理DBから未処理名刺を拾い、企業DBへの紐づけ/作成と3C返却を行います。",
+	schema: j.object({
+		limit: j.integer().describe("一度に処理する最大件数。通常は1から5"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		processed: j.integer(),
+		results: j.array(
+			j.object({
+				pageId: j.string(),
+				action: j.string(),
+				companyId: j.string().nullable(),
+				companyName: j.string().nullable(),
+				message: j.string(),
+			}),
+		),
+	}),
+	execute: async ({ limit, dryRun }, { notion }) => {
+		const safeLimit = Math.max(1, Math.min(limit || 1, MAX_PENDING_LIMIT));
+		const cards = await findPendingCards(notion as unknown as NotionClient, safeLimit);
+		const results: CardResult[] = [];
+		for (const card of cards) {
+			results.push(
+				await processBusinessCard(
+					{ pageId: card.id, pageData: card, dryRun },
+					notion as unknown as NotionClient,
+				),
+			);
+		}
+		return { processed: results.length, results };
+	},
+});
+
+worker.tool("processInquiryCompanyLinkById", {
+	title: "WAJO お問い合わせ→企業連携",
+	description:
+		"お問い合わせDBの1件を企業DBへ紐づけます。既存企業・重複問い合わせを確認し、同じ企業の二重作成を防ぎます。",
+	schema: j.object({
+		inquiryPageId: j.string().describe("お問い合わせDBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		inquiryPageId: j.string(),
+		action: j.string(),
+		companyId: j.string().nullable(),
+		companyName: j.string().nullable(),
+		message: j.string(),
+	}),
+	execute: async ({ inquiryPageId, dryRun }, { notion }) => {
+		return processInquiryCompanyLink(
+			{ inquiryPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processInquiryProjectCreationById", {
+	title: "WAJO 問い合わせの案件化",
+	description:
+		"お問い合わせDBのページIDから案件管理DBに案件を1件だけ作成します。既に紐づき案件がある場合は新規作成せず、二重案件化を防ぎます。",
+	schema: j.object({
+		inquiryPageId: j.string().describe("お問い合わせDBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		inquiryPageId: j.string(),
+		action: j.string(),
+		projectId: j.string().nullable(),
+		created: j.integer(),
+		message: j.string(),
+	}),
+	execute: async ({ inquiryPageId, dryRun }, { notion }) => {
+		return processInquiryProjectCreation(
+			inquiryPageId,
+			notion as unknown as NotionClient,
+			undefined,
+			Boolean(dryRun),
+		);
+	},
+});
+
+worker.tool("processInquiryEmailIntake", {
+	title: "WAJO 問い合わせメール入口",
+	description:
+		"Gmail/Yoomなどから渡された問い合わせメール本文を受け取り、Worker側で重複判定してお問い合わせDBへ1件だけ作成します。必要なら企業連携Workerまで続けます。",
+	schema: j.object({
+		subject: j.string().describe("メール件名"),
+		from: j.string().describe("送信者。フォーム通知の場合はメール本文内のメールアドレスを優先します"),
+		to: j.string().describe("宛先"),
+		body: j.string().describe("メール本文"),
+		receivedAt: j.string().describe("受信日時。ISO文字列が望ましい"),
+		gmailMessageId: j.string().describe("Gmail内部メールID。重複防止の第一キー"),
+		messageId: j.string().describe("RFC Message-ID。分からない場合は空文字"),
+		threadId: j.string().describe("Gmail Thread-ID。分からない場合は空文字"),
+		labels: j.string().describe("Gmailラベル。カンマ区切りでも可"),
+		sourceUrl: j.string().describe("Gmail原文リンク。分からない場合は空文字"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+		linkCompany: j.boolean().describe("trueなら作成後にお問い合わせ→企業連携AIも実行します"),
+	}),
+	outputSchema: j.object({
+		inquiryPageId: j.string().nullable(),
+		action: j.string(),
+		companyAction: j.string().nullable(),
+		message: j.string(),
+	}),
+	execute: async (input, { notion }) => {
+		return processInquiryEmailIntake(
+			input as InquiryEmailIntakeInput,
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("createCustomerContactLog", {
+	title: "WAJO 顧客接点ログ作成",
+		description:
+			"問い合わせ/案件/商談/成約のページIDと、活動種別・活動内容・次回アクションから顧客接点ログDBへ1件作成します。ステータスや評価点は変更しません。",
+		schema: j.object({
+			sourcePageId: j.string().describe("問い合わせ/案件/商談/成約の元ページID。空なら未紐づきで作成します"),
+		sourceType: j.string().describe("問い合わせ / 案件 / 商談 / 成約 / その他"),
+		activityType: j.string().describe("電話 / メール / Zoom / 現地調査 / 測量 など"),
+		activityContent: j.string().describe("活動内容。1行で十分です"),
+		nextAction: j.string().describe("次回アクション。1行で十分です"),
+		occurredAt: j.string().describe("接点日。空なら今日の日付を使います"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		contactLogPageId: j.string().nullable(),
+		action: j.string(),
+		message: j.string(),
+	}),
+	execute: async (input, { notion }) => {
+		return createCustomerContactLog(
+			input as CustomerContactLogInput,
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("refreshSalesPipelineSignal", {
+	title: "WAJO 案件化/成約 温度計更新",
+	description:
+		"問い合わせまたは案件ページIDを指定し、顧客接点ログ等から案件化近さ/成約近さ、停滞時間、次アクションを再計算します。本体ステータスは変更しません。",
+	schema: j.object({
+		pageId: j.string().describe("問い合わせDBまたは案件管理DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		pageId: j.string(),
+		action: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ pageId, dryRun }, { notion }) => {
+		const result = await refreshSalesPipelineSignal(
+			pageId,
+			notion as unknown as NotionClient,
+			undefined,
+			Boolean(dryRun),
+		);
+		return {
+			pageId: result.pageId,
+			action: result.action,
+			message: result.message,
+		};
+	},
+});
+
+worker.tool("backfillCustomerContactLogDisplays", {
+	title: "WAJO 顧客接点ログ 表示名整形",
+	description:
+		"既存の顧客接点ログを、日付・活動種別・活動内容だけの短い表示に整えます。関連先のステータスや数字は変更しません。",
+	schema: j.object({
+		limit: j.number().describe("処理する最大件数。通常は50程度"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		action: j.string(),
+		checked: j.number(),
+		updated: j.number(),
+		message: j.string(),
+	}),
+	execute: async ({ limit, dryRun }, { notion }) => {
+		return backfillCustomerContactLogDisplays(
+			{ limit, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("cleanInquiryTitles", {
+	title: "WAJO 問い合わせタイトル整形",
+	description:
+		"問い合わせDBの件名を、分類コード・相手・売買区分が分かる短い表示名に整えます。元のメール件名は元メール件名へ残します。",
+	schema: j.object({
+		limit: j.number().describe("処理する最大件数。通常は50程度"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		action: j.string(),
+		checked: j.number(),
+		updated: j.number(),
+		message: j.string(),
+	}),
+	execute: async ({ limit, dryRun }, { notion }) => {
+		return cleanInquiryTitles(
+			{ limit, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("assignInquiryReceptionNumbers", {
+	title: "WAJO 問い合わせ受付番号付与",
+	description:
+		"問い合わせDBに受付番号を付け、件名を 受付番号｜分類｜相手｜売買区分 の短い表示名に整えます。",
+	schema: j.object({
+		limit: j.number().describe("処理する最大件数。通常は100程度"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		action: j.string(),
+		checked: j.number(),
+		updated: j.number(),
+		message: j.string(),
+	}),
+	execute: async ({ limit, dryRun }, { notion }) => {
+		return assignInquiryReceptionNumbers(
+			{ limit, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processMeetingPrepReportByCompanyId", {
+	title: "WAJO 商談前準備レポート作成",
+	description:
+		"企業マスターのページIDから商談前準備レポートを作成/補完します。既にボタンで空レポートが作られている場合は最新の空レポートを埋めます。",
+	schema: j.object({
+		companyPageId: j.string().describe("企業マスターDBのページID"),
+		reportPageId: j
+			.string()
+			.describe("既存の商談準備レポートページID。空なら最新の空レポートを探します"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		companyId: j.string(),
+		reportId: j.string().nullable(),
+		reportUrl: j.string().nullable(),
+		action: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ companyPageId, reportPageId, dryRun }, { notion }) => {
+		return processMeetingPrepReport(
+			{ companyPageId, reportPageId: reportPageId || undefined, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processResidentDocumentById", {
+	title: "WAJO 住民説明会資料作成チェック",
+	description:
+		"住民説明会ページIDを受け取り、必須入力を上から順にチェックします。未入力があれば最初の1項目だけ返して停止します。",
+	schema: j.object({
+		pageId: j.string().describe("住民説明会/事前周知DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		pageId: j.string(),
+		action: j.string(),
+		status: j.string(),
+		missingField: j.string().nullable(),
+		message: j.string(),
+	}),
+	execute: async ({ pageId, dryRun }, { notion }) => {
+		return processResidentDocument(
+			{ pageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processProposalSimulationById", {
+	title: "WAJO 提案シミュレーション実行チェック",
+	description:
+		"提案ページIDを受け取り、必須入力を上から順にチェックして利回り試算を作ります。未入力があれば最初の1項目だけ返して停止します。",
+	schema: j.object({
+		pageId: j.string().describe("案件/発電所/見積ページのNotionページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		pageId: j.string(),
+		action: j.string(),
+		status: j.string(),
+		missingField: j.string().nullable(),
+		grossProfit: j.number().nullable(),
+		expectedYield: j.number().nullable(),
+		paybackYears: j.number().nullable(),
+		message: j.string(),
+	}),
+	execute: async ({ pageId, dryRun }, { notion }) => {
+		return processProposalSimulation(
+			{ pageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processProjectProposalRequestById", {
+	title: "WAJO 案件から提案シミュレーション依頼作成",
+	description:
+		"案件管理DBのページIDから営業資料作成依頼DBに提案シミュレーション依頼を1件作成し、案件側へリレーションで戻します。",
+	schema: j.object({
+		projectPageId: j.string().describe("案件管理DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		projectPageId: j.string(),
+		requestPageId: j.string().nullable(),
+		action: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ projectPageId, dryRun }, { notion }) => {
+		return processProjectProposalRequest(
+			{ projectPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processProjectResidentDocumentRequestById", {
+	title: "WAJO 案件から説明会用資料依頼作成",
+	description:
+		"案件管理DBのページIDから営業資料作成依頼DBに住民説明会/近隣周知資料の依頼を1件作成し、案件側へリレーションで戻します。",
+	schema: j.object({
+		projectPageId: j.string().describe("案件管理DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		projectPageId: j.string(),
+		requestPageId: j.string().nullable(),
+		action: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ projectPageId, dryRun }, { notion }) => {
+		return processProjectResidentDocumentRequest(
+			{ projectPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processProjectEquipmentDetailRequestById", {
+	title: "WAJO 案件から発電所設備詳細作成",
+	description:
+		"案件管理DBのページIDから発電所設備詳細DBを1件だけ作成し、案件側へリレーションで戻します。",
+	schema: j.object({
+		projectPageId: j.string().describe("案件管理DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		projectPageId: j.string(),
+		equipmentPageId: j.string().nullable(),
+		action: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ projectPageId, dryRun }, { notion }) => {
+		return processProjectEquipmentDetailRequest(
+			{ projectPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processCompanyResearchById", {
+	title: "WAJO 企業評価・3C補完",
+	description:
+		"企業マスターのページIDから企業評価と3Cを補完します。3C三項目が揃うまで企業調査ステータスを完了にしません。",
+	schema: j.object({
+		companyPageId: j.string().describe("企業マスターDBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		companyId: j.string(),
+		action: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ companyPageId, dryRun }, { notion }) => {
+		return processCompanyResearch(
+			{ companyPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processMeetingMemoFormatById", {
+	title: "WAJO 会議メモ整形",
+	description:
+		"会議議事録DBのページIDから、Meeting Notes本文または既存本文を読み、要約・議事内容・決定事項・アクション項目へ整理します。タスク作成や商談更新は行いません。",
+	schema: j.object({
+		meetingPageId: j.string().describe("会議議事録DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		meetingPageId: j.string(),
+		action: j.string(),
+		status: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ meetingPageId, dryRun }, { notion }) => {
+		return processMeetingMemoFormat(
+			{ meetingPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processMeetingFeedbackById", {
+	title: "WAJO 会議フィードバック",
+	description:
+		"会議議事録DBのページIDから、整形済み会議内容を読み、次が良くなる率直フィードバックを返します。タスク作成や商談更新、評価確定は行いません。",
+	schema: j.object({
+		meetingPageId: j.string().describe("会議議事録DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		meetingPageId: j.string(),
+		action: j.string(),
+		status: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ meetingPageId, dryRun }, { notion }) => {
+		return processMeetingFeedback(
+			{ meetingPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processMeetingDealLinkById", {
+	title: "WAJO 会議→商談連携",
+	description:
+		"会議議事録DBの商談会議を商談管理DBへ紐づけます。関連企業1社の商談会議だけを対象にし、既存商談がある場合は新規作成しません。",
+	schema: j.object({
+		meetingPageId: j.string().describe("会議議事録DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		meetingPageId: j.string(),
+		dealPageId: j.string().nullable(),
+		action: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ meetingPageId, dryRun }, { notion }) => {
+		return processMeetingDealLink(
+			{ meetingPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processMeetingTasksById", {
+	title: "WAJO 会議タスク振り分け",
+	description:
+		"会議議事録DBのアクション項目からチームトラッカーへタスクを作成します。関連会議議事録で既存タスクを確認し、二重作成を防ぎます。",
+	schema: j.object({
+		meetingPageId: j.string().describe("会議議事録DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		meetingPageId: j.string(),
+		action: j.string(),
+		created: j.integer(),
+		skipped: j.integer(),
+		message: j.string(),
+	}),
+	execute: async ({ meetingPageId, dryRun }, { notion }) => {
+		return processMeetingTasks(
+			{ meetingPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processManagerReviewById", {
+	title: "WAJO 人見さん壁打ち補助",
+	description:
+		"マネージャー評価DBのページIDを受け取り、評価確定ではなく、マネージャーが確認する壁打ちメモと次月テーマを返します。",
+	schema: j.object({
+		managerReviewPageId: j.string().describe("マネージャー評価DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		managerReviewPageId: j.string(),
+		action: j.string(),
+		status: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ managerReviewPageId, dryRun }, { notion }) => {
+		return processManagerReview(
+			{ managerReviewPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processSalesPerformanceReviewById", {
+	title: "WAJO 人見さん営業評価案",
+	description:
+		"営業パフォーマンスDBのページIDを受け取り、評価確定ではなく、人見さんの一次評価案、上司確認事項、次月改善ポイントだけを返します。",
+	schema: j.object({
+		salesPerformancePageId: j.string().describe("営業パフォーマンスDBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		salesPerformancePageId: j.string(),
+		action: j.string(),
+		status: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ salesPerformancePageId, dryRun }, { notion }) => {
+		return processSalesPerformanceReview(
+			{ salesPerformancePageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processDailyReportReceiptSyncById", {
+	title: "WAJO WANiPO日報受付票同期",
+	description:
+		"日報受付票DBのページIDを受け取り、生成対象日報のAI5項目から受付票のAIフィードバック、明日へのひとこと、重点確認ポイント、依頼状態を同期します。日報原本は書き換えません。",
+	schema: j.object({
+		receiptPageId: j.string().describe("日報受付票DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		receiptPageId: j.string(),
+		dailyReportPageId: j.string().nullable(),
+		action: j.string(),
+		status: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ receiptPageId, dryRun }, { notion }) => {
+		return processDailyReportReceiptSync(
+			{ receiptPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processDailyReportLogById", {
+	title: "WAJO WANiPO日報ログ化",
+	description:
+		"承認済み日報を日報ログDBへ評価材料化します。日報原本は書き換えず、点数付け・最終評価・総合評価は行いません。",
+	schema: j.object({
+		dailyReportPageId: j.string().describe("日報DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		dailyReportPageId: j.string(),
+		logPageId: j.string().nullable(),
+		action: j.string(),
+		status: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ dailyReportPageId, dryRun }, { notion }) => {
+		return processDailyReportLog(
+			{ dailyReportPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processLandEvaluationById", {
+	title: "WAJO 土地詳細評価",
+	description:
+		"土地情報DBのページIDから、住所・面積を起点に土地評価、電力仮説、案件化候補、次アクションを返します。ボタン起動の後段処理として使います。",
+	schema: j.object({
+		pageId: j.string().describe("土地情報DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		pageId: j.string(),
+		action: j.string(),
+		overallGrade: j.string(),
+		score: j.number(),
+		bucket: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ pageId, dryRun }, { notion }) => {
+		return processLandEvaluation(
+			{ pageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processLandCaseById", {
+	title: "WAJO 土地の案件化",
+	description:
+		"土地情報DBのページIDから案件管理DBに土地案件を作成します。既に関連案件がある場合は新規作成せず、同一土地の重複案件化を防ぎます。",
+	schema: j.object({
+		landPageId: j.string().describe("土地情報DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		landPageId: j.string(),
+		action: j.string(),
+		projectId: j.string().nullable(),
+		created: j.integer(),
+		message: j.string(),
+	}),
+	execute: async ({ landPageId, dryRun }, { notion }) => {
+		return processLandCaseCreation(
+			{ landPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processDealMeetingFeedbackById", {
+	title: "WAJO 商談議事録フィードバック",
+	description:
+		"商談管理DBのページIDを受け取り、関連会議議事録から営業スコア、営業フィードバック、改善ポイント、次回トークを返します。タスク作成や成約判断は行いません。",
+	schema: j.object({
+		dealPageId: j.string().describe("商談管理DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		dealPageId: j.string(),
+		action: j.string(),
+		score: j.number().nullable(),
+		message: j.string(),
+	}),
+	execute: async ({ dealPageId, dryRun }, { notion }) => {
+		return processDealMeetingFeedback(
+			{ dealPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processDealFeedbackSecondReviewById", {
+	title: "WAJO 商談フィードバック二次レビュー",
+	description:
+		"商談管理DBのページIDを受け取り、一次AIフィードバックをChatGPT（gpt-4o-mini）で二次レビューします。一次フィードバック欄は上書きしません。",
+	schema: j.object({
+		dealPageId: j.string().describe("商談管理DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		dealPageId: j.string(),
+		action: j.string(),
+		quality: j.string().nullable(),
+		message: j.string(),
+	}),
+	execute: async ({ dealPageId, dryRun }, { notion }) => {
+		return processDealFeedbackSecondReview(
+			{ dealPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processDealNextActionsById", {
+	title: "WAJO ネクストアクションAI",
+	description:
+		"商談管理DBのページIDを受け取り、営業フィードバックからチームトラッカーの次アクション候補を作成します。既存の関連タスクを見て重複作成を防ぎます。",
+	schema: j.object({
+		dealPageId: j.string().describe("商談管理DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		dealPageId: j.string(),
+		action: j.string(),
+		created: j.integer(),
+		skipped: j.integer(),
+		message: j.string(),
+	}),
+	execute: async ({ dealPageId, dryRun }, { notion }) => {
+		return processDealNextActions(
+			{ dealPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("collectSalesNews", {
+	title: "WAJO ニュース収集Worker",
+	description:
+		"RSS/Googleニュース検索からWAJO向け業界ニュースを収集し、業界ニュースDBへ重複なしで候補登録します。必要なら営業トーク生成文まで作ります。",
+	schema: j.object({
+		limit: j.integer().describe("作成候補の最大件数。通常は3から10"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+		autoGenerateTalk: j
+			.boolean()
+			.describe("trueならニュース候補に営業トーク生成文も入れます"),
+		autoFinalize: j
+			.boolean()
+			.describe("trueなら営業トーク管理DBへの仕上げまで続けます"),
+	}),
+	outputSchema: j.object({
+		action: j.string(),
+		fetched: j.integer(),
+		candidates: j.integer(),
+		created: j.integer(),
+		skipped: j.integer(),
+		finalized: j.integer(),
+		pages: j.array(j.string()),
+		message: j.string(),
+	}),
+	execute: async ({ limit, dryRun, autoGenerateTalk, autoFinalize }, { notion }) => {
+		return collectSalesNews(
+			{ limit, dryRun, autoGenerateTalk, autoFinalize },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processSalesTalkFinalizeByNewsId", {
+	title: "WAJO 営業トーク管理DB仕上げ",
+	description:
+		"業界ニュースの営業トーク生成文を読み、営業トーク管理DBの実戦項目（つかみ、セリフ、刺さる相手、反論返し、次アクション）へ3ネタまで整理します。重複作成は防ぎます。",
+	schema: j.object({
+		newsPageId: j.string().describe("業界ニュースDBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		newsPageId: j.string(),
+		action: j.string(),
+		updated: j.integer(),
+		created: j.integer(),
+		message: j.string(),
+	}),
+	execute: async ({ newsPageId, dryRun }, { notion }) => {
+		return processSalesTalkFinalize(
+			{ newsPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.webhook("processBusinessCardWebhook", {
+	title: "WAJO 名刺処理Webhook",
+	description:
+		"外部サービスやNotion webhookから名刺処理を起動します。body.pageId があれば1件処理、なければ未処理を拾います。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const pageId = typeof body.pageId === "string" ? body.pageId : undefined;
+			const limit =
+				typeof body.limit === "number"
+					? Math.max(1, Math.min(body.limit, MAX_PENDING_LIMIT))
+					: 1;
+			if (pageId) {
+				await processBusinessCard(
+					{ pageId, dryRun: false },
+					notion as unknown as NotionClient,
+				);
+				continue;
+			}
+			const cards = await findPendingCards(notion as unknown as NotionClient, limit);
+			for (const card of cards) {
+				await processBusinessCard(
+					{ pageId: card.id, pageData: card, dryRun: false },
+					notion as unknown as NotionClient,
+				);
+			}
+		}
+	},
+});
+
+worker.webhook("processInquiryCompanyLinkWebhook", {
+	title: "WAJO お問い合わせ→企業連携Webhook",
+	description:
+		"お問い合わせDBのページIDを受け取り、既存企業との照合・重複停止・必要時の企業作成を行います。商談やタスクは作成しません。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const inquiryPageId = extractInquiryPageIdFromWebhook(body);
+			if (!inquiryPageId) {
+				throw new Error(
+					"inquiryPageId / pageId / entity.id のいずれからも問い合わせページIDを特定できませんでした。",
+				);
+			}
+			await processInquiryCompanyLink(
+				{ inquiryPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processInquiryAssignOwnerWebhook", {
+	title: "WAJO 問い合わせ 担当になるWebhook",
+	description:
+		"お問い合わせDBの「担当になる」ボタンから起動。担当営業ユーザーが空欄のときだけクリックしたユーザーを担当にし、既に担当者がいる場合は上書きしません。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const inquiryPageId = extractInquiryPageIdFromWebhook(body);
+			if (!inquiryPageId) {
+				throw new Error(
+					"inquiryPageId / pageId / entity.id のいずれからも問い合わせページIDを特定できませんでした。",
+				);
+			}
+			const triggerUserId = extractTriggerUserIdFromWebhook(body);
+			if (!triggerUserId) {
+				throw new Error(
+					"user.id / triggered_by.id / userId のいずれからもクリックしたユーザーIDを特定できませんでした。",
+				);
+			}
+			await processInquiryAssignOwner(
+				inquiryPageId,
+				triggerUserId,
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processInquiryProjectCreationWebhook", {
+	title: "WAJO 問い合わせ 案件化Webhook",
+	description:
+		"お問い合わせDBの「案件化する」ボタンから起動。既に紐づき案件がある場合は新規作成せず、案件管理DBへの二重登録を防ぎます。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const inquiryPageId = extractInquiryPageIdFromWebhook(body);
+			if (!inquiryPageId) {
+				throw new Error(
+					"inquiryPageId / pageId / entity.id のいずれからも問い合わせページIDを特定できませんでした。",
+				);
+			}
+			await processInquiryProjectCreation(
+				inquiryPageId,
+				notion as unknown as NotionClient,
+				extractTriggerUserIdFromWebhook(body),
+				false,
+			);
+		}
+	},
+});
+
+worker.webhook("processInquiryEmailIntakeWebhook", {
+	title: "WAJO 問い合わせメール入口Webhook",
+	description:
+		"Gmail/Yoomなどから問い合わせメール本文を受け取り、Worker側で重複判定・お問い合わせDB作成・必要時の企業連携まで行います。Yoom側の有無分岐やNotion作成を置き換える入口です。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			await processInquiryEmailIntake(
+				readInquiryEmailIntakeInputFromWebhook(body),
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("createCustomerContactLogWebhook", {
+	title: "WAJO 顧客接点ログ作成Webhook",
+	description:
+		"問い合わせ/案件/商談ページの活動ボタンから、顧客接点ログDBへ軽量ログを作成します。ステータスや評価点は変更しません。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			await createCustomerContactLog(
+				readCustomerContactLogInputFromWebhook(body),
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("refreshSalesPipelineSignalWebhook", {
+	title: "WAJO 案件化/成約 温度計更新Webhook",
+	description:
+		"問い合わせまたは案件ページの温度計を再計算します。案件化近さ/成約近さ、停滞時間、次アクションのみ更新し、本体ステータスは変更しません。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const pageId =
+				extractInquiryPageIdFromWebhook(body) ||
+				extractProjectPageIdFromWebhook(body) ||
+				extractWebhookPageId(body);
+			if (!pageId) {
+				throw new Error(
+					"pageId / inquiryPageId / projectPageId / entity.id のいずれからもページIDを特定できませんでした。",
+				);
+			}
+			await refreshSalesPipelineSignal(pageId, notion as unknown as NotionClient);
+		}
+	},
+});
+
+worker.webhook("processCompanyResearchWebhook", {
+	title: "WAJO 企業評価・3C補完Webhook",
+	description:
+		"企業マスターのページIDを受け取り、企業評価と3C三項目を補完します。3C不足時は完了ではなく要確認で止めます。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const companyPageId = await resolveCompanyPageIdFromWebhook(
+				body,
+				notion as unknown as NotionClient,
+			);
+			if (!companyPageId) {
+				throw new Error(
+					"companyPageId/pageId または企業名から対象企業を特定できないため、企業評価を実行できません。",
+				);
+			}
+			await processCompanyResearch(
+				{ companyPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processMeetingMemoFormatWebhook", {
+	title: "WAJO 会議メモ整形Webhook",
+	description:
+		"会議議事録DBのページIDを受け取り、Meeting Notes本文または既存本文をDBプロパティへ整理します。チームトラッカーや商談管理DBは更新しません。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const meetingPageId = extractMeetingPageIdFromWebhook(body);
+			if (!meetingPageId) {
+				throw new Error(
+					"meetingPageId / pageId / entity.id のいずれからも会議ページIDを特定できませんでした。",
+				);
+			}
+			await processMeetingMemoFormat(
+				{ meetingPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processMeetingFeedbackWebhook", {
+	title: "WAJO 会議フィードバックWebhook",
+	description:
+		"会議議事録DBのページIDを受け取り、整形済み会議内容から率直フィードバックを返します。タスク作成、商談更新、評価確定は行いません。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const meetingPageId = extractMeetingPageIdFromWebhook(body);
+			if (!meetingPageId) {
+				throw new Error(
+					"meetingPageId / pageId / entity.id のいずれからも会議ページIDを特定できませんでした。",
+				);
+			}
+			await processMeetingFeedback(
+				{ meetingPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processMeetingDealLinkWebhook", {
+	title: "WAJO 会議→商談連携Webhook",
+	description:
+		"会議議事録DBのページIDを受け取り、商談会議だけを商談管理DBへ紐づけます。関連企業が一意でない場合は要確認で停止します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const meetingPageId = extractMeetingPageIdFromWebhook(body);
+			if (!meetingPageId) {
+				throw new Error(
+					"meetingPageId / pageId / entity.id のいずれからも会議ページIDを特定できませんでした。",
+				);
+			}
+			await processMeetingDealLink(
+				{ meetingPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processMeetingTasksWebhook", {
+	title: "WAJO 会議タスク振り分けWebhook",
+	description:
+		"会議議事録DBのページIDを受け取り、アクション項目からチームトラッカーへタスクを作成します。既存関連タスクがある場合は二重作成しません。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const meetingPageId = extractMeetingPageIdFromWebhook(body);
+			if (!meetingPageId) {
+				throw new Error(
+					"meetingPageId / pageId / entity.id のいずれからも会議ページIDを特定できませんでした。",
+				);
+			}
+			await processMeetingTasks(
+				{ meetingPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processManagerReviewWebhook", {
+	title: "WAJO 人見さん壁打ち補助Webhook",
+	description:
+		"マネージャー評価DBのページIDを受け取り、評価確定ではなく壁打ちメモと次月テーマだけを返します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const managerReviewPageId = extractManagerReviewPageIdFromWebhook(body);
+			if (!managerReviewPageId) {
+				throw new Error(
+					"managerReviewPageId / pageId / entity.id のいずれからもマネージャー評価ページIDを特定できませんでした。",
+				);
+			}
+			await processManagerReview(
+				{ managerReviewPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processSalesPerformanceReviewWebhook", {
+	title: "WAJO 人見さん営業評価案Webhook",
+	description:
+		"営業パフォーマンスDBのページIDを受け取り、評価確定ではなく一次評価案・上司確認事項・次月改善ポイントだけを返します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const salesPerformancePageId = extractSalesPerformancePageIdFromWebhook(body);
+			if (!salesPerformancePageId) {
+				throw new Error(
+					"salesPerformancePageId / pageId / entity.id のいずれからも営業パフォーマンスページIDを特定できませんでした。",
+				);
+			}
+			await processSalesPerformanceReview(
+				{ salesPerformancePageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processDailyReportReceiptSyncWebhook", {
+	title: "WAJO WANiPO日報受付票同期Webhook",
+	description:
+		"日報受付票DBのページIDを受け取り、生成対象日報のAI5項目を受付票へ同期します。日報原本は書き換えません。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const receiptPageId = extractDailyReportReceiptPageIdFromWebhook(body);
+			if (!receiptPageId) {
+				throw new Error(
+					"receiptPageId / pageId / entity.id のいずれからも日報受付票ページIDを特定できませんでした。",
+				);
+			}
+			await processDailyReportReceiptSync(
+				{ receiptPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processDailyReportLogWebhook", {
+	title: "WAJO WANiPO日報ログ化Webhook",
+	description:
+		"日報DBのページIDを受け取り、承認済み日報だけを日報ログDBへ評価材料化します。点数付けや最終評価は行いません。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const dailyReportPageId = extractDailyReportPageIdFromWebhook(body);
+			if (!dailyReportPageId) {
+				throw new Error(
+					"dailyReportPageId / pageId / entity.id のいずれからも日報ページIDを特定できませんでした。",
+				);
+			}
+			await processDailyReportLog(
+				{ dailyReportPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processLandEvaluationWebhook", {
+	title: "WAJO 土地詳細評価Webhook",
+	description:
+		"土地情報DBのページIDを受け取り、住所・面積を起点に土地評価と案件化候補を返します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const pageId =
+				extractWebhookLandPageId(body) ??
+				(await resolveLandPageIdFromWebhook(body, notion as unknown as NotionClient));
+			if (!pageId) {
+				throw new Error(
+					"landPageId/pageId または土地名称/所在地/面積から対象土地を特定できないため、土地評価を実行できません。",
+				);
+			}
+			await processLandEvaluation(
+				{ pageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processLandCaseWebhook", {
+	title: "WAJO 土地の案件化Webhook",
+	description:
+		"土地情報DBのページIDを受け取り、案件管理DBに土地案件を作成します。既存関連案件がある場合は重複作成しません。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const landPageId =
+				extractWebhookLandPageId(body) ??
+				(await resolveLandPageIdFromWebhook(body, notion as unknown as NotionClient));
+			if (!landPageId) {
+				throw new Error(
+					"landPageId/pageId または土地名称/所在地/面積から対象土地を特定できないため、土地案件化を実行できません。",
+				);
+			}
+			await processLandCaseCreation(
+				{ landPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processMeetingPrepReportWebhook", {
+	title: "WAJO 商談前準備レポートWebhook",
+	description:
+		"企業マスターのページIDを受け取り、商談前準備レポートDBの最新空レポートを補完します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const companyPageId = await resolveCompanyPageIdFromWebhook(
+				body,
+				notion as unknown as NotionClient,
+			);
+			const reportPageId = firstString(
+				body.reportPageId,
+				body.report_page_id,
+				readNestedString(body, ["data", "reportPageId"]),
+			);
+			if (!companyPageId) {
+				throw new Error(
+					"companyPageId が見つからないため、商談準備レポートを作成できません。",
+				);
+			}
+			await processMeetingPrepReport(
+				{ companyPageId, reportPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processResidentDocumentWebhook", {
+	title: "WAJO 住民説明会資料作成Webhook",
+	description:
+		"住民説明会ページIDを受け取り、必須入力を上から順にチェックします。未入力があれば最初の1項目だけ返して停止します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const pageId = extractResidentDocumentPageIdFromWebhook(body);
+			if (!pageId) {
+				throw new Error(
+					"residentPageId / pageId / entity.id のいずれからも住民説明会ページIDを特定できませんでした。",
+				);
+			}
+			const result = await processResidentDocument(
+				{ pageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+			if (result.action === "needs-input") throw new Error(result.message);
+		}
+	},
+});
+
+worker.webhook("processProposalSimulationWebhook", {
+	title: "WAJO 提案シミュレーションWebhook",
+	description:
+		"提案ページIDを受け取り、必須入力を上から順にチェックして利回り試算を作ります。未入力があれば最初の1項目だけ返して停止します。",
+	execute: async (events, { notion }) => {
+		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const pageId = extractProposalSimulationPageIdFromWebhook(body);
+			if (!pageId) {
+				throw new Error(
+					"proposalPageId / pageId / entity.id のいずれからも提案シミュレーション対象ページIDを特定できませんでした。",
+				);
+			}
+			const result = await processProposalSimulation(
+				{ pageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+			if (result.action === "needs-input") throw new Error(result.message);
+		}
+	},
+});
+
+worker.webhook("processProjectProposalRequestWebhook", {
+	title: "WAJO 案件から提案シミュレーション依頼作成Webhook",
+	description:
+		"案件管理DBのページIDを受け取り、営業資料作成依頼DBに提案シミュレーション依頼を作成して案件側へ紐づけます。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const projectPageId = extractProjectPageIdFromWebhook(body);
+			if (!projectPageId) {
+				throw new Error(
+					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
+				);
+			}
+			const result = await processProjectProposalRequest(
+				{ projectPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+			if (result.action === "needs-input") throw new Error(result.message);
+		}
+	},
+});
+
+worker.webhook("processProjectResidentDocumentRequestWebhook", {
+	title: "WAJO 案件から説明会用資料依頼作成Webhook",
+	description:
+		"案件管理DBのページIDを受け取り、営業資料作成依頼DBに住民説明会/近隣周知資料の依頼を作成して案件側へ紐づけます。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const projectPageId = extractProjectPageIdFromWebhook(body);
+			if (!projectPageId) {
+				throw new Error(
+					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
+				);
+			}
+			const result = await processProjectResidentDocumentRequest(
+				{ projectPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+			if (result.action === "needs-input") throw new Error(result.message);
+		}
+	},
+});
+
+worker.webhook("processProjectEquipmentDetailRequestWebhook", {
+	title: "WAJO 案件から発電所設備詳細作成Webhook",
+	description:
+		"案件管理DBのページIDを受け取り、発電所設備詳細DBを1件だけ作成して案件側へ紐づけます。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const projectPageId = extractProjectPageIdFromWebhook(body);
+			if (!projectPageId) {
+				throw new Error(
+					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
+				);
+			}
+			await processProjectEquipmentDetailRequest(
+				{ projectPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processDealMeetingFeedbackWebhook", {
+	title: "WAJO 商談議事録フィードバックWebhook",
+	description:
+		"dealPageId / pageId / entity.id のいずれかから商談ページを特定し、関連会議議事録から営業フィードバックを返します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const dealPageId = extractDealPageIdFromWebhook(body);
+			if (!dealPageId) {
+				throw new Error(
+					"dealPageId / pageId / entity.id のいずれからも商談ページIDを特定できませんでした。",
+				);
+			}
+			await processDealMeetingFeedback(
+				{ dealPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processDealFeedbackSecondReviewWebhook", {
+	title: "WAJO 商談フィードバック二次レビューWebhook",
+	description:
+		"dealPageId / pageId / entity.id のいずれかから商談ページを特定し、一次フィードバックの二次レビューを実行します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const dealPageId = extractDealPageIdFromWebhook(body);
+			if (!dealPageId) {
+				throw new Error(
+					"dealPageId / pageId / entity.id のいずれからも商談ページIDを特定できませんでした。",
+				);
+			}
+			await processDealFeedbackSecondReview(
+				{ dealPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processDealNextActionsWebhook", {
+	title: "WAJO ネクストアクションAI Webhook",
+	description:
+		"dealPageId / pageId / entity.id のいずれかから商談ページを特定し、チームトラッカーへ次アクションを作成します。重複タスクは作成しません。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const dealPageId = extractDealPageIdFromWebhook(body);
+			if (!dealPageId) {
+				throw new Error(
+					"dealPageId / pageId / entity.id のいずれからも商談ページIDを特定できませんでした。",
+				);
+			}
+			await processDealNextActions(
+				{ dealPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("collectSalesNewsWebhook", {
+	title: "WAJO ニュース収集Webhook",
+	description:
+		"RSS/Googleニュース検索からWAJO向け業界ニュースを収集し、業界ニュースDBへ候補登録します。商談・タスク・評価DBは更新しません。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			await collectSalesNews(
+				{
+					limit: numberFromWebhookBody(body, "limit", 5),
+					dryRun: booleanFromWebhookBody(body, "dryRun", false),
+					autoGenerateTalk: booleanFromWebhookBody(body, "autoGenerateTalk", false),
+					autoFinalize: booleanFromWebhookBody(body, "autoFinalize", false),
+				},
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processSalesTalkFinalizeWebhook", {
+	title: "WAJO 営業トーク管理DB仕上げWebhook",
+	description:
+		"newsPageId / pageId / entity.id のいずれかから業界ニュースを特定し、生成済み営業トークを営業トーク管理DBの実戦項目へ整理します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const newsPageId = extractNewsPageIdFromWebhook(body);
+			if (!newsPageId) {
+				throw new Error(
+					"newsPageId / pageId / entity.id のいずれからも業界ニュースページIDを特定できませんでした。",
+				);
+			}
+			await processSalesTalkFinalize(
+				{ newsPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+// ─── 成約報告ワンボタン パイプライン ────────────────────────────────────────
+
+worker.webhook("processClosingReportWebhook", {
+	title: "WAJO 成約報告Webhook",
+	description:
+		"案件管理DBの「🏆 成約報告する」ボタンから起動。重複ガード付きで成約報告DBに成約レコードを作成し、案件ステータスを「🏆 成約」に更新。マネージャーは後追いで差し戻し/取り消しを行います。",
+	execute: async (events, { notion }) => {
+		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const projectPageId = extractProjectPageIdFromWebhook(body);
+			if (!projectPageId) {
+				throw new Error(
+					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
+				);
+			}
+			// ボタンを押したユーザーIDを取得（担当営業に自動セット）
+			const triggerUserId = extractTriggerUserIdFromWebhook(body);
+			await processClosingReport(projectPageId, notion as unknown as NotionClient, triggerUserId);
+		}
+	},
+});
+
+worker.webhook("processClosingCancelWebhook", {
+	title: "WAJO 成約取り消しWebhook",
+	description:
+		"成約報告DBの「🔄 取り消す」ボタンから起動。締め前の成約報告を「取り消し」状態にし、案件DBのステータスを「📋 提案中」に戻します。歩合確定済みは取り消し不可。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const closingPageId = extractClosingReportPageIdFromWebhook(body);
+			if (!closingPageId) {
+				throw new Error(
+					"closingPageId / pageId / entity.id のいずれからも成約報告ページIDを特定できませんでした。",
+				);
+			}
+			await cancelClosingReport(
+				closingPageId,
+				notion as unknown as NotionClient,
+				extractManagerActionReasonFromWebhook(body),
+			);
+		}
+	},
+});
+
+worker.webhook("processClosingDismissWebhook", {
+	title: "WAJO 成約差し戻しWebhook",
+	description:
+		"成約報告DBの「❌ 差し戻す」ボタンから起動。マネージャーが成約報告を差し戻し、承認ステータスを「差戻し」に変更。案件DBのステータスも「📋 提案中」に戻します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const closingPageId = extractClosingReportPageIdFromWebhook(body);
+			if (!closingPageId) {
+				throw new Error(
+					"closingPageId / pageId / entity.id のいずれからも成約報告ページIDを特定できませんでした。",
+				);
+			}
+			await dismissClosingReport(
+				closingPageId,
+				notion as unknown as NotionClient,
+				extractManagerActionReasonFromWebhook(body),
+			);
+		}
+	},
+});
+
+worker.webhook("processProjectDismissWebhook", {
+	title: "WAJO 案件差し戻しWebhook",
+	description:
+		"案件管理DBのマネージャー用「差し戻し」ボタンから起動。案件を確認待ちに戻し、管理アクションメモを残します。成約報告DBや月次数字は直接変更しません。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const projectPageId = extractProjectPageIdFromWebhook(body);
+			if (!projectPageId) {
+				throw new Error(
+					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
+				);
+			}
+			await dismissProject(
+				projectPageId,
+				notion as unknown as NotionClient,
+				extractManagerActionReasonFromWebhook(body),
+			);
+		}
+	},
+});
+
+worker.webhook("processProjectCancelWebhook", {
+	title: "WAJO 案件取り消しWebhook",
+	description:
+		"案件管理DBのマネージャー用「取り消し」ボタンから起動。案件を失注扱いにし、管理アクションメモを残します。ページ削除や関連DBの一括更新は行いません。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const projectPageId = extractProjectPageIdFromWebhook(body);
+			if (!projectPageId) {
+				throw new Error(
+					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
+				);
+			}
+			await cancelProject(
+				projectPageId,
+				notion as unknown as NotionClient,
+				extractManagerActionReasonFromWebhook(body),
+			);
+		}
+	},
+});
+
+worker.webhook("processInquiryLostWebhook", {
+	title: "WAJO 問い合わせ失注Webhook",
+	description:
+		"お問い合わせDBの「失注にする」ボタンから起動。失注理由がある場合だけ問い合わせを失注にし、処理者・処理日・前フェーズ・監査ログを残します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const inquiryPageId = extractInquiryPageIdFromWebhook(body);
+			if (!inquiryPageId) {
+				throw new Error(
+					"inquiryPageId / pageId / entity.id のいずれからも問い合わせページIDを特定できませんでした。",
+				);
+			}
+			await processInquiryLost(inquiryPageId, notion as unknown as NotionClient, {
+				reason: extractLostReasonFromWebhook(body),
+				memo: extractLostMemoFromWebhook(body),
+				triggerUserId: extractTriggerUserIdFromWebhook(body),
+			});
+		}
+	},
+});
+
+worker.webhook("processProjectLostRequestWebhook", {
+	title: "WAJO 案件失注申請Webhook",
+	description:
+		"案件管理DBの営業用「失注申請する」ボタンから起動。失注理由必須で、案件は失注確定ではなく失注申請中に止めます。申請事実は全員通知します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const projectPageId = extractProjectPageIdFromWebhook(body);
+			if (!projectPageId) {
+				throw new Error(
+					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
+				);
+			}
+			await processProjectLostRequest(projectPageId, notion as unknown as NotionClient, {
+				reason: extractLostReasonFromWebhook(body),
+				memo: extractLostMemoFromWebhook(body),
+				triggerUserId: extractTriggerUserIdFromWebhook(body),
+			});
+		}
+	},
+});
+
+worker.webhook("processProjectLostApproveWebhook", {
+	title: "WAJO 案件失注承認Webhook",
+	description:
+		"マネージャー用の失注承認ボタンから起動。申請中の案件だけを正式に失注へ確定し、全員通知します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const projectPageId = extractProjectPageIdFromWebhook(body);
+			if (!projectPageId) {
+				throw new Error(
+					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
+				);
+			}
+			await approveProjectLostRequest(projectPageId, notion as unknown as NotionClient, {
+				memo: extractLostMemoFromWebhook(body) || extractManagerActionReasonFromWebhook(body),
+				triggerUserId: extractTriggerUserIdFromWebhook(body),
+			});
+		}
+	},
+});
+
+worker.webhook("processProjectLostRejectWebhook", {
+	title: "WAJO 案件失注差し戻しWebhook",
+	description:
+		"マネージャー用の失注差し戻しボタンから起動。失注申請を差し戻し、案件を確認待ちへ戻して全員通知します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const projectPageId = extractProjectPageIdFromWebhook(body);
+			if (!projectPageId) {
+				throw new Error(
+					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
+				);
+			}
+			await rejectProjectLostRequest(projectPageId, notion as unknown as NotionClient, {
+				memo: extractLostMemoFromWebhook(body) || extractManagerActionReasonFromWebhook(body),
+				triggerUserId: extractTriggerUserIdFromWebhook(body),
+			});
+		}
+	},
+});
+
+worker.webhook("notifySalesTeamWebhook", {
+	title: "WAJO 営業部通知Webhook",
+	description:
+		"担当になる/案件化/成約など、Notionボタンの後段から営業部全員へコメント通知する汎用Webhookです。pageId と 通知種別/通知文 を受け取ります。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const pageId =
+				extractProjectPageIdFromWebhook(body) ??
+				extractClosingReportPageIdFromWebhook(body) ??
+				extractWebhookLandPageId(body);
+			if (!pageId) {
+				throw new Error(
+					"pageId / projectPageId / closingPageId / landPageId のいずれからも通知先ページIDを特定できませんでした。",
+				);
+			}
+			const eventType = extractNotificationEventTypeFromWebhook(body);
+			const salesTeamUserIds = extractSalesTeamUserIdsFromWebhook(body);
+			await notifySalesTeam(
+				notion as unknown as NotionClient,
+				pageId,
+				extractNotificationMessageFromWebhook(body, eventType),
+				salesTeamUserIds.length > 0 ? salesTeamUserIds : SALES_TEAM_USER_IDS,
+			);
+		}
+	},
+});
+
+worker.webhook("processMonthlyQuotaLinkWebhook", {
+	title: "WAJO ノルマ申請書 提出時 成約自動紐付けWebhook（退役）",
+	description:
+		"退役済み。ノルマ申請DBは目標申請の原本とし、成約実績の月次反映は成約報告Workerが営業マンパフォーマンスDBへ行います。",
+	execute: async (events) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const quotaPageId = extractQuotaPageIdFromWebhook(body);
+			if (!quotaPageId) {
+				throw new Error(
+					"quotaPageId / pageId / entity.id のいずれからもノルマ申請書ページIDを特定できませんでした。",
+				);
+			}
+			console.log(
+				`processMonthlyQuotaLinkWebhook is retired. ` +
+				`quotaPageId=${quotaPageId}. 成約実績は営業マンパフォーマンスDBの月次成績へ反映します。`,
+			);
+		}
+	},
+});
+
+worker.webhook("processProjectWallHitWebhook", {
+	title: "WAJO 案件壁打ちWebhook",
+	description:
+		"案件管理DBの「🤝 人見さんと壁打ちをする」ボタンから起動。案件情報をAIで分析し、壁打ちポイント・リスク・確認事項をページにコメントとして書き込みます。ステータス変更・成約判断は行いません。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const projectPageId = extractProjectPageIdFromWebhook(body);
+			if (!projectPageId) {
+				throw new Error(
+					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
+				);
+			}
+			await processProjectWallHit(projectPageId, notion as unknown as NotionClient);
+		}
+	},
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+
+async function processBusinessCard(
+	input: CardInput,
+	notion: NotionClient,
+): Promise<CardResult> {
+	const page =
+		input.pageData ??
+		(await notion.pages.retrieve({
+			page_id: input.pageId,
+		}));
+	const card = readCard(page);
+
+	if (!shouldProcess(card)) {
+		return {
+			pageId: input.pageId,
+			action: "skipped",
+			companyId: null,
+			companyName: null,
+			message: "会社名、メール、電話、名刺画像のいずれも不足しているため処理対象外です。",
+		};
+	}
+
+	if (input.dryRun) {
+		const candidates = await findCompanyCandidates(notion, card);
+		const strong = candidates.filter((candidate) => candidate.score >= 80);
+		return {
+			pageId: input.pageId,
+			action: "dry-run",
+			companyId: strong[0]?.page.id ?? null,
+			companyName: strong[0]?.name ?? null,
+			message: `dry-run: 強い候補 ${strong.length} 件、近似候補 ${candidates.filter((candidate) => candidate.weak).length} 件。`,
+		};
+	}
+
+	await markCardProcessing(notion, card);
+
+	try {
+		const candidates = await findCompanyCandidates(notion, card);
+		const strong = candidates.filter((candidate) => candidate.score >= 80);
+		const weak = candidates.filter((candidate) => candidate.weak);
+
+		if (!card.companyName) {
+			await markCardNeedsReview(
+				notion,
+				card,
+				"会社名が読み取れないため、企業作成せず要確認にしました。",
+			);
+			return {
+				pageId: input.pageId,
+				action: "needs-review",
+				companyId: null,
+				companyName: null,
+				message: "会社名が読み取れませんでした。",
+			};
+		}
+
+		if (strong.length > 1) {
+			await markCardDuplicateHold(notion, card, strong);
+			return {
+				pageId: input.pageId,
+				action: "duplicate-hold",
+				companyId: null,
+				companyName: null,
+				message: `強い候補が複数あります: ${strong.map((candidate) => candidate.name).join(", ")}`,
+			};
+		}
+
+		if (strong.length === 1) {
+			const company = strong[0]!;
+			await enrichCompany(notion, company.page, card, false);
+			await linkCardToCompany(
+				notion,
+				card,
+				company.page.id,
+				"既存企業に紐づけ済",
+				`既存企業に紐づけ済: ${company.reasons.join(" / ")}`,
+			);
+			return {
+				pageId: input.pageId,
+				action: "existing-linked",
+				companyId: company.page.id,
+				companyName: company.name,
+				message: "既存企業へ紐づけ、必要項目を補完しました。",
+			};
+		}
+
+		const company = await createCompany(notion, card, weak[0]);
+		await enrichCompany(notion, company, card, Boolean(weak[0]));
+		await linkCardToCompany(
+			notion,
+			card,
+			company.id,
+			"新規企業作成",
+			weak[0]
+				? `近似候補はあるが強い一致なし。新規企業として作成し、重複候補へ回しました: ${weak[0].name}`
+				: "強い既存候補なし。名刺起点で新規企業を作成しました。",
+		);
+		return {
+			pageId: input.pageId,
+			action: "created-company",
+			companyId: company.id,
+			companyName: card.companyName,
+			message: "新規企業を作成し、企業情報と3Cを返却しました。",
+		};
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		await markCardFailure(notion, card, message);
+		throw error;
+	}
+}
+
+async function processInquiryEmailIntake(
+	input: InquiryEmailIntakeInput,
+	notion: NotionClient,
+): Promise<InquiryEmailIntakeResult> {
+	const emailInfo = readInquiryEmailInfo(input);
+	if (!emailInfo.subject && !emailInfo.body && !emailInfo.contactEmail) {
+		return {
+			inquiryPageId: null,
+			action: "needs-review",
+			companyAction: null,
+			message:
+				"件名・本文・メールアドレスが不足しているため、お問い合わせDBへ作成しませんでした。",
+		};
+	}
+
+	const existing = await findExistingInquiryByEmail(notion, emailInfo);
+	if (existing.length > 1) {
+		return {
+			inquiryPageId: null,
+			action: "duplicate-hold",
+			companyAction: null,
+			message: `同一メール候補が複数あります。Workerは新規作成せず停止しました: ${existing
+				.slice(0, 3)
+				.map((page) => page.id)
+				.join(", ")}`,
+		};
+	}
+
+	if (existing.length === 1) {
+		const page = existing[0]!;
+		let companyAction: string | null = null;
+		if (!input.dryRun && input.linkCompany !== false) {
+			const linked = await processInquiryCompanyLink(
+				{ inquiryPageId: page.id, pageData: page, dryRun: false },
+				notion,
+			);
+			companyAction = linked.action;
+		}
+		return {
+			inquiryPageId: page.id,
+			action: input.dryRun ? "dry-run" : "skipped-existing",
+			companyAction,
+			message: input.dryRun
+				? "dry-run: 同一メールの既存問い合わせが見つかったため、新規作成しません。"
+				: "同一メールの既存問い合わせが見つかったため、新規作成せず既存ページを使いました。",
+		};
+	}
+
+	if (input.dryRun) {
+		return {
+			inquiryPageId: null,
+			action: "dry-run",
+			companyAction: null,
+			message: [
+				"dry-run: 新規問い合わせとして作成できます。",
+				`件名=${emailInfo.subject || "未設定"}`,
+				`キー=${emailInfo.primaryKey}`,
+				`会社=${emailInfo.companyName || "未入力"}`,
+				`メール=${emailInfo.contactEmail || "未入力"}`,
+			].join(" / "),
+		};
+	}
+
+	const created = await createInquiryFromEmail(notion, emailInfo);
+	let companyAction: string | null = null;
+	if (input.linkCompany !== false) {
+		const linked = await processInquiryCompanyLink(
+			{ inquiryPageId: created.id, pageData: created, dryRun: false },
+			notion,
+		);
+		companyAction = linked.action;
+	}
+	return {
+		inquiryPageId: created.id,
+		action: "created-inquiry",
+		companyAction,
+		message:
+		"メール入口Workerでお問い合わせDBへ1件作成しました。Yoom側のNotion検索・有無分岐・Notion作成は不要にできます。",
+	};
+}
+
+async function createCustomerContactLog(
+	input: CustomerContactLogInput,
+	notion: NotionClient,
+): Promise<CustomerContactLogResult> {
+	const sourcePageId = input.sourcePageId?.trim();
+	const sourcePage = sourcePageId
+		? await notion.pages.retrieve({ page_id: sourcePageId })
+		: null;
+	const sourceProperties = sourcePage?.properties ?? {};
+	const phase = normalizeCustomerContactPhase(
+		input.sourceType || inferCustomerContactPhase(sourceProperties),
+	);
+	const activityType = normalizeCustomerContactActivityType(input.activityType);
+	const activityContent = input.activityContent?.trim() ?? "";
+	const nextAction = input.nextAction?.trim() ?? "";
+	const occurredAt = normalizeCustomerContactDate(input.occurredAt);
+	const sourceTitle = sourcePage ? readGenericPageTitle(sourcePage) : "";
+	const relatedInquiryIds = uniqueIds([
+		...(phase === "問い合わせ" && sourcePage ? [sourcePage.id] : []),
+		...relationIdsFromProperty(sourceProperties["元問い合わせ"]),
+		...relationIdsFromProperty(sourceProperties["関連問い合わせ"]),
+	]);
+	const relatedProjectIds = uniqueIds([
+		...(phase === "案件" && sourcePage ? [sourcePage.id] : []),
+		...relationIdsFromProperty(sourceProperties["紐づき案件"]),
+		...relationIdsFromProperty(sourceProperties["関連案件"]),
+	]);
+	const relatedDealIds = uniqueIds([
+		...(phase === "商談" && sourcePage ? [sourcePage.id] : []),
+		...relationIdsFromProperty(sourceProperties["関連商談"]),
+	]);
+	const relatedClosingIds = uniqueIds([
+		...(phase === "成約後" && sourcePage ? [sourcePage.id] : []),
+		...relationIdsFromProperty(sourceProperties["関連成約"]),
+		...relationIdsFromProperty(sourceProperties["関連成約報告"]),
+	]);
+	const relatedCompanyIds = uniqueIds(relationIdsFromProperty(sourceProperties["関連企業"]));
+	const assignedUserIds = uniqueIds([
+		...personIdsFromProperty(sourceProperties["担当営業ユーザー"]),
+		...personIdsFromProperty(sourceProperties["担当者"]),
+	]);
+	const assignedUserLabels = uniqueStrings([
+		...personLabelsFromProperty(sourceProperties["担当営業ユーザー"]),
+		...personLabelsFromProperty(sourceProperties["担当者"]),
+	]);
+
+	if (!activityContent && !nextAction) {
+		return {
+			contactLogPageId: null,
+			action: "needs-review",
+			message:
+				"活動内容と次回アクションが空のため、顧客接点ログは作成しませんでした。",
+		};
+	}
+
+	const titleText = buildCustomerContactLogTitle({
+		occurredAt,
+		assignedUserLabels,
+		activityType,
+		activityContent,
+		nextAction,
+		sourceTitle,
+		phase,
+	});
+
+	if (input.dryRun) {
+		return {
+			contactLogPageId: null,
+			action: "dry-run",
+			message: [
+				`dry-run: ${titleText} を顧客接点ログDBへ作成できます。`,
+				`関連問い合わせ=${relatedInquiryIds.length}`,
+				`関連案件=${relatedProjectIds.length}`,
+				`関連商談=${relatedDealIds.length}`,
+				`関連成約=${relatedClosingIds.length}`,
+				"ステータス・評価点は変更しません。",
+			].join(" / "),
+		};
+	}
+
+	const properties: Record<string, unknown> = {
+		接点タイトル: title(titleText),
+		活動ログ: richText(titleText),
+		活動表示: richText(titleText),
+		活動種別: select(activityType),
+		活動内容: richText(activityContent),
+		次回アクション: richText(nextAction),
+		接点日時: { date: { start: occurredAt } },
+		フェーズ区分: select(phase),
+		活動ログ反映状態: select("未反映"),
+		停滞判定対象: { checkbox: true },
+		めぐる確認状態: select("未確認"),
+		Worker処理ID: richText(
+			`customer-contact-${sourcePage?.id ?? "manual"}-${new Date().toISOString()}`,
+		),
+	};
+	if (sourcePage?.url) properties["入力元URL"] = { url: sourcePage.url };
+	if (assignedUserIds.length > 0) {
+		properties["担当営業ユーザー"] = {
+			people: assignedUserIds.map((id) => ({ object: "user", id })),
+		};
+	}
+	if (relatedInquiryIds.length > 0) properties["関連問い合わせ"] = relationIds(relatedInquiryIds);
+	if (relatedProjectIds.length > 0) properties["関連案件"] = relationIds(relatedProjectIds);
+	if (relatedDealIds.length > 0) properties["関連商談"] = relationIds(relatedDealIds);
+	if (relatedClosingIds.length > 0) properties["関連成約"] = relationIds(relatedClosingIds);
+	if (relatedCompanyIds.length > 0) properties["関連企業"] = relationIds(relatedCompanyIds);
+
+	const created = await notion.pages.create({
+		parent: { data_source_id: CUSTOMER_CONTACT_LOG_DATA_SOURCE_ID },
+		properties,
+	});
+
+	if (sourcePage) {
+		await updateSourcePageAfterCustomerContact(notion, sourcePage, phase, occurredAt);
+	}
+	await refreshRelatedSalesPipelineSignals(notion, [
+		...relatedInquiryIds,
+		...relatedProjectIds,
+	]).catch((error) => {
+		console.log("sales pipeline signal refresh skipped", String(error));
+	});
+
+	return {
+		contactLogPageId: created.id,
+		action: "created-log",
+		message:
+			"顧客接点ログDBへ1件作成しました。活動ログハブへは未反映のまま、ステータス・評価点は変更していません。",
+	};
+}
+
+export {
+	createCustomerContactLog as createCustomerContactLogForTest,
+	buildInquiryDisplayTitle as buildInquiryDisplayTitleForTest,
+	buildNumberedInquiryDisplayTitle as buildNumberedInquiryDisplayTitleForTest,
+	buildInquiryAttentionMemo as buildInquiryAttentionMemoForTest,
+	buildInquiryReceptionNumber as buildInquiryReceptionNumberForTest,
+	inferInquiryCategoryCode as inferInquiryCategoryCodeForTest,
+};
+
+function buildCustomerContactLogTitle(input: {
+	occurredAt: string;
+	assignedUserLabels: string[];
+	activityType: string;
+	activityContent: string;
+	nextAction: string;
+	sourceTitle: string;
+	phase: string;
+}): string {
+	const dateLabel = input.occurredAt.slice(0, 10) || todayDateJST();
+	const actionLabel = compactOneLine(input.activityType || "活動", 16);
+	const summary = compactOneLine(
+		input.activityContent ||
+			input.nextAction ||
+			input.sourceTitle ||
+			(input.phase === "その他" ? "顧客接点" : input.phase),
+		48,
+	);
+	return [dateLabel, actionLabel, summary].filter(Boolean).join("｜");
+}
+
+function compactOneLine(value: string, maxLength: number): string {
+	const normalized = value.replace(/\s+/g, " ").trim();
+	if (normalized.length <= maxLength) return normalized;
+	return `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+async function updateSourcePageAfterCustomerContact(
+	notion: NotionClient,
+	sourcePage: Page,
+	phase: string,
+	occurredAt: string,
+): Promise<void> {
+	if (phase === "問い合わせ") {
+		const currentStatus = text(sourcePage.properties?.["ステータス"]);
+		await safeUpdateExistingProperties(notion, sourcePage, {
+			"📅 最終連絡日": { kind: "date", value: occurredAt },
+			...(currentStatus === "未対応"
+				? {
+					ステータス: { kind: "select" as const, value: "対応中" },
+					進捗フェーズ: { kind: "select" as const, value: "対応中" },
+				}
+				: {}),
+			"🤖 AI判定状態": { kind: "select", value: "✅ 判定済" },
+			"🤖 AI判定根拠": {
+				kind: "text",
+				value:
+					currentStatus === "未対応"
+						? `顧客接点ログDBに接点記録あり（${occurredAt}）。未対応から対応中へ進めました。`
+						: `顧客接点ログDBに接点記録あり（${occurredAt}）。ステータスは変更していません。`,
+			},
+		});
+		return;
+	}
+	if (phase === "案件") {
+		await safeUpdateExistingProperties(notion, sourcePage, {
+			最終アクション日: { kind: "date", value: occurredAt },
+		});
+	}
+}
+
+async function refreshRelatedSalesPipelineSignals(
+	notion: NotionClient,
+	pageIds: string[],
+): Promise<void> {
+	for (const pageId of uniqueIds(pageIds)) {
+		await refreshSalesPipelineSignal(pageId, notion).catch((error) => {
+			console.log("related sales pipeline signal refresh skipped", { pageId, error: String(error) });
+		});
+	}
+}
+
+async function refreshSalesPipelineSignal(
+	pageId: string,
+	notion: NotionClient,
+	nowIso = new Date().toISOString(),
+	dryRun = false,
+): Promise<SalesPipelineSignalResult> {
+	const page = await notion.pages.retrieve({ page_id: pageId });
+	const properties = page.properties ?? {};
+
+	if (properties["件名"]) {
+		const logs = await findCustomerContactLogsForPage(notion, "関連問い合わせ", page.id);
+		const assessment = assessInquiryPipeline(page, logs, nowIso);
+		if (!dryRun) {
+			await safeUpdateExistingProperties(notion, page, {
+				案件化近さ: { kind: "select", value: assessment.proximity },
+				案件化スコア: { kind: "number", value: assessment.score },
+				"問い合わせフェーズ（推奨）": {
+					kind: "select",
+					value: assessment.recommendedPhase,
+				},
+				案件化根拠: { kind: "text", value: assessment.reason },
+				案件化次アクション: { kind: "text", value: assessment.nextAction },
+				案件化停滞時間: { kind: "number", value: assessment.stagnationHours },
+				案件化停滞日数: { kind: "number", value: assessment.stagnationDays },
+				案件化停滞アラート: { kind: "select", value: assessment.stagnationAlert },
+				案件化最終判定日時: { kind: "date", value: nowIso },
+			});
+			await createPipelineAssessmentLearningLog(notion, page, assessment, {
+				kind: "案件化予測",
+				area: "問い合わせ",
+				relationProperty: "関連問い合わせ",
+				nowIso,
+			}).catch((error) => {
+				console.log("inquiry pipeline learning log skipped", String(error));
+			});
+		}
+		return {
+			pageId: page.id,
+			action: dryRun ? "dry-run" : "updated-inquiry",
+			message: `問い合わせの案件化温度計を更新しました（${assessment.proximity} / ${assessment.score}点）。`,
+			assessment,
+		};
+	}
+
+	if (properties["案件名"]) {
+		const logs = await findCustomerContactLogsForPage(notion, "関連案件", page.id);
+		const assessment = assessProjectClosing(page, logs, nowIso);
+		if (!dryRun) {
+			await safeUpdateExistingProperties(notion, page, {
+				成約近さ: { kind: "select", value: assessment.proximity },
+				成約スコア: { kind: "number", value: assessment.score },
+				"推奨フェーズ（活動ログ）": {
+					kind: "select",
+					value: assessment.recommendedPhase,
+				},
+				"フェーズ根拠（活動ログ）": { kind: "text", value: assessment.reason },
+				次アクション推奨: { kind: "text", value: assessment.nextAction },
+				成約根拠: { kind: "text", value: assessment.reason },
+				成約次アクション: { kind: "text", value: assessment.nextAction },
+				成約停滞時間: { kind: "number", value: assessment.stagnationHours },
+				成約停滞日数: { kind: "number", value: assessment.stagnationDays },
+				成約停滞アラート: { kind: "select", value: assessment.stagnationAlert },
+				成約最終判定日時: { kind: "date", value: nowIso },
+			});
+			await createPipelineAssessmentLearningLog(notion, page, assessment, {
+				kind: "成約予測",
+				area: "案件",
+				relationProperty: "関連案件",
+				nowIso,
+			}).catch((error) => {
+				console.log("project closing learning log skipped", String(error));
+			});
+		}
+		return {
+			pageId: page.id,
+			action: dryRun ? "dry-run" : "updated-project",
+			message: `案件の成約温度計を更新しました（${assessment.proximity} / ${assessment.score}点）。`,
+			assessment,
+		};
+	}
+
+	return {
+		pageId: page.id,
+		action: "skipped",
+		message: "問い合わせDBまたは案件管理DBのページではないため、温度計更新をスキップしました。",
+		assessment: null,
+	};
+}
+
+async function findCustomerContactLogsForPage(
+	notion: NotionClient,
+	relationProperty: "関連問い合わせ" | "関連案件",
+	pageId: string,
+): Promise<PipelineLogSignal[]> {
+	const response = await notion.dataSources.query({
+		data_source_id: CUSTOMER_CONTACT_LOG_DATA_SOURCE_ID,
+		filter: {
+			property: relationProperty,
+			relation: { contains: pageId },
+		},
+		page_size: 20,
+	});
+	return (response.results ?? []).map(readCustomerContactLogSignal);
+}
+
+function assessInquiryPipeline(
+	page: Page,
+	logs: PipelineLogSignal[],
+	nowIso = new Date().toISOString(),
+): PipelineAssessment {
+	const properties = page.properties ?? {};
+	const status = text(properties["ステータス"]);
+	const assigned = personIdsFromProperty(properties["担当営業ユーザー"]).length > 0;
+	const materialStatus = text(properties["資料収集ステータス"]);
+	const requiredMaterials = text(properties["必要資料チェック"])
+		.split(",")
+		.map((value) => value.trim())
+		.filter(Boolean);
+	const tags = labelsFromProperty(properties["タグ"]);
+	const hasProject = relationIdsFromProperty(properties["紐づき案件"]).length > 0;
+	const sourceText = [
+		readGenericPageTitle(page),
+		...tags,
+		text(properties["本文"]),
+		text(properties["メール要約"]),
+		text(properties["要約"]),
+		text(properties["📝 活動ログ"]),
+		...logs.map((log) => `${log.activityType} ${log.activityContent} ${log.nextAction}`),
+	].join(" ");
+	const lastSignalAt = latestSignalDate([
+		...logs.map((log) => log.occurredAt),
+		dateStartFromProperty(properties["📅 最終連絡日"]),
+		dateStartFromProperty(properties["受信日時"]),
+	]);
+
+	if (hasProject || /案件化/.test(status)) {
+		const stagnation = buildStagnation(lastSignalAt, nowIso, 100);
+		return {
+			proximity: "⑦ 案件化可",
+			score: 100,
+			recommendedPhase: "案件化候補",
+			reason: buildPipelineReason([
+				"既に案件へ紐づいている、またはステータスが案件化です。",
+				`接点${logs.length}件`,
+			]),
+			nextAction: "案件化済みです。案件管理DB側で成約に向けた次アクションを確認してください。",
+			lastSignalAt,
+			...stagnation,
+		};
+	}
+
+	let score = readGenericPageTitle(page) ? 5 : 0;
+	const reasons: string[] = [];
+	if (assigned) {
+		score += 12;
+		reasons.push("担当者あり");
+	} else {
+		reasons.push("担当者未設定");
+	}
+	if (logs.length > 0) {
+		score += 18;
+		reasons.push(`接点${logs.length}件`);
+	}
+	if (logs.some((log) => /Zoom|対面|現地|商談/.test(log.activityType))) {
+		score += 8;
+		reasons.push("強い接点あり");
+	}
+	score += inquiryMaterialScore(materialStatus);
+	if (materialStatus) reasons.push(`資料=${materialStatus}`);
+	if (requiredMaterials.length > 0) {
+		score += Math.min(4, requiredMaterials.length * 2);
+		reasons.push(`必要資料${requiredMaterials.length}項目`);
+	}
+	if (/価格|条件|査定|専任|専売|権利|登記|経産|電力|シミュレーション/.test(sourceText)) {
+		score += 8;
+		reasons.push("条件/資料の具体情報あり");
+	}
+	const tagSignal = scorePipelineTags(tags, [
+		{ pattern: /現地調査|現調/, score: 12, label: "現地調査" },
+		{ pattern: /値決め|値段交渉|価格交渉|価格設定/, score: 12, label: "値決め/価格交渉" },
+		{ pattern: /専売|専任|媒介|専売契約/, score: 16, label: "専売/媒介" },
+		{ pattern: /資料受領|資料回収|書類回収|資料.*済|必要資料|収取/, score: 10, label: "資料回収" },
+		{ pattern: /決裁者|決済者|承認済|社内承認|稟議/, score: 12, label: "決裁者承認" },
+	], 24);
+	if (tagSignal.score > 0) {
+		score += tagSignal.score;
+		reasons.push(`タグ=${tagSignal.labels.join("、")}`);
+	}
+	score = clampScore(score);
+	const proximity = inquiryProximityFromScore(score);
+	const recommendedPhase = inquiryRecommendedPhaseFromScore(score, materialStatus);
+	const stagnation = buildStagnation(lastSignalAt, nowIso, score);
+	return {
+		proximity,
+		score,
+		recommendedPhase,
+		reason: buildPipelineReason(reasons),
+		nextAction: inquiryNextAction({ assigned, logs, materialStatus, score }),
+		lastSignalAt,
+		...stagnation,
+	};
+}
+
+function assessProjectClosing(
+	page: Page,
+	logs: PipelineLogSignal[],
+	nowIso = new Date().toISOString(),
+): PipelineAssessment {
+	const properties = page.properties ?? {};
+	const status = text(properties["ステータス"]);
+	const docStatus = text(properties["完成図書ステータス"]);
+	const tags = labelsFromProperty(properties["タグ"]);
+	const hasClosing = relationIdsFromProperty(properties["関連成約"]).length > 0;
+	const gross = numberValue(properties["予定粗利額"]) ?? numberValue(properties["目標粗利額"]) ?? 0;
+	const sourceText = [
+		readGenericPageTitle(page),
+		...tags,
+		text(properties["案件詳細"]),
+		text(properties["確認待ち内容"]),
+		...logs.map((log) => `${log.activityType} ${log.activityContent} ${log.nextAction}`),
+	].join(" ");
+	const lastSignalAt = latestSignalDate([
+		...logs.map((log) => log.occurredAt),
+		dateStartFromProperty(properties["最終アクション日"]),
+		dateStartFromProperty(properties["作成日"]),
+	]);
+
+	if (hasClosing || /成約|成約申請/.test(status)) {
+		const stagnation = buildStagnation(lastSignalAt, nowIso, 100);
+		return {
+			proximity: "⑦ 成約報告候補",
+			score: 100,
+			recommendedPhase: "成約報告候補",
+			reason: buildPipelineReason([
+				"成約報告または成約ステータスが確認できます。",
+				`接点${logs.length}件`,
+			]),
+			nextAction: "成約報告の内容と歩合・粗利の整合を確認してください。",
+			lastSignalAt,
+			...stagnation,
+		};
+	}
+
+	let score = projectStatusScore(status);
+	const reasons = [`ステータス=${status || "未設定"}`];
+	if (logs.length > 0) {
+		score += 12;
+		reasons.push(`接点${logs.length}件`);
+	}
+	if (logs.some((log) => /Zoom|対面|現地|商談/.test(log.activityType))) {
+		score += 8;
+		reasons.push("強い商談接点あり");
+	}
+	if (/提案|見積|価格|条件|契約|支払|成約|申込|買主|売主/.test(sourceText)) {
+		score += 8;
+		reasons.push("提案/条件交渉の具体情報あり");
+	}
+	if (/確認済|完成/.test(docStatus)) {
+		score += 5;
+		reasons.push(`完成図書=${docStatus}`);
+	} else if (/不足/.test(docStatus)) {
+		score -= 5;
+		reasons.push("完成図書に不足あり");
+	}
+	if (gross > 0) {
+		score += 3;
+		reasons.push("予定粗利あり");
+	}
+	const tagSignal = scorePipelineTags(tags, [
+		{ pattern: /現地案内|案内/, score: 14, label: "現地案内" },
+		{ pattern: /銀行審査|融資|ローン|与信/, score: 12, label: "銀行審査" },
+		{ pattern: /契約書|契約|申込|申し込み/, score: 14, label: "契約手続き" },
+		{ pattern: /決済日|決済予定|決済完了|入金|着金/, score: 14, label: "決済/入金" },
+		{ pattern: /決裁者|決済者|承認済|社内承認|稟議/, score: 12, label: "決裁者承認" },
+		{ pattern: /値段交渉|価格交渉|条件交渉/, score: 8, label: "条件交渉" },
+	], 10);
+	if (tagSignal.score > 0) {
+		score += tagSignal.score;
+		reasons.push(`タグ=${tagSignal.labels.join("、")}`);
+	}
+	score = clampScore(score);
+	const proximity = projectClosingProximityFromScore(score);
+	const recommendedPhase = projectRecommendedPhaseFromScore(score);
+	const stagnation = buildStagnation(lastSignalAt, nowIso, score);
+	return {
+		proximity,
+		score,
+		recommendedPhase,
+		reason: buildPipelineReason(reasons),
+		nextAction: projectNextAction({ status, docStatus, score }),
+		lastSignalAt,
+		...stagnation,
+	};
+}
+
+function readCustomerContactLogSignal(page: Page): PipelineLogSignal {
+	const properties = page.properties ?? {};
+	return {
+		id: page.id,
+		occurredAt: dateStartFromProperty(properties["接点日時"]) || dateStartFromProperty(properties["作成日"]),
+		activityType: text(properties["活動種別"]) || "活動",
+		activityContent: text(properties["活動内容"]) || text(properties["活動表示"]) || text(properties["活動ログ"]),
+		nextAction: text(properties["次回アクション"]),
+	};
+}
+
+async function createPipelineAssessmentLearningLog(
+	notion: NotionClient,
+	page: Page,
+	assessment: PipelineAssessment,
+	input: {
+		kind: "案件化予測" | "成約予測";
+		area: "問い合わせ" | "案件";
+		relationProperty: "関連問い合わせ" | "関連案件";
+		nowIso: string;
+	},
+): Promise<void> {
+	const pageTitle = readGenericPageTitle(page) || page.id;
+	const titleText = `${input.kind}｜${pageTitle}｜${assessment.proximity}｜${assessment.score}点`;
+	const reason = [
+		`判定: ${assessment.proximity} / ${assessment.score}点`,
+		`推奨フェーズ: ${assessment.recommendedPhase}`,
+		`停滞: ${assessment.stagnationHours}時間 / ${assessment.stagnationAlert}`,
+		assessment.reason,
+	].filter(Boolean).join("\n");
+
+	await notion.pages.create({
+		parent: { data_source_id: AI_LEARNING_LOG_DATA_SOURCE_ID },
+		properties: {
+			判定名: title(titleText),
+			判定種別: select(input.kind),
+			対象領域: select(input.area),
+			判定日時: { date: { start: input.nowIso } },
+			"AI/Worker名": richText("refreshSalesPipelineSignal"),
+			判定バージョン: richText("sales-pipeline-v1"),
+			判定スコア: { number: assessment.score },
+			判定ラベル: richText(assessment.proximity),
+			判定根拠: richText(reason),
+			次アクション: richText(assessment.nextAction),
+			実結果: select("未確認"),
+			"予測との差": select("未確認"),
+			学習反映状態: select("未確認"),
+			[input.relationProperty]: relationIds([page.id]),
+		},
+	});
+}
+
+type DealFeedbackLearningLogInput = {
+	dealPageId: string;
+	meetingPageId?: string | null;
+	dealName: string;
+	score: number;
+	salesFeedback: string;
+	improvementPoints: string[];
+	nextTalkImage: string;
+	followMailHint: string;
+	closingHint: string;
+	nowIso?: string;
+};
+
+type MeetingFeedbackLearningLogInput = {
+	meetingPageId: string;
+	meetingTitle: string;
+	meetingType: string;
+	status: string;
+	directFeedback: string;
+	goodPoints: string[];
+	improvementPoints: string[];
+	nextQuestions: string[];
+	nextAction: string;
+	nowIso?: string;
+};
+
+async function createDealFeedbackLearningLog(
+	notion: NotionClient,
+	input: DealFeedbackLearningLogInput,
+): Promise<string | null> {
+	const exists = await aiLearningLogExists(
+		notion,
+		"関連商談",
+		input.dealPageId,
+		"商談フィードバック",
+	);
+	if (exists) return null;
+
+	const titleText = `商談フィードバック｜${input.dealName || input.dealPageId}｜${input.score}点`;
+	const reason = [
+		`営業スコア: ${input.score}点`,
+		`営業フィードバック: ${input.salesFeedback}`,
+		`改善ポイント:\n${input.improvementPoints.map((item) => `・${item}`).join("\n")}`,
+		`フォローメールヒント: ${input.followMailHint}`,
+		`成約へのヒント: ${input.closingHint}`,
+	].filter(Boolean).join("\n");
+	const properties: Record<string, unknown> = {
+		判定名: title(titleText),
+		判定種別: select("商談フィードバック"),
+		対象領域: select("商談"),
+		判定日時: { date: { start: input.nowIso || new Date().toISOString() } },
+		"AI/Worker名": richText("processDealMeetingFeedback"),
+		判定バージョン: richText("deal-feedback-v1"),
+		判定スコア: { number: clampScore(input.score) },
+		判定ラベル: richText(`営業スコア ${clampScore(input.score)}点`),
+		判定根拠: richText(reason),
+		次アクション: richText(input.nextTalkImage),
+		実結果: select("未確認"),
+		"予測との差": select("未確認"),
+		学習反映状態: select("未確認"),
+		関連商談: relationIds([input.dealPageId]),
+	};
+	if (input.meetingPageId) {
+		properties.関連会議 = relationIds([input.meetingPageId]);
+	}
+	const created = await notion.pages.create({
+		parent: { data_source_id: AI_LEARNING_LOG_DATA_SOURCE_ID },
+		properties,
+	});
+	return created.id;
+}
+
+async function createMeetingFeedbackLearningLog(
+	notion: NotionClient,
+	input: MeetingFeedbackLearningLogInput,
+): Promise<string | null> {
+	const exists = await aiLearningLogExists(
+		notion,
+		"関連会議",
+		input.meetingPageId,
+		"会議フィードバック",
+	);
+	if (exists) return null;
+
+	const titleText = `会議フィードバック｜${input.meetingTitle || input.meetingPageId}｜${input.status}`;
+	const reason = [
+		`会議種別: ${input.meetingType || "未設定"}`,
+		`率直フィードバック: ${input.directFeedback}`,
+		`良かった点:\n${input.goodPoints.map((item) => `・${item}`).join("\n")}`,
+		`改善ポイント:\n${input.improvementPoints.map((item) => `・${item}`).join("\n")}`,
+		`次回確認事項:\n${input.nextQuestions.map((item) => `・${item}`).join("\n")}`,
+	].filter(Boolean).join("\n");
+	const created = await notion.pages.create({
+		parent: { data_source_id: AI_LEARNING_LOG_DATA_SOURCE_ID },
+		properties: {
+			判定名: title(titleText),
+			判定種別: select("会議フィードバック"),
+			対象領域: select("会議"),
+			判定日時: { date: { start: input.nowIso || new Date().toISOString() } },
+			"AI/Worker名": richText("processMeetingFeedback"),
+			判定バージョン: richText("meeting-feedback-v1"),
+			判定ラベル: richText(input.status || "返却済"),
+			判定根拠: richText(reason),
+			次アクション: richText(input.nextAction),
+			実結果: select("未確認"),
+			"予測との差": select("未確認"),
+			学習反映状態: select("未確認"),
+			関連会議: relationIds([input.meetingPageId]),
+		},
+	});
+	return created.id;
+}
+
+async function aiLearningLogExists(
+	notion: NotionClient,
+	relationProperty: string,
+	pageId: string,
+	kind: string,
+): Promise<boolean> {
+	const response = await notion.dataSources.query({
+		data_source_id: AI_LEARNING_LOG_DATA_SOURCE_ID,
+		filter: {
+			and: [
+				{ property: relationProperty, relation: { contains: pageId } },
+				{ property: "判定種別", select: { equals: kind } },
+			],
+		},
+		page_size: 1,
+	});
+	return ((response.results ?? []) as Page[]).length > 0;
+}
+
+async function markAiLearningLogsOutcome(
+	notion: NotionClient,
+	input: {
+		relationProperty: "関連土地" | "関連問い合わせ" | "関連案件" | "関連商談" | "関連会議" | "関連成約";
+		pageId: string;
+		outcome: "案件化" | "成約" | "失注" | "見送り" | "保留" | "差し戻し" | "停滞";
+		outcomeDate?: string;
+		scoreThreshold: number;
+		note: string;
+	},
+): Promise<number> {
+	const response = await notion.dataSources.query({
+		data_source_id: AI_LEARNING_LOG_DATA_SOURCE_ID,
+		filter: {
+			property: input.relationProperty,
+			relation: { contains: input.pageId },
+		},
+		page_size: 50,
+	});
+	const pages = (response.results ?? []) as Page[];
+	const outcomeDate = input.outcomeDate || todayDateJST();
+	for (const page of pages) {
+		const score = numberValue(page.properties?.["判定スコア"]) ?? 0;
+		const kind = text(page.properties?.["判定種別"]);
+		const gap = predictionGapForPositiveOutcome(score, input.scoreThreshold);
+		await notion.pages.update({
+			page_id: page.id,
+			properties: {
+				実結果: select(input.outcome),
+				結果日: { date: { start: outcomeDate } },
+				"予測との差": select(gap),
+				人間の補足メモ: richText(input.note),
+				学習反映状態: select("学習候補"),
+				ルール化判断: select("未判断"),
+				ルール化優先度: select(learningRulePriorityForGap(gap)),
+				外れ原因カテゴリ: multiSelect(learningCauseCategoriesForGap(gap)),
+				反映先: multiSelect(learningRuleTargetsForGap(gap)),
+				再検証状態: select("未検証"),
+				ルール反映メモ: richText(learningRuleMemo(kind, gap, score, input.scoreThreshold)),
+			},
+		});
+	}
+	return pages.length;
+}
+
+function predictionGapForPositiveOutcome(score: number, threshold: number): string {
+	return score >= threshold ? "的中" : "過小評価";
+}
+
+function learningRulePriorityForGap(gap: string): string {
+	if (gap === "的中") return "P3｜記録のみ";
+	if (gap === "過小評価" || gap === "過大評価") return "P1｜今週直す";
+	return "P2｜様子を見る";
+}
+
+function learningCauseCategoriesForGap(gap: string): string[] {
+	if (gap === "過小評価") return ["配点が弱い"];
+	if (gap === "過大評価") return ["配点が強すぎる"];
+	return [];
+}
+
+function learningRuleTargetsForGap(gap: string): string[] {
+	if (gap === "過小評価" || gap === "過大評価") {
+		return ["Worker配点", "AIプロンプト"];
+	}
+	return [];
+}
+
+function learningRuleMemo(kind: string, gap: string, score: number, threshold: number): string {
+	if (gap === "的中") {
+		return `${kind || "AI判定"}は基準${threshold}点に対して${score}点で、実結果と方向性が合っています。現時点では良い判定例として蓄積します。`;
+	}
+	if (gap === "過小評価") {
+		return `${kind || "AI判定"}は基準${threshold}点に対して${score}点でしたが、実結果が前進しました。低く見積もった理由を確認し、配点・タグ・プロンプトのどこを強めるか判断してください。`;
+	}
+	if (gap === "過大評価") {
+		return `${kind || "AI判定"}は基準${threshold}点に対して${score}点でしたが、実結果が伸びませんでした。高く見積もった理由を確認し、過剰加点を弱めるか判断してください。`;
+	}
+	return `${kind || "AI判定"}の実結果が返りました。外れ理由と反映先を確認してください。`;
+}
+
+function inquiryMaterialScore(status: string): number {
+	if (/案件へ引き継ぎ済|確認済/.test(status)) return 24;
+	if (/収集中/.test(status)) return 15;
+	if (/不足あり/.test(status)) return 10;
+	return 0;
+}
+
+function labelsFromProperty(property: unknown): string[] {
+	return text(property)
+		.split(",")
+		.map((value) => value.trim())
+		.filter(Boolean);
+}
+
+function scorePipelineTags(
+	tags: string[],
+	rules: Array<{ pattern: RegExp; score: number; label: string }>,
+	maxScore: number,
+): { score: number; labels: string[] } {
+	const matched = new Map<string, number>();
+	for (const tag of tags) {
+		for (const rule of rules) {
+			if (!rule.pattern.test(tag)) continue;
+			matched.set(rule.label, Math.max(matched.get(rule.label) ?? 0, rule.score));
+		}
+	}
+	const rawScore = [...matched.values()].reduce((sum, value) => sum + value, 0);
+	return {
+		score: Math.min(maxScore, rawScore),
+		labels: [...matched.keys()],
+	};
+}
+
+function inquiryProximityFromScore(score: number): string {
+	if (score >= 95) return "⑦ 案件化可";
+	if (score >= 80) return "⑥ 案件化候補";
+	if (score >= 65) return "⑤ 資料回収中";
+	if (score >= 50) return "④ 条件確認中";
+	if (score >= 35) return "③ 接触済";
+	if (score >= 20) return "② 初動前";
+	return "① 情報不足";
+}
+
+function inquiryRecommendedPhaseFromScore(score: number, materialStatus: string): string {
+	if (score >= 80) return "案件化候補";
+	if (/収集中|不足あり|確認済|案件へ引き継ぎ済/.test(materialStatus) || score >= 65) {
+		return "資料回収中";
+	}
+	if (score >= 50) return "条件確認中";
+	if (score >= 35) return "初回接触済";
+	if (score >= 20) return "担当確定";
+	return "未対応";
+}
+
+function inquiryNextAction(input: {
+	assigned: boolean;
+	logs: PipelineLogSignal[];
+	materialStatus: string;
+	score: number;
+}): string {
+	if (!input.assigned) return "担当営業ユーザーを決め、初回連絡を入れてください。";
+	if (input.logs.length === 0) return "電話またはメールで初回接触し、顧客接点ログを残してください。";
+	if (/不足あり|収集中/.test(input.materialStatus)) {
+		return "不足資料を回収し、案件化できる条件がそろっているか確認してください。";
+	}
+	if (input.score >= 80) return "案件化候補です。案件化ボタンを押してよいか最終確認してください。";
+	return "売買条件、対象物、必要資料を整理し、次回接点を設定してください。";
+}
+
+function projectStatusScore(status: string): number {
+	if (/提案中/.test(status)) return 55;
+	if (/売れる状態/.test(status)) return 45;
+	if (/確認待ち/.test(status)) return 25;
+	if (/情報収集中/.test(status)) return 10;
+	return 5;
+}
+
+function projectClosingProximityFromScore(score: number): string {
+	if (score >= 95) return "⑦ 成約報告候補";
+	if (score >= 80) return "⑥ 提案中";
+	if (score >= 65) return "⑤ 条件交渉中";
+	if (score >= 50) return "④ 資料回収中";
+	if (score >= 35) return "③ 初回商談済";
+	if (score >= 20) return "② 接点不足";
+	return "① 情報不足";
+}
+
+function projectRecommendedPhaseFromScore(score: number): string {
+	if (score >= 95) return "成約報告候補";
+	if (score >= 80) return "提案中";
+	if (score >= 65) return "条件交渉中";
+	if (score >= 50) return "資料回収中";
+	if (score >= 35) return "初回接触済";
+	return "接点不足";
+}
+
+function projectNextAction(input: { status: string; docStatus: string; score: number }): string {
+	if (input.score >= 80) {
+		return "成約報告候補です。相手の最終意思、契約条件、粗利、必要書類を確認してください。";
+	}
+	if (/不足/.test(input.docStatus)) return "不足している完成図書・証憑を先に回収してください。";
+	if (/情報収集中|確認待ち/.test(input.status)) {
+		return "売れる状態にするため、価格・権利・資料・相手の意思を整理してください。";
+	}
+	return "次回商談または提案後フォローを設定し、顧客接点ログへ残してください。";
+}
+
+function latestSignalDate(values: string[]): string {
+	const dated = values
+		.map((value) => ({ value, time: parsePipelineDate(value) }))
+		.filter((item): item is { value: string; time: number } => item.time !== null)
+		.sort((a, b) => b.time - a.time);
+	return dated[0]?.value ?? "";
+}
+
+function buildStagnation(
+	lastSignalAt: string,
+	nowIso: string,
+	score = 0,
+): Pick<PipelineAssessment, "stagnationHours" | "stagnationDays" | "stagnationAlert"> {
+	const last = parsePipelineDate(lastSignalAt);
+	const now = parsePipelineDate(nowIso);
+	if (last === null || now === null || now < last) {
+		return {
+			stagnationHours: 0,
+			stagnationDays: 0,
+			stagnationAlert: "⚪ 判定不可",
+		};
+	}
+	const hours = Math.floor((now - last) / 36e5);
+	const days = Math.floor(hours / 24);
+	return {
+		stagnationHours: hours,
+		stagnationDays: days,
+		stagnationAlert: stagnationAlertFromHours(hours, score),
+	};
+}
+
+function parsePipelineDate(value: string): number | null {
+	if (!value) return null;
+	const normalized = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00+09:00` : value;
+	const time = Date.parse(normalized);
+	return Number.isFinite(time) ? time : null;
+}
+
+function stagnationAlertFromHours(hours: number, score = 0): string {
+	if (hours >= 240) return "🚨 10日超";
+	if (hours >= 168) return "🚨 7日超";
+	if (hours >= 72) return "🔴 3日超";
+	if (score >= 95 && hours >= 8) return "🚨 実行待ち当日超";
+	if (score >= 80 && hours >= 24) return "🔴 高スコア1日超";
+	if (score >= 65 && hours >= 48) return "🔴 高スコア2日超";
+	if (hours >= 24) return "🟡 1日超";
+	return "🟢 当日対応";
+}
+
+function buildPipelineReason(parts: string[]): string {
+	return parts.filter(Boolean).join(" / ").slice(0, 1800);
+}
+
+export {
+	markAiLearningLogsOutcome as markAiLearningLogsOutcomeForTest,
+	processLandEvaluation as processLandEvaluationForTest,
+	assessInquiryPipeline as assessInquiryPipelineForTest,
+	assessProjectClosing as assessProjectClosingForTest,
+	refreshSalesPipelineSignal as refreshSalesPipelineSignalForTest,
+};
+
+function normalizeCustomerContactPhase(value: string): string {
+	if (/問い合わせ|問合せ|inquiry/i.test(value)) return "問い合わせ";
+	if (/案件|project|case/i.test(value)) return "案件";
+	if (/商談|deal/i.test(value)) return "商談";
+	if (/成約/.test(value)) return "成約後";
+	return "その他";
+}
+
+function normalizeCustomerContactActivityType(value: string): string {
+	const raw = value.trim();
+	if (/電話|call|tel/i.test(raw)) return "電話";
+	if (/メール|mail|email/i.test(raw)) return "メール";
+	if (/zoom/i.test(raw)) return "Zoom";
+	if (/meet/i.test(raw)) return "Google Meet";
+	if (/オンライン/.test(raw)) return "オンライン商談";
+	if (/対面|訪問/.test(raw)) return "対面商談";
+	if (/現地|現調/.test(raw)) return "現地調査";
+	if (/測量/.test(raw)) return "測量";
+	if (/資料/.test(raw)) return "資料送付";
+	if (/社内|確認/.test(raw)) return "社内確認";
+	return raw || "その他";
+}
+
+function normalizeCustomerContactDate(value: string): string {
+	const trimmed = value.trim();
+	if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10);
+	return todayDateJST();
+}
+
+function inferCustomerContactPhase(properties: Record<string, unknown>): string {
+	if (properties["件名"]) return "問い合わせ";
+	if (properties["案件名"]) return "案件";
+	if (properties["商談名"]) return "商談";
+	return "その他";
+}
+
+function readGenericPageTitle(page: Page): string {
+	const properties = page.properties ?? {};
+	return (
+		text(properties["件名"]) ||
+		text(properties["案件名"]) ||
+		text(properties["商談名"]) ||
+		text(properties["成約名"]) ||
+		text(properties["企業名"]) ||
+		text(properties["名前"]) ||
+		text(properties["title"]) ||
+		""
+	);
+}
+
+async function backfillCustomerContactLogDisplays(
+	input: { limit?: number; dryRun?: boolean },
+	notion: NotionClient,
+): Promise<BulkCleanupResult> {
+	const limit = normalizeBulkLimit(input.limit);
+	const existing = await notion.dataSources.query({
+		data_source_id: CUSTOMER_CONTACT_LOG_DATA_SOURCE_ID,
+		page_size: limit,
+	});
+	const pages = (existing.results ?? []) as Page[];
+	let updated = 0;
+	const samples: string[] = [];
+
+	for (const page of pages) {
+		const properties = page.properties ?? {};
+		const currentDisplay = text(properties["活動表示"]);
+		const displayText = buildCustomerContactLogTitle({
+			occurredAt: dateStart(properties["接点日時"]) || todayDateJST(),
+			assignedUserLabels: personLabelsFromProperty(properties["担当営業ユーザー"]),
+			activityType: text(properties["活動種別"]) || "活動",
+			activityContent: text(properties["活動内容"]),
+			nextAction: text(properties["次回アクション"]),
+			sourceTitle: text(properties["活動ログ"]) || text(properties["接点タイトル"]),
+			phase: text(properties["フェーズ区分"]) || "顧客接点",
+		});
+		if (!displayText || currentDisplay === displayText) continue;
+		updated += 1;
+		if (samples.length < 5) samples.push(displayText);
+		if (input.dryRun) continue;
+		await safeUpdateExistingProperties(notion, page, {
+			接点タイトル: { kind: "text", value: displayText },
+			活動ログ: { kind: "text", value: displayText },
+			活動表示: { kind: "text", value: displayText },
+		});
+	}
+
+	return {
+		action: input.dryRun ? "dry-run" : updated > 0 ? "cleaned" : "skipped",
+		checked: pages.length,
+		updated,
+		message:
+			updated > 0
+				? `顧客接点ログ ${pages.length} 件を確認し、${updated} 件を短い表示へ整えました。例: ${samples.join(" / ")}`
+				: `顧客接点ログ ${pages.length} 件を確認しました。更新対象はありません。`,
+	};
+}
+
+function dateStart(property: unknown): string {
+	if (!property || typeof property !== "object") return "";
+	const prop = property as Record<string, unknown>;
+	const date = prop.date as Record<string, unknown> | undefined;
+	return typeof date?.start === "string" ? date.start.slice(0, 10) : "";
+}
+
+function normalizeBulkLimit(value: number | undefined): number {
+	if (!Number.isFinite(value ?? 0)) return 50;
+	return Math.min(Math.max(Math.floor(value ?? 50), 1), 100);
+}
+
+async function processInquiryCompanyLink(
+	input: InquiryInput,
+	notion: NotionClient,
+): Promise<InquiryResult> {
+	const page =
+		input.pageData ??
+		(await notion.pages.retrieve({
+			page_id: input.inquiryPageId,
+		}));
+	const inquiry = readInquiry(page);
+	const card = inquiryToCardInfo(inquiry);
+
+	if (inquiry.relatedCompanyIds.length > 0) {
+		const companyPage = await notion.pages.retrieve({
+			page_id: inquiry.relatedCompanyIds[0]!,
+		});
+		const company = readCompany(companyPage);
+		const preservedStatus =
+			inquiry.companyLinkStatus === "新規作成済"
+				? "新規作成済"
+				: "既存企業に紐づけ済";
+		if (!input.dryRun) {
+			await markInquiryLinkedToCompany(
+				notion,
+				inquiry,
+				inquiry.relatedCompanyIds[0]!,
+				preservedStatus,
+				"既に関連企業が入っているため、企業連携済みとして整理。",
+			);
+			await addInquiryRelationToCompany(
+				notion,
+				inquiry.relatedCompanyIds[0]!,
+				inquiry.page.id,
+			);
+		}
+		return {
+			inquiryPageId: inquiry.page.id,
+			action: input.dryRun ? "dry-run" : "skipped-existing",
+			companyId: inquiry.relatedCompanyIds[0]!,
+			companyName: company.name || inquiry.companyName || null,
+			message: input.dryRun
+				? "dry-run: 既に関連企業が入っています。"
+				: "既存の関連企業を保持し、問い合わせ側の連携状態だけ整えました。",
+		};
+	}
+
+	if (!shouldProcessInquiry(inquiry)) {
+		if (!input.dryRun) {
+			await markInquiryTargetOut(
+				notion,
+				inquiry,
+				"会社名・法人判定材料が不足しているため、企業DBは作成せず対象外にしました。",
+			);
+		}
+		return {
+			inquiryPageId: inquiry.page.id,
+			action: input.dryRun ? "dry-run" : "target-out",
+			companyId: null,
+			companyName: null,
+			message: "会社名・メール・電話・本文の法人判定材料が不足しています。",
+		};
+	}
+
+	const duplicates = await findDuplicateInquiries(notion, inquiry);
+	const duplicateCompanies = uniqueIds(
+		duplicates.flatMap((duplicate) =>
+			relationIdsFromProperty(duplicate.properties?.["関連企業"]),
+		),
+	);
+	if (duplicateCompanies.length === 1) {
+		const companyPage = await notion.pages.retrieve({
+			page_id: duplicateCompanies[0]!,
+		});
+		const company = readCompany(companyPage);
+		if (!input.dryRun) {
+			await markInquiryLinkedToCompany(
+				notion,
+				inquiry,
+				duplicateCompanies[0]!,
+				"既存企業に紐づけ済",
+				"同一キーの既存問い合わせに関連企業があるため、その企業へ紐づけ。",
+			);
+			await addInquiryRelationToCompany(notion, duplicateCompanies[0]!, inquiry.page.id);
+		}
+		return {
+			inquiryPageId: inquiry.page.id,
+			action: input.dryRun ? "dry-run" : "existing-linked",
+			companyId: duplicateCompanies[0]!,
+			companyName: company.name || inquiry.companyName || null,
+			message: "同一問い合わせキーの既存企業へ紐づけました。",
+		};
+	}
+	if (duplicateCompanies.length > 1 || (duplicates.length > 0 && !inquiry.companyName)) {
+		if (!input.dryRun) {
+			await markInquiryDuplicateHold(
+				notion,
+				inquiry,
+				duplicates,
+				"同一キーの問い合わせが複数あるため、企業作成せず重複疑いで停止。",
+			);
+		}
+		return {
+			inquiryPageId: inquiry.page.id,
+			action: input.dryRun ? "dry-run" : "duplicate-hold",
+			companyId: null,
+			companyName: null,
+			message: `重複疑いの問い合わせが ${duplicates.length} 件あります。`,
+		};
+	}
+
+	const candidates = await findCompanyCandidates(notion, card);
+	const strong = candidates.filter((candidate) => candidate.score >= 80);
+	const weak = candidates.filter((candidate) => candidate.weak);
+
+	if (input.dryRun) {
+			return {
+				inquiryPageId: inquiry.page.id,
+				action: "dry-run",
+				companyId: strong[0]?.page.id ?? duplicateCompanies[0] ?? null,
+				companyName: strong[0]?.name ?? (inquiry.companyName || null),
+				message: `dry-run: 強い企業候補 ${strong.length} 件、近似候補 ${weak.length} 件、重複問い合わせ ${duplicates.length} 件。`,
+			};
+		}
+
+	if (strong.length > 1) {
+		await markInquiryCandidateHold(notion, inquiry, strong);
+		return {
+			inquiryPageId: inquiry.page.id,
+			action: "duplicate-hold",
+			companyId: null,
+			companyName: null,
+			message: `強い企業候補が複数あります: ${strong.map((candidate) => candidate.name).join(", ")}`,
+		};
+	}
+
+	if (strong.length === 1) {
+		const company = strong[0]!;
+		await updateExistingCompanyFromInquiry(notion, company.page, inquiry);
+		await markInquiryLinkedToCompany(
+			notion,
+			inquiry,
+			company.page.id,
+			"既存企業に紐づけ済",
+			`既存企業に紐づけ済: ${company.reasons.join(" / ")}`,
+		);
+		await addInquiryRelationToCompany(notion, company.page.id, inquiry.page.id);
+		return {
+			inquiryPageId: inquiry.page.id,
+			action: "existing-linked",
+			companyId: company.page.id,
+			companyName: company.name,
+			message: "既存企業へ紐づけ、問い合わせ要約と窓口情報を補完しました。",
+		};
+	}
+
+	if (!inquiry.companyName) {
+		await markInquiryNeedsReview(
+			notion,
+			inquiry,
+			"会社名が未入力のため、企業DBを新規作成せず要確認にしました。",
+		);
+		return {
+			inquiryPageId: inquiry.page.id,
+			action: "needs-review",
+			companyId: null,
+			companyName: null,
+			message: "会社名が未入力です。",
+		};
+	}
+
+	const company = await createCompanyFromInquiry(notion, inquiry, weak[0]);
+	await markInquiryLinkedToCompany(
+		notion,
+		inquiry,
+		company.id,
+		"新規作成済",
+		weak[0]
+			? `近似候補はあるが強い一致なし。問い合わせ起点で新規作成し、重複候補へ回しました: ${weak[0].name}`
+			: "強い既存候補なし。問い合わせ起点で新規企業を作成しました。",
+	);
+	return {
+		inquiryPageId: inquiry.page.id,
+		action: "created-company",
+		companyId: company.id,
+		companyName: inquiry.companyName,
+		message: "新規企業を作成し、問い合わせへ関連企業を返却しました。",
+	};
+}
+
+async function processCompanyResearch(
+	input: CompanyResearchInput,
+	notion: NotionClient,
+): Promise<CompanyResearchResult> {
+	const companyPage = await notion.pages.retrieve({
+		page_id: input.companyPageId,
+	});
+	const company = readCompany(companyPage);
+	const research = await researchCompany(companyToCardInfo(company));
+	const next = mergeCompanyResearch(company, research);
+	const complete = isCompanyResearchComplete(next);
+	const status = complete ? "完了" : "要確認";
+	const memo = appendShortMemo(
+		company.aiMemo,
+		complete
+			? "2026-05-22 Workerが企業評価と3C三項目を確認・補完。3Cが揃ったため完了。"
+			: "2026-05-22 Workerが企業評価を確認したが3C不足が残るため要確認で停止。",
+	);
+
+	if (input.dryRun) {
+		return {
+			companyId: company.page.id,
+			action: "dry-run",
+			message: complete
+				? "dry-run: 企業評価と3C三項目を補完し、完了にできます。"
+				: "dry-run: 3C不足が残るため、要確認で止める想定です。",
+		};
+	}
+
+	await notion.pages.update({
+		page_id: company.page.id,
+		properties: {
+			企業調査ステータス: select(status),
+			企業サマリー: richText(next.summary),
+			現在課題仮説: richText(next.currentIssue),
+			将来課題仮説: richText(next.futureIssue),
+			営業切り口: richText(next.salesAngle),
+			和上解決策適合: richText(next.fit),
+			"3C：顧客・市場分析": richText(next.customerMarket3c),
+			"3C：競合分析": richText(next.competitor3c),
+			"3C：自社との関係性": richText(next.wajoRelation3c),
+			根拠ソース: richText(next.source),
+			企業AI受付メモ: richText(memo),
+		},
+	});
+
+	return {
+		companyId: company.page.id,
+		action: complete ? "updated-company" : "needs-review",
+		message: complete
+			? "企業評価と3C三項目を補完し、完了にしました。"
+			: "企業評価は確認しましたが、3C不足が残るため要確認で止めました。",
+	};
+}
+
+async function processMeetingMemoFormat(
+	input: MeetingMemoFormatInput,
+	notion: NotionClient,
+): Promise<MeetingMemoFormatResult> {
+	const meetingPage = await notion.pages.retrieve({
+		page_id: input.meetingPageId,
+	});
+	const properties = meetingPage.properties ?? {};
+	const titleText = text(properties["日時"]) || text(properties["会議名AI"]) || "会議";
+	const meetingType = text(properties["会議種別"]) || "未設定";
+	const propertyText = buildMeetingPropertySource(properties);
+	const blockText = await fetchPageBlockPlainText(notion, meetingPage.id);
+	const source = [blockText, propertyText].filter(Boolean).join("\n\n").slice(0, 12000);
+
+	if (source.replace(/\s/g, "").length < 80) {
+		const message =
+			"Meeting Notes本文または会議本文が未生成/短すぎるため、整形せず要確認で停止しました。";
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, meetingPage, {
+				メモ整形ステータス: { kind: "select", value: "要確認" },
+				メモ整形メモ: { kind: "text", value: message },
+			});
+		}
+		return {
+			meetingPageId: meetingPage.id,
+			action: "needs-review",
+			status: "要確認",
+			message,
+		};
+	}
+
+	if (input.dryRun) {
+		return {
+			meetingPageId: meetingPage.id,
+			action: "dry-run",
+			status: "dry-run",
+			message: `dry-run: ${titleText} / ${meetingType} を ${source.length} 文字の本文から整形できます。`,
+		};
+	}
+
+	let formatted: MeetingMemoAIResponse;
+	try {
+		formatted = await callOpenAIMeetingMemoFormat({
+			title: titleText,
+			meetingType,
+			source,
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		await safeUpdateExistingProperties(notion, meetingPage, {
+			メモ整形ステータス: { kind: "select", value: "エラー" },
+			メモ整形メモ: {
+				kind: "text",
+				value: `会議メモ整形Workerエラー: ${message.slice(0, 500)}`,
+			},
+		});
+		return {
+			meetingPageId: meetingPage.id,
+			action: "error",
+			status: "エラー",
+			message: `OpenAI API呼び出し失敗: ${message}`,
+		};
+	}
+
+	const patches: Record<string, SafePatch> = {
+		メモ整形ステータス: { kind: "select", value: formatted.formatStatus },
+		メモ整形メモ: {
+			kind: "text",
+			value: buildMeetingMemoFormatMemo(formatted, properties),
+		},
+		タスク化ステータス: { kind: "select", value: formatted.taskStatus },
+	};
+
+	addPatchIfBlank(patches, properties, "テキスト", formatted.text);
+	addPatchIfBlank(patches, properties, "要約", formatted.summary);
+	addPatchIfBlank(patches, properties, "議事内容", formatted.minutes);
+	addPatchIfBlank(patches, properties, "決定事項", formatted.decisions);
+	addPatchIfBlank(patches, properties, "アクション項目", formatted.actionItems);
+	await safeUpdateExistingProperties(notion, meetingPage, patches);
+
+	return {
+		meetingPageId: meetingPage.id,
+		action: formatted.formatStatus === "対象外" ? "target-out" : "formatted",
+		status: formatted.formatStatus,
+		message: `会議メモ整形完了。タスク化ステータス: ${formatted.taskStatus}。`,
+	};
+}
+
+function buildMeetingPropertySource(properties: Record<string, unknown>): string {
+	return [
+		["既存テキスト", text(properties["テキスト"])],
+		["既存要約", text(properties["要約"])],
+		["既存議事内容", text(properties["議事内容"])],
+		["既存決定事項", text(properties["決定事項"])],
+		["既存アクション項目", text(properties["アクション項目"])],
+	]
+		.filter(([, value]) => value)
+		.map(([label, value]) => `【${label}】\n${value}`)
+		.join("\n\n");
+}
+
+function addPatchIfBlank(
+	patches: Record<string, SafePatch>,
+	properties: Record<string, unknown>,
+	propertyName: string,
+	value: string,
+): void {
+	if (!value.trim()) return;
+	if (!isTextPropertyBlank(properties[propertyName])) return;
+	patches[propertyName] = { kind: "text", value };
+}
+
+function isTextPropertyBlank(property: unknown): boolean {
+	return text(property).trim().length === 0;
+}
+
+function buildMeetingMemoFormatMemo(
+	formatted: MeetingMemoAIResponse,
+	properties: Record<string, unknown>,
+): string {
+	const skipped = ["テキスト", "要約", "議事内容", "決定事項", "アクション項目"].filter(
+		(name) => !isTextPropertyBlank(properties[name]),
+	);
+	const lines = [
+		`Worker整形: ${new Date().toISOString()}`,
+		`メモ整形ステータス: ${formatted.formatStatus}`,
+		`タスク化ステータス: ${formatted.taskStatus}`,
+		formatted.memo ? `処理メモ: ${formatted.memo}` : "",
+		skipped.length > 0
+			? `既存入力があるため上書きしなかった項目: ${skipped.join(", ")}`
+			: "",
+	].filter(Boolean);
+	return lines.join("\n").slice(0, 1800);
+}
+
+async function callOpenAIMeetingMemoFormat(input: {
+	title: string;
+	meetingType: string;
+	source: string;
+}): Promise<MeetingMemoAIResponse> {
+	const apiKey = process.env.OPENAI_API_KEY;
+	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
+	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+	const systemPrompt = [
+		"あなたは和上ホールディングスの会議メモ整形AIです。",
+		"Notion AI Meeting Notes本文または会議本文を読み、会議議事録DBのプロパティへ整理します。",
+		"",
+		"役割:",
+		"- 文字起こし/会議内容を読みやすい形に整理する",
+		"- 要約、議事内容、決定事項、アクション項目を作る",
+		"- チームトラッカーにタスクを作らない",
+		"- 商談管理DB、関連チームタスク、商談連携状態を更新しない",
+		"",
+		"アクション項目ルール:",
+		"- 会議後に誰かが実行すべきものだけ抽出する",
+		"- 担当者が不明なら「担当者要確認」と書く",
+		"- 期限が不明なら「期限要確認」と書く",
+		"- 不明な担当者を推測でNotionユーザーに割り当てない",
+		"",
+		"ステータス:",
+		"- 明確なアクション項目が1件以上ある場合 taskStatus=未処理",
+		"- アクション項目はあるが担当者や期限が曖昧な場合 taskStatus=要確認",
+		"- 明確なアクション項目がない場合 taskStatus=対象外",
+		"- 本文が短い/未完成/曖昧な場合 formatStatus=要確認",
+		"- 整形できた場合 formatStatus=整形済",
+		"- 明確な会議内容がない場合 formatStatus=対象外",
+		"",
+		"必ずJSONのみを返してください。",
+	].join("\n");
+
+	const userPrompt = [
+		`会議名: ${input.title || "未設定"}`,
+		`会議種別: ${input.meetingType || "未設定"}`,
+		"",
+		"=== 会議本文 ===",
+		input.source.slice(0, 12000),
+	].join("\n");
+
+	const response = await fetch("https://api.openai.com/v1/chat/completions", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify({
+			model,
+			response_format: MEETING_MEMO_RESPONSE_FORMAT,
+			messages: [
+				{ role: "system", content: systemPrompt },
+				{ role: "user", content: userPrompt },
+			],
+		}),
+	});
+
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
+	}
+
+	const json = (await response.json()) as {
+		choices?: Array<{ message?: { content?: string } }>;
+	};
+	const raw = json.choices?.[0]?.message?.content;
+	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
+	return parseMeetingMemoAIResponse(raw);
+}
+
+function parseMeetingMemoAIResponse(raw: string): MeetingMemoAIResponse {
+	try {
+		const parsed = JSON.parse(raw) as Partial<MeetingMemoAIResponse>;
+		const taskStatus =
+			parsed.taskStatus === "未処理" ||
+			parsed.taskStatus === "要確認" ||
+			parsed.taskStatus === "対象外"
+				? parsed.taskStatus
+				: "要確認";
+		const formatStatus =
+			parsed.formatStatus === "整形済" ||
+			parsed.formatStatus === "要確認" ||
+			parsed.formatStatus === "対象外"
+				? parsed.formatStatus
+				: "要確認";
+		return {
+			text: typeof parsed.text === "string" ? parsed.text : "",
+			summary: typeof parsed.summary === "string" ? parsed.summary : "",
+			minutes: typeof parsed.minutes === "string" ? parsed.minutes : "",
+			decisions: typeof parsed.decisions === "string" ? parsed.decisions : "",
+			actionItems: typeof parsed.actionItems === "string" ? parsed.actionItems : "",
+			taskStatus,
+			formatStatus,
+			memo: typeof parsed.memo === "string" ? parsed.memo : "",
+		};
+	} catch (error) {
+		console.log("parseMeetingMemoAIResponse failed", String(error));
+		return {
+			text: "",
+			summary: "",
+			minutes: "",
+			decisions: "",
+			actionItems: "",
+			taskStatus: "要確認",
+			formatStatus: "要確認",
+			memo: `JSONパース失敗: ${raw.slice(0, 200)}`,
+		};
+	}
+}
+
+async function fetchPageBlockPlainText(
+	notion: NotionClient,
+	pageId: string,
+	depth = 0,
+): Promise<string> {
+	if (!notion.blocks?.children?.list || depth > 2) return "";
+	const lines: string[] = [];
+	let startCursor: string | null | undefined;
+	for (let i = 0; i < 5; i += 1) {
+		const response = await notion.blocks.children.list({
+			block_id: pageId,
+			page_size: 100,
+			start_cursor: startCursor,
+		});
+		for (const block of response.results) {
+			const blockText = blockPlainText(block);
+			if (blockText) lines.push(blockText);
+			if (block.has_children === true && typeof block.id === "string") {
+				const childText = await fetchPageBlockPlainText(notion, block.id, depth + 1);
+				if (childText) lines.push(childText);
+			}
+		}
+		if (!response.has_more || !response.next_cursor) break;
+		startCursor = response.next_cursor;
+	}
+	return lines.join("\n").slice(0, 16000);
+}
+
+function blockPlainText(block: Record<string, unknown>): string {
+	const type = typeof block.type === "string" ? block.type : "";
+	const typed = type && block[type] && typeof block[type] === "object"
+		? (block[type] as Record<string, unknown>)
+		: {};
+	const parts: string[] = [];
+	for (const key of ["rich_text", "title", "caption"]) {
+		const value = typed[key];
+		if (Array.isArray(value)) {
+			const plainText = plain(value);
+			if (plainText) parts.push(plainText);
+		}
+	}
+	for (const key of ["text", "transcript", "summary"]) {
+		const value = typed[key];
+		if (typeof value === "string" && value.trim()) parts.push(value.trim());
+		if (Array.isArray(value)) {
+			const plainText = plain(value);
+			if (plainText) parts.push(plainText);
+		}
+	}
+	if (type === "child_page" && typeof typed.title === "string") {
+		parts.push(typed.title);
+	}
+	return parts.join("\n").trim();
+}
+
+async function processMeetingFeedback(
+	input: MeetingFeedbackInput,
+	notion: NotionClient,
+): Promise<MeetingFeedbackResult> {
+	const meetingPage = await notion.pages.retrieve({
+		page_id: input.meetingPageId,
+	});
+	const properties = meetingPage.properties ?? {};
+	const titleText = text(properties["日時"]) || text(properties["会議名AI"]) || "会議";
+	const meetingType = text(properties["会議種別"]) || "未設定";
+	const source = buildMeetingFeedbackSource(properties);
+
+	if (source.replace(/\s/g, "").length < 120) {
+		const message =
+			"会議フィードバックに必要な要約・議事内容・アクション項目が短すぎるため、要確認で停止しました。";
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, meetingPage, {
+				振り返りステータス: { kind: "select", value: "要確認" },
+				振り返りメモ: { kind: "text", value: message },
+			});
+		}
+		return {
+			meetingPageId: meetingPage.id,
+			action: "needs-review",
+			status: "要確認",
+			message,
+		};
+	}
+
+	if (input.dryRun) {
+		return {
+			meetingPageId: meetingPage.id,
+			action: "dry-run",
+			status: "dry-run",
+			message: `dry-run: ${titleText} / ${meetingType} を ${source.length} 文字の会議材料から振り返りできます。`,
+		};
+	}
+
+	let feedback: MeetingFeedbackAIResponse;
+	try {
+		feedback = await callOpenAIMeetingFeedback({
+			title: titleText,
+			meetingType,
+			source,
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		await safeUpdateExistingProperties(notion, meetingPage, {
+			振り返りステータス: { kind: "select", value: "エラー" },
+			振り返りメモ: {
+				kind: "text",
+				value: `会議フィードバックWorkerエラー: ${message.slice(0, 500)}`,
+			},
+		});
+		return {
+			meetingPageId: meetingPage.id,
+			action: "error",
+			status: "エラー",
+			message: `OpenAI API呼び出し失敗: ${message}`,
+		};
+	}
+
+	const patches: Record<string, SafePatch> = {
+		振り返りステータス: { kind: "select", value: feedback.status },
+		振り返りメモ: {
+			kind: "text",
+			value: buildMeetingFeedbackMemo(feedback),
+		},
+	};
+	addPatchIfBlank(patches, properties, "AI率直フィードバック", feedback.directFeedback);
+	addPatchIfBlank(patches, properties, "良かった点", feedback.goodPoints.join("\n"));
+	addPatchIfBlank(patches, properties, "改善ポイント", feedback.improvementPoints.join("\n"));
+	addPatchIfBlank(patches, properties, "次回確認事項", feedback.nextQuestions.join("\n"));
+	addPatchIfBlank(patches, properties, "会議の次の一手", feedback.nextAction);
+	await safeUpdateExistingProperties(notion, meetingPage, patches);
+	await createMeetingFeedbackLearningLog(notion, {
+		meetingPageId: meetingPage.id,
+		meetingTitle: titleText,
+		meetingType,
+		status: feedback.status,
+		directFeedback: feedback.directFeedback,
+		goodPoints: feedback.goodPoints,
+		improvementPoints: feedback.improvementPoints,
+		nextQuestions: feedback.nextQuestions,
+		nextAction: feedback.nextAction,
+	}).catch((error) => {
+		console.log("meeting feedback learning log skipped", String(error));
+	});
+
+	return {
+		meetingPageId: meetingPage.id,
+		action: feedback.status === "返却済" ? "feedback-created" : "needs-review",
+		status: feedback.status,
+		message:
+			feedback.status === "返却済"
+				? "会議フィードバックを返却しました。タスク作成、商談更新、評価確定は行っていません。"
+				: "会議フィードバックは要確認で停止しました。タスク作成、商談更新、評価確定は行っていません。",
+	};
+}
+
+function buildMeetingFeedbackSource(properties: Record<string, unknown>): string {
+	return [
+		["会議種別", text(properties["会議種別"])],
+		["要約", text(properties["要約"])],
+		["議事内容", text(properties["議事内容"])],
+		["決定事項", text(properties["決定事項"])],
+		["アクション項目", text(properties["アクション項目"])],
+		["テキスト", text(properties["テキスト"])],
+	]
+		.filter(([, value]) => value)
+		.map(([label, value]) => `【${label}】\n${value}`)
+		.join("\n\n")
+		.slice(0, 12000);
+}
+
+function buildMeetingFeedbackMemo(feedback: MeetingFeedbackAIResponse): string {
+	const lines = [
+		`Worker振り返り: ${new Date().toISOString()}`,
+		`振り返りステータス: ${feedback.status}`,
+		"チームトラッカー、商談管理DB、1on1ログDB、点数・最終評価は未更新。",
+		feedback.memo ? `処理メモ: ${feedback.memo}` : "",
+	].filter(Boolean);
+	return lines.join("\n").slice(0, 1800);
+}
+
+async function processMeetingDealLink(
+	input: MeetingDealLinkInput,
+	notion: NotionClient,
+): Promise<MeetingDealLinkResult> {
+	const meetingPage = await notion.pages.retrieve({
+		page_id: input.meetingPageId,
+	});
+	const meeting = readMeetingDealLinkInfo(meetingPage);
+
+	if (meeting.meetingType !== "商談") {
+		return {
+			meetingPageId: meeting.page.id,
+			dealPageId: null,
+			action: "target-out",
+			message:
+				"会議種別が商談ではないため、商談管理DBへの連携は行いませんでした。",
+		};
+	}
+
+	const existingByMeeting = await findDealsByMeeting(notion, meeting.page.id);
+	const explicitDealIds = meeting.relatedDealIds;
+	if (explicitDealIds.length > 1 || existingByMeeting.length > 1) {
+		const message =
+			"関連商談または関連会議から複数の商談候補が見つかったため、要確認で停止しました。";
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, meeting.page, {
+				商談連携状態: { kind: "select", value: "要確認" },
+			});
+		}
+		return {
+			meetingPageId: meeting.page.id,
+			dealPageId: null,
+			action: "needs-review",
+			message,
+		};
+	}
+
+	const existingDealId = explicitDealIds[0] ?? existingByMeeting[0]?.id;
+	if (existingDealId) {
+		if (input.dryRun) {
+			return {
+				meetingPageId: meeting.page.id,
+				dealPageId: existingDealId,
+				action: "dry-run",
+				message: "dry-run: 既存商談へ会議を紐づけ、会議側を連携済みにできます。",
+			};
+		}
+		const dealPage = await notion.pages.retrieve({ page_id: existingDealId });
+		await linkMeetingAndDeal(notion, meeting, dealPage);
+		return {
+			meetingPageId: meeting.page.id,
+			dealPageId: existingDealId,
+			action: "linked-existing",
+			message:
+				"既存商談へ会議を紐づけました。商談のフィードバック欄やスコアは更新していません。",
+		};
+	}
+
+	if (meeting.relatedCompanyIds.length !== 1) {
+		const message =
+			"商談会議ですが、関連企業が1社に確定していないため、商談作成は行わず要確認で停止しました。";
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, meeting.page, {
+				商談連携状態: { kind: "select", value: "要確認" },
+			});
+		}
+		return {
+			meetingPageId: meeting.page.id,
+			dealPageId: null,
+			action: "needs-review",
+			message,
+		};
+	}
+
+	if (input.dryRun) {
+		return {
+			meetingPageId: meeting.page.id,
+			dealPageId: null,
+			action: "dry-run",
+			message:
+				"dry-run: 会議種別=商談、関連企業1社、既存関連商談なし。商談管理DBへ1件作成できます。",
+		};
+	}
+
+	const dealPage = await createDealFromMeeting(notion, meeting);
+	await linkMeetingAndDeal(notion, meeting, dealPage);
+	return {
+		meetingPageId: meeting.page.id,
+		dealPageId: dealPage.id,
+		action: "created-deal",
+		message:
+			"商談会議から商談管理DBへ1件作成し、会議と相互リンクしました。チームトラッカー、成約DB、営業評価DBは更新していません。",
+	};
+}
+
+function readMeetingDealLinkInfo(page: Page): MeetingDealLinkInfo {
+	const properties = page.properties ?? {};
+	return {
+		page,
+		titleText: text(properties["日時"]) || text(properties["会議名AI"]) || page.id,
+		meetingType: text(properties["会議種別"]),
+		meetingDate: dateStartFromProperty(properties["会議日"]),
+		summary: text(properties["要約"]),
+		minutes: text(properties["議事内容"]),
+		decisions: text(properties["決定事項"]),
+		actionItems: text(properties["アクション項目"]),
+		text: text(properties["テキスト"]),
+		relatedDealIds: relationIdsFromProperty(properties["関連商談"]),
+		relatedCompanyIds: relationIdsFromProperty(properties["関連企業"]),
+		assignedUserIds: personIdsFromProperty(properties["担当営業ユーザー"]),
+	};
+}
+
+async function findDealsByMeeting(
+	notion: NotionClient,
+	meetingId: string,
+): Promise<Page[]> {
+	try {
+		const response = await notion.dataSources.query({
+			data_source_id: DEAL_DATA_SOURCE_ID,
+			page_size: 10,
+			filter: {
+				property: "関連会議",
+				relation: { contains: meetingId },
+			},
+		});
+		return response.results;
+	} catch (error) {
+		console.log("deal lookup by meeting skipped", String(error));
+		return [];
+	}
+}
+
+async function createDealFromMeeting(
+	notion: NotionClient,
+	meeting: MeetingDealLinkInfo,
+): Promise<Page> {
+	const created = await notion.pages.create({
+		parent: { data_source_id: DEAL_DATA_SOURCE_ID },
+		properties: {
+			商談名: title(buildDealNameFromMeeting(meeting)),
+		},
+	});
+	const fullPage = await notion.pages.retrieve({ page_id: created.id });
+	const patches: Record<string, SafePatch> = {
+		商談ステータス: { kind: "select", value: "実施済" },
+		商談概要: { kind: "text", value: buildDealSummaryFromMeeting(meeting) },
+		関連会議: { kind: "relation", ids: [meeting.page.id] },
+		関連企業: { kind: "relation", ids: meeting.relatedCompanyIds },
+		元会議議事録ID: { kind: "text", value: meeting.page.id },
+	};
+	if (meeting.meetingDate) {
+		patches["商談日"] = { kind: "date", value: meeting.meetingDate };
+		patches["最新議事録日"] = { kind: "date", value: meeting.meetingDate };
+	}
+	if (meeting.assignedUserIds.length > 0) {
+		patches["担当営業ユーザー"] = {
+			kind: "people",
+			ids: meeting.assignedUserIds.slice(0, 3),
+		};
+	}
+	await safeUpdateExistingProperties(notion, fullPage, patches);
+	return created;
+}
+
+async function linkMeetingAndDeal(
+	notion: NotionClient,
+	meeting: MeetingDealLinkInfo,
+	dealPage: Page,
+): Promise<void> {
+	const dealProperties = dealPage.properties ?? {};
+	const currentMeetings = relationIdsFromProperty(dealProperties["関連会議"]);
+	const dealPatches: Record<string, SafePatch> = {
+		関連会議: { kind: "relation", ids: uniqueStrings([...currentMeetings, meeting.page.id]) },
+		元会議議事録ID: { kind: "text", value: meeting.page.id },
+	};
+	addPatchIfBlank(dealPatches, dealProperties, "商談概要", buildDealSummaryFromMeeting(meeting));
+	addDatePatchIfBlank(dealPatches, dealProperties, "最新議事録日", meeting.meetingDate);
+	addDatePatchIfBlank(dealPatches, dealProperties, "商談日", meeting.meetingDate);
+	if (meeting.relatedCompanyIds.length > 0) {
+		const currentCompanies = relationIdsFromProperty(dealProperties["関連企業"]);
+		dealPatches["関連企業"] = {
+			kind: "relation",
+			ids: uniqueStrings([...currentCompanies, ...meeting.relatedCompanyIds]).slice(0, 5),
+		};
+	}
+	if (meeting.assignedUserIds.length > 0) {
+		const currentUsers = personIdsFromProperty(dealProperties["担当営業ユーザー"]);
+		dealPatches["担当営業ユーザー"] = {
+			kind: "people",
+			ids: uniqueStrings([...currentUsers, ...meeting.assignedUserIds]).slice(0, 3),
+		};
+	}
+	await safeUpdateExistingProperties(notion, dealPage, dealPatches);
+
+	const meetingDealIds = uniqueStrings([...meeting.relatedDealIds, dealPage.id]);
+	await safeUpdateExistingProperties(notion, meeting.page, {
+		関連商談: { kind: "relation", ids: meetingDealIds },
+		商談連携状態: { kind: "select", value: "連携済" },
+	});
+}
+
+function buildDealNameFromMeeting(meeting: MeetingDealLinkInfo): string {
+	const base = meeting.titleText.replace(/^【AIテスト】\s*/, "").trim();
+	return `${base || "商談"}｜商談`;
+}
+
+function buildDealSummaryFromMeeting(meeting: MeetingDealLinkInfo): string {
+	return [
+		`会議名: ${meeting.titleText}`,
+		meeting.meetingDate ? `会議日: ${meeting.meetingDate}` : "",
+		meeting.summary ? `要約: ${meeting.summary}` : "",
+		meeting.minutes ? `議事内容: ${meeting.minutes}` : "",
+		meeting.decisions ? `決定事項: ${meeting.decisions}` : "",
+		meeting.actionItems ? `アクション項目: ${meeting.actionItems}` : "",
+		!meeting.summary && !meeting.minutes && meeting.text
+			? `本文抜粋: ${meeting.text.slice(0, 500)}`
+			: "",
+		`Worker処理ID: meeting-deal-link-${meeting.page.id}`,
+	].filter(Boolean).join("\n").slice(0, 1800);
+}
+
+async function processMeetingTasks(
+	input: MeetingTaskInput,
+	notion: NotionClient,
+): Promise<MeetingTaskResult> {
+	const meetingPage = await notion.pages.retrieve({
+		page_id: input.meetingPageId,
+	});
+	const properties = meetingPage.properties ?? {};
+	const titleText = text(properties["日時"]) || text(properties["会議名AI"]) || "会議";
+	const actionItems = text(properties["アクション項目"]);
+	const taskStatus = text(properties["タスク化ステータス"]);
+	const assignedUserIds = personIdsFromProperty(properties["担当営業ユーザー"]);
+	const relatedTaskIds = relationIdsFromProperty(properties["関連チームタスク"]);
+	const relatedDealIds = relationIdsFromProperty(properties["関連商談"]);
+	const relatedCompanyIds = relationIdsFromProperty(properties["関連企業"]);
+
+	if (actionItems.replace(/\s/g, "").length < 8) {
+		const message =
+			"アクション項目が空または短すぎるため、チームトラッカーへのタスク作成は行いませんでした。";
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, meetingPage, {
+				タスク化ステータス: { kind: "select", value: "対象外" },
+				タスク化メモ: { kind: "text", value: message },
+			});
+		}
+		return {
+			meetingPageId: meetingPage.id,
+			action: "target-out",
+			created: 0,
+			skipped: 0,
+			message,
+		};
+	}
+
+	const candidates = parseMeetingTaskCandidates(actionItems);
+	if (candidates.length === 0) {
+		const message =
+			"アクション項目はありますが、タスク名として扱える行を抽出できなかったため要確認で停止しました。";
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, meetingPage, {
+				タスク化ステータス: { kind: "select", value: "要確認" },
+				タスク化メモ: { kind: "text", value: message },
+			});
+		}
+		return {
+			meetingPageId: meetingPage.id,
+			action: "needs-review",
+			created: 0,
+			skipped: 0,
+			message,
+		};
+	}
+
+	const existingTasks = await findTeamTasksByMeeting(notion, meetingPage.id);
+	const existingRelatedTasks = await Promise.all(
+		relatedTaskIds.map(async (taskId) => {
+			try {
+				const page = await notion.pages.retrieve({ page_id: taskId });
+				return readTeamTaskInfo(page);
+			} catch (error) {
+				console.log("related team task retrieve skipped", String(error));
+				return null;
+			}
+		}),
+	);
+	const allExistingTasks = dedupeTeamTasks([
+		...existingTasks,
+		...existingRelatedTasks.filter((task): task is TeamTaskInfo => Boolean(task)),
+	]);
+	const plans = candidates.map((candidate) => ({
+		candidate,
+		duplicate: allExistingTasks.find((task) =>
+			taskTitlesSimilar(candidate.title, task.title),
+		),
+	}));
+	const skipped = plans.filter((plan) => plan.duplicate).length;
+	const createPlans = plans.filter((plan) => !plan.duplicate);
+
+	if (input.dryRun) {
+		return {
+			meetingPageId: meetingPage.id,
+			action: "dry-run",
+			created: createPlans.length,
+			skipped,
+			message: [
+				`dry-run: ${titleText} / 現在ステータス=${taskStatus || "未設定"}。`,
+				`タスク候補 ${candidates.length} 件、作成予定 ${createPlans.length} 件、重複スキップ予定 ${skipped} 件。`,
+				`候補: ${candidates.map((item) => item.title).join(" / ")}`,
+			].join(""),
+		};
+	}
+
+	const createdTaskIds: string[] = [];
+	for (const plan of createPlans) {
+		const created = await createTeamTrackerTaskFromMeetingAction(notion, {
+			meetingPage,
+			titleText,
+			candidate: plan.candidate,
+			assignedUserIds,
+			relatedDealIds,
+			relatedCompanyIds,
+		});
+		createdTaskIds.push(created.id);
+	}
+
+	const linkedTaskIds = uniqueStrings([
+		...relatedTaskIds,
+		...allExistingTasks.map((task) => task.page.id),
+		...createdTaskIds,
+	]);
+	const anyNeedsHumanCheck =
+		candidates.some((candidate) => candidate.requiresHumanCheck) ||
+		assignedUserIds.length !== 1;
+	const finalStatus = linkedTaskIds.length > 0 ? "作成済" : anyNeedsHumanCheck ? "要確認" : "対象外";
+	await safeUpdateExistingProperties(notion, meetingPage, {
+		タスク化ステータス: { kind: "select", value: finalStatus },
+		関連チームタスク: { kind: "relation", ids: linkedTaskIds },
+		タスク化メモ: {
+			kind: "text",
+			value: buildMeetingTaskResultMemo({
+				titleText,
+				created: createdTaskIds.length,
+				skipped,
+				total: candidates.length,
+				anyNeedsHumanCheck,
+			}),
+		},
+	});
+
+	const action = createdTaskIds.length > 0 ? "created-tasks" : "skipped-existing";
+	return {
+		meetingPageId: meetingPage.id,
+		action,
+		created: createdTaskIds.length,
+		skipped,
+		message:
+			createdTaskIds.length > 0
+				? `会議アクション項目からチームトラッカーへ ${createdTaskIds.length} 件作成しました。重複スキップ ${skipped} 件。`
+				: `既存の関連会議タスクと重複したため新規作成は行いませんでした。重複スキップ ${skipped} 件。`,
+	};
+}
+
+function parseMeetingTaskCandidates(actionItems: string): MeetingTaskCandidate[] {
+	const seen = new Set<string>();
+	const result: MeetingTaskCandidate[] = [];
+	const lines = actionItems
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.flatMap((line) => splitInlineActionItems(line))
+		.map((line) => line.trim())
+		.filter(Boolean);
+
+	for (const rawLine of lines) {
+		const candidate = parseMeetingTaskCandidate(rawLine);
+		if (!candidate) continue;
+		const key = normalizeTaskTitle(candidate.title);
+		if (!key || seen.has(key)) continue;
+		seen.add(key);
+		result.push(candidate);
+	}
+	return result.slice(0, 10);
+}
+
+function splitInlineActionItems(line: string): string[] {
+	if (!line.includes(" / ") && !/[。．]\s*\d+[.．、]/.test(line)) return [line];
+	return line
+		.replace(/([。．])\s*(?=\d+[.．、])/g, "$1\n")
+		.split(/\n/)
+		.filter(Boolean);
+}
+
+function parseMeetingTaskCandidate(rawLine: string): MeetingTaskCandidate | null {
+	const line = rawLine
+		.replace(/^[-*・\s]+/, "")
+		.replace(/^\d+[.．、)\s]+/, "")
+		.trim();
+	if (!line || /^(アクション項目|タスク|決定事項|議事内容)[:：]?$/.test(line)) {
+		return null;
+	}
+	if (line.replace(/\s/g, "").length < 6) return null;
+	const titleText = extractMeetingTaskTitle(line);
+	if (titleText.replace(/\s/g, "").length < 6) return null;
+	const dueDate = extractISODateFromText(line);
+	const dueText = extractLabeledValue(line, ["期限", "期日", "締切"]) || dueDate || "期限要確認";
+	const assigneeValue = extractLabeledValue(line, ["担当者", "担当"]);
+	const requiresHumanCheck =
+		/担当者要確認|担当要確認|担当者[:：]?\s*(不明|未定|要確認)|誰がやるか未定/.test(line) ||
+		/期限要確認|期限[:：]?\s*(不明|未定|要確認)/.test(line);
+	return {
+		title: titleText.slice(0, 90),
+		description: line,
+		taskType: inferMeetingTaskType(line),
+		priority: inferMeetingTaskPriority(line),
+		dueText,
+		dueDate,
+		requiresHumanCheck: requiresHumanCheck || /要確認|不明|未定/.test(assigneeValue),
+	};
+}
+
+function extractMeetingTaskTitle(line: string): string {
+	const first = line
+		.split(/\s*[／/]\s*(?=担当|期限|期日|締切|タスク|種別|補足)/)[0]
+		?.trim();
+	const withoutLabels = (first || line)
+		.replace(/^(タスク内容|内容)[:：]\s*/, "")
+		.replace(/\s*(担当者?|期限|期日|締切|タスクタイプ|種別|補足)[:：].*$/, "")
+		.trim();
+	return withoutLabels || line;
+}
+
+function extractLabeledValue(line: string, labels: string[]): string {
+	for (const label of labels) {
+		const pattern = new RegExp(`${label}\\s*[:：]\\s*([^/／\\n]+)`);
+		const match = line.match(pattern);
+		if (match?.[1]) return match[1].trim();
+	}
+	return "";
+}
+
+function extractISODateFromText(line: string): string {
+	const match = line.match(/\b20\d{2}-\d{2}-\d{2}\b/);
+	return match?.[0] ?? "";
+}
+
+function inferMeetingTaskType(line: string): string {
+	if (/提案資料|資料|見積|書類|作成|ドラフト|契約書/.test(line)) return "書類作成";
+	if (/メール|電話|連絡|報告|共有|送付/.test(line)) return "連絡・報告";
+	if (/商談|フォロー|顧客|決裁者/.test(line)) return "商談フォロー";
+	if (/社内|会議|稟議|調整/.test(line)) return "社内タスク";
+	if (/確認|調査|リスト|候補|条件|情報/.test(line)) return "確認・調査";
+	return "その他";
+}
+
+function inferMeetingTaskPriority(line: string): string {
+	if (/至急|今日|本日|明日|急ぎ|高/.test(line)) return "High";
+	if (/低|余裕/.test(line)) return "Low";
+	return "Medium";
+}
+
+async function findTeamTasksByMeeting(
+	notion: NotionClient,
+	meetingId: string,
+): Promise<TeamTaskInfo[]> {
+	try {
+		const response = await notion.dataSources.query({
+			data_source_id: TEAM_TRACKER_DATA_SOURCE_ID,
+			page_size: 50,
+			filter: {
+				property: "関連会議議事録",
+				relation: { contains: meetingId },
+			},
+		});
+		return response.results.map(readTeamTaskInfo);
+	} catch (error) {
+		console.log("meeting task lookup skipped", String(error));
+		return [];
+	}
+}
+
+function dedupeTeamTasks(tasks: TeamTaskInfo[]): TeamTaskInfo[] {
+	const seen = new Set<string>();
+	const result: TeamTaskInfo[] = [];
+	for (const task of tasks) {
+		if (!task.page.id || seen.has(task.page.id)) continue;
+		seen.add(task.page.id);
+		result.push(task);
+	}
+	return result;
+}
+
+async function createTeamTrackerTaskFromMeetingAction(
+	notion: NotionClient,
+	input: {
+		meetingPage: Page;
+		titleText: string;
+		candidate: MeetingTaskCandidate;
+		assignedUserIds: string[];
+		relatedDealIds: string[];
+		relatedCompanyIds: string[];
+	},
+): Promise<Page> {
+	const created = await notion.pages.create({
+		parent: { data_source_id: TEAM_TRACKER_DATA_SOURCE_ID },
+		properties: {
+			タスク名: title(input.candidate.title),
+		},
+	});
+	const fullPage = await notion.pages.retrieve({ page_id: created.id });
+	const memo = buildMeetingTaskMemo(input);
+	const patches: Record<string, SafePatch> = {
+		概要: { kind: "text", value: memo },
+		"説明⚠️まず入力": { kind: "text", value: memo },
+		ステータス: { kind: "select", value: "未着手" },
+		優先順位: { kind: "select", value: input.candidate.priority },
+		タスクタイプ: { kind: "multi_select", values: [input.candidate.taskType] },
+		関連会議議事録: { kind: "relation", ids: [input.meetingPage.id] },
+	};
+	if (input.relatedDealIds.length > 0) {
+		patches["関連商談"] = {
+			kind: "relation",
+			ids: input.relatedDealIds.slice(0, 3),
+		};
+	}
+	if (input.relatedCompanyIds.length > 0) {
+		patches["関連企業"] = {
+			kind: "relation",
+			ids: input.relatedCompanyIds.slice(0, 3),
+		};
+	}
+	if (!input.candidate.requiresHumanCheck && input.assignedUserIds.length === 1) {
+		patches["タスク担当者"] = {
+			kind: "people",
+			ids: input.assignedUserIds,
+		};
+	}
+	if (input.candidate.dueDate) {
+		patches["期限"] = { kind: "date", value: input.candidate.dueDate };
+	}
+	await safeUpdateExistingProperties(notion, fullPage, patches);
+	return created;
+}
+
+function buildMeetingTaskMemo(input: {
+	meetingPage: Page;
+	titleText: string;
+	candidate: MeetingTaskCandidate;
+	assignedUserIds: string[];
+}): string {
+	const assignee =
+		!input.candidate.requiresHumanCheck && input.assignedUserIds.length === 1
+			? "会議の担当営業ユーザーを設定"
+			: "担当者要確認";
+	return [
+		`会議: ${input.titleText || input.meetingPage.id}`,
+		`根拠: ${input.candidate.description}`,
+		`期限: ${input.candidate.dueText || "期限要確認"}`,
+		`担当: ${assignee}`,
+		input.candidate.requiresHumanCheck
+			? "確認: 担当者または期限が曖昧なため人間確認を推奨。"
+			: "",
+		`Worker処理ID: meeting-task-${input.meetingPage.id}-${normalizeTaskTitle(input.candidate.title).slice(0, 40)}`,
+	].filter(Boolean).join("\n").slice(0, 1800);
+}
+
+function buildMeetingTaskResultMemo(input: {
+	titleText: string;
+	created: number;
+	skipped: number;
+	total: number;
+	anyNeedsHumanCheck: boolean;
+}): string {
+	return [
+		`Worker会議タスク化: ${new Date().toISOString()}`,
+		`会議: ${input.titleText || "未設定"}`,
+		`候補: ${input.total} 件 / 新規作成: ${input.created} 件 / 重複スキップ: ${input.skipped} 件`,
+		input.anyNeedsHumanCheck
+			? "担当者または期限が曖昧な項目があります。チームトラッカーの担当者要確認ビューで拾ってください。"
+			: "",
+		"チームトラッカー以外は更新していません。商談管理DB、成約DB、営業評価DBは未更新。",
+	].filter(Boolean).join("\n").slice(0, 1800);
+}
+
+async function callOpenAIMeetingFeedback(input: {
+	title: string;
+	meetingType: string;
+	source: string;
+}): Promise<MeetingFeedbackAIResponse> {
+	const apiKey = process.env.OPENAI_API_KEY;
+	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
+	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+	const systemPrompt = [
+		"あなたは和上ホールディングスの会議フィードバックAIです。",
+		"会議議事録DBの整形済み内容を読み、次回が良くなる率直なフィードバックを返します。",
+		"",
+		"原点:",
+		"- 記録して終わりではなく、会議・1on1・社内MTGの次が良くなること",
+		"- 根拠があるなら遠慮せず厳しめに指摘する",
+		"- 分からないことは分からない、要確認と書く",
+		"",
+		"禁止:",
+		"- チームトラッカーにタスクを作成しない",
+		"- 関連チームタスクを更新しない",
+		"- 商談管理DBを作成・更新しない",
+		"- 1on1ログDBを更新しない",
+		"- 点数付け、最終評価、総合評価、給与・処遇判断をしない",
+		"- 人格評価をしない",
+		"",
+		"出力:",
+		"- AI率直フィードバック: 1段落。良い点と甘い点をはっきり書く",
+		"- 良かった点: 箇条書き",
+		"- 改善ポイント: 箇条書き。次回に直せる行動へ落とす",
+		"- 次回確認事項: 次回会議で聞くべき質問",
+		"- 会議の次の一手: 具体的な1手",
+		"- 会議内容が薄い/テスト色が強い/材料不足なら status=要確認",
+		"- フィードバック可能なら status=返却済",
+		"必ずJSONのみを返してください。",
+	].join("\n");
+
+	const userPrompt = [
+		`会議名: ${input.title || "未設定"}`,
+		`会議種別: ${input.meetingType || "未設定"}`,
+		"",
+		"=== 会議材料 ===",
+		input.source.slice(0, 12000),
+	].join("\n");
+
+	const response = await fetch("https://api.openai.com/v1/chat/completions", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify({
+			model,
+			response_format: MEETING_FEEDBACK_RESPONSE_FORMAT,
+			messages: [
+				{ role: "system", content: systemPrompt },
+				{ role: "user", content: userPrompt },
+			],
+		}),
+	});
+
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
+	}
+
+	const json = (await response.json()) as {
+		choices?: Array<{ message?: { content?: string } }>;
+	};
+	const raw = json.choices?.[0]?.message?.content;
+	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
+	return parseMeetingFeedbackAIResponse(raw);
+}
+
+function parseMeetingFeedbackAIResponse(raw: string): MeetingFeedbackAIResponse {
+	try {
+		const parsed = JSON.parse(raw) as Partial<MeetingFeedbackAIResponse>;
+		const status =
+			parsed.status === "返却済" ||
+			parsed.status === "要確認" ||
+			parsed.status === "対象外"
+				? parsed.status
+				: "要確認";
+		return {
+			directFeedback:
+				typeof parsed.directFeedback === "string" ? parsed.directFeedback : "",
+			goodPoints: stringArray(parsed.goodPoints),
+			improvementPoints: stringArray(parsed.improvementPoints),
+			nextQuestions: stringArray(parsed.nextQuestions),
+			nextAction: typeof parsed.nextAction === "string" ? parsed.nextAction : "",
+			status,
+			memo: typeof parsed.memo === "string" ? parsed.memo : "",
+		};
+	} catch (error) {
+		console.log("parseMeetingFeedbackAIResponse failed", String(error));
+		return {
+			directFeedback: "",
+			goodPoints: [],
+			improvementPoints: [],
+			nextQuestions: [],
+			nextAction: "",
+			status: "要確認",
+			memo: `JSONパース失敗: ${raw.slice(0, 200)}`,
+		};
+	}
+}
+
+async function processManagerReview(
+	input: ManagerReviewInput,
+	notion: NotionClient,
+): Promise<ManagerReviewResult> {
+	const managerReviewPage = await notion.pages.retrieve({
+		page_id: input.managerReviewPageId,
+	});
+	const properties = managerReviewPage.properties ?? {};
+	const titleText = text(properties["名前"]) || text(properties["評価名"]) || "マネージャー評価";
+	const aiStatus = text(properties["AI処理状態"]);
+	const evaluationStatus = text(properties["評価ステータス"]);
+
+	if (["確定", "処理済"].includes(aiStatus) || evaluationStatus === "完了") {
+		return {
+			managerReviewPageId: managerReviewPage.id,
+			action: "needs-review",
+			status: aiStatus || evaluationStatus || "完了済み",
+			message:
+				"既に確定または完了済みのため、Workerは評価・点数・ランク・コメントを変更しませんでした。",
+		};
+	}
+
+	const targetStaffIds = relationIdsFromProperty(properties["対象スタッフ"]);
+	const targetSalesUserIds = personIdsFromProperty(properties["対象営業ユーザー"]);
+	const managerUserIds = personIdsFromProperty(properties["担当マネージャー"]);
+	const relatedSummaryIds = relationIdsFromProperty(properties["関連営業評価サマリー"]);
+	const missing: string[] = [];
+	const hasTarget = targetStaffIds.length > 0 || targetSalesUserIds.length > 0;
+	if (!hasTarget) {
+		missing.push("対象スタッフ または 対象営業ユーザー");
+	}
+	if (managerUserIds.length === 0) missing.push("担当マネージャー");
+	if (relatedSummaryIds.length === 0) missing.push("関連営業評価サマリー");
+
+	const blockText = await fetchPageBlockPlainText(notion, managerReviewPage.id);
+	const relatedSummaryText = await buildManagerRelatedSummarySource(
+		notion,
+		relatedSummaryIds,
+	);
+	const source = [
+		buildManagerReviewPropertySource(properties),
+		relatedSummaryText,
+		blockText ? `【ページ本文】\n${blockText}` : "",
+	]
+		.filter(Boolean)
+		.join("\n\n")
+		.slice(0, 12000);
+
+	if (!hasTarget) {
+		const message = `対象者を特定できないため、評価せず要確認で停止しました。不足: ${missing.join(" / ")}`;
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, managerReviewPage, {
+				AI処理状態: { kind: "select", value: "要確認" },
+				AI補助メモ: {
+					kind: "text",
+					value: appendShortMemo(text(properties["AI補助メモ"]), message),
+				},
+			});
+		}
+		return {
+			managerReviewPageId: managerReviewPage.id,
+			action: "needs-review",
+			status: "要確認",
+			message,
+		};
+	}
+
+	if (source.replace(/\s/g, "").length < 120) {
+		const message =
+			"評価材料が短すぎるため、点数・ランク・最終評価は行わず要確認で停止しました。";
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, managerReviewPage, {
+				AI処理状態: { kind: "select", value: "要確認" },
+				AI補助メモ: {
+					kind: "text",
+					value: appendShortMemo(text(properties["AI補助メモ"]), message),
+				},
+			});
+		}
+		return {
+			managerReviewPageId: managerReviewPage.id,
+			action: "needs-review",
+			status: "要確認",
+			message,
+		};
+	}
+
+	if (input.dryRun) {
+		return {
+			managerReviewPageId: managerReviewPage.id,
+			action: "dry-run",
+			status: "dry-run",
+			message: `dry-run: ${titleText} を ${source.length} 文字の評価材料から壁打ち補助できます。不足警告: ${missing.join(" / ") || "なし"}。`,
+		};
+	}
+
+	let review: ManagerReviewAIResponse;
+	try {
+		review = await callOpenAIManagerReview({
+			title: titleText,
+			source,
+			missing,
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		await safeUpdateExistingProperties(notion, managerReviewPage, {
+			AI処理状態: { kind: "select", value: "要確認" },
+			AI補助メモ: {
+				kind: "text",
+				value: appendShortMemo(
+					text(properties["AI補助メモ"]),
+					`人見さん壁打ちWorkerエラー: ${message.slice(0, 500)}`,
+				),
+			},
+		});
+		return {
+			managerReviewPageId: managerReviewPage.id,
+			action: "error",
+			status: "要確認",
+			message: `OpenAI API呼び出し失敗: ${message}`,
+		};
+	}
+
+	const onlyManagerMissing = missing.length === 1 && missing[0] === "担当マネージャー";
+	const status =
+		onlyManagerMissing || review.recommendedStatus !== "要確認" ? "レビュー中" : "要確認";
+	const patches: Record<string, SafePatch> = {
+		AI処理状態: { kind: "select", value: status },
+		AI補助メモ: {
+			kind: "text",
+			value: buildManagerReviewMemo(review, missing),
+		},
+	};
+	addPatchIfBlank(patches, properties, "改善指示", review.managerTalkingPoints.join("\n"));
+	addPatchIfBlank(patches, properties, "次月のマネジメントテーマ", review.nextMonthTheme);
+	addPatchIfBlank(patches, properties, "成長ポイント", review.strengths.join("\n"));
+	addPatchIfBlank(patches, properties, "改善テーマ", review.coachingTheme);
+	addPatchIfBlank(patches, properties, "育成コメント", review.coachingTheme);
+	addPatchIfBlank(patches, properties, "目標達成コメント", review.summary);
+	addPatchIfBlank(patches, properties, "コンプライアンスコメント", review.risks.join("\n"));
+
+	await safeUpdateExistingProperties(notion, managerReviewPage, patches);
+
+	return {
+		managerReviewPageId: managerReviewPage.id,
+		action: status === "要確認" ? "needs-review" : "reviewed",
+		status,
+		message:
+			status === "要確認"
+				? "壁打ちメモは作成しましたが、不足情報があるため要確認で止めました。点数・ランク・最終評価は変更していません。"
+				: "人見さん壁打ち補助を作成しました。点数・ランク・最終評価は変更していません。",
+	};
+}
+
+function buildManagerReviewPropertySource(properties: Record<string, unknown>): string {
+	const scoreLines = [
+		["収益責任スコア", numberValue(properties["収益責任スコア"])],
+		["人材育成責任スコア", numberValue(properties["人材育成責任スコア"])],
+		["コンプライアンス責任スコア", numberValue(properties["コンプライアンス責任スコア"])],
+		["総合評価スコア", numberValue(properties["総合評価スコア"])],
+		["商談品質スコア", numberValue(properties["商談品質スコア"])],
+		["行動継続スコア", numberValue(properties["行動継続スコア"])],
+		["ナレッジ貢献スコア", numberValue(properties["ナレッジ貢献スコア"])],
+		["チーム貢献スコア", numberValue(properties["チーム貢献スコア"])],
+	]
+		.filter(([, value]) => typeof value === "number")
+		.map(([label, value]) => `${label}: ${value}`);
+	const textLines = [
+		["1on1評価コメント", text(properties["1on1評価コメント"])],
+		["目標達成コメント", text(properties["目標達成コメント"])],
+		["育成コメント", text(properties["育成コメント"])],
+		["コンプライアンスコメント", text(properties["コンプライアンスコメント"])],
+		["成長ポイント", text(properties["成長ポイント"])],
+		["改善テーマ", text(properties["改善テーマ"])],
+		["改善指示", text(properties["改善指示"])],
+		["次月のマネジメントテーマ", text(properties["次月のマネジメントテーマ"])],
+		["AI補助メモ", text(properties["AI補助メモ"])],
+	]
+		.filter(([, value]) => value)
+		.map(([label, value]) => `【${label}】\n${value}`);
+	const period = dateStartFromProperty(properties["評価期間"]);
+	return [
+		period ? `評価期間: ${period}` : "",
+		scoreLines.length > 0 ? `【スコア参考値】\n${scoreLines.join("\n")}` : "",
+		textLines.join("\n\n"),
+	]
+		.filter(Boolean)
+		.join("\n\n");
+}
+
+async function buildManagerRelatedSummarySource(
+	notion: NotionClient,
+	relatedSummaryIds: string[],
+): Promise<string> {
+	if (relatedSummaryIds.length === 0) return "";
+	const lines: string[] = [];
+	for (const id of relatedSummaryIds.slice(0, 3)) {
+		try {
+			const page = await notion.pages.retrieve({ page_id: id });
+			lines.push(`【関連営業評価サマリー】\n${buildGenericPageSummary(page.properties ?? {})}`);
+		} catch (error) {
+			lines.push(`【関連営業評価サマリー】取得失敗: ${String(error).slice(0, 120)}`);
+		}
+	}
+	return lines.join("\n\n");
+}
+
+function buildGenericPageSummary(properties: Record<string, unknown>): string {
+	return Object.entries(properties)
+		.map(([name, property]) => {
+			const value = text(property) || propertyNumberText(property) || dateStartFromProperty(property);
+			return value ? `${name}: ${value}` : "";
+		})
+		.filter(Boolean)
+		.slice(0, 35)
+		.join("\n");
+}
+
+function propertyNumberText(property: unknown): string {
+	const value = numberValue(property);
+	return typeof value === "number" ? String(value) : "";
+}
+
+function buildManagerReviewMemo(
+	review: ManagerReviewAIResponse,
+	missing: string[],
+): string {
+	const lines = [
+		`Worker壁打ち: ${new Date().toISOString()}`,
+		"点数・評価ランク・最終評価・評価ステータス完了は未変更。",
+		missing.length > 0 ? `不足/人間確認: ${missing.join(" / ")}` : "",
+		"要約:",
+		review.summary,
+		"",
+		"マネージャーへの問い:",
+		...review.managerTalkingPoints,
+		"",
+		"確認事項:",
+		...review.confirmationItems,
+	].filter((line) => line !== undefined && line !== null);
+	return lines.join("\n").slice(0, 1800);
+}
+
+async function callOpenAIManagerReview(input: {
+	title: string;
+	source: string;
+	missing: string[];
+}): Promise<ManagerReviewAIResponse> {
+	const apiKey = process.env.OPENAI_API_KEY;
+	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
+	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+	const systemPrompt = [
+		"あなたは和上ホールディングスの人見さん壁打ち補助AIです。",
+		"マネージャー評価DBの材料を読み、マネージャーが部下評価や1on1で確認すべき論点を返します。",
+		"",
+		"絶対ルール:",
+		"- 点数を新規採点しない",
+		"- 評価ランクを確定しない",
+		"- 総合評価や処遇判断を確定しない",
+		"- 評価ステータスを完了にしない",
+		"- マネージャー本人を裁く文面にしない",
+		"- 人格評価ではなく、次の行動、確認事項、改善テーマへ落とす",
+		"- 根拠が弱い場合は、分からない、要確認と明示する",
+		"- 対象スタッフまたは対象営業ユーザーが分かっており評価材料が十分なら、担当マネージャー未設定だけで要確認にしなくてよい",
+		"",
+		"返す内容:",
+		"- マネージャーが本人と話すべき問い",
+		"- 伸びている点",
+		"- 放置すると危ない点",
+		"- 次月のマネジメントテーマ",
+		"- 人間が確認すべき不足情報",
+		"",
+		"recommendedStatus は、不足情報がある場合は要確認、壁打ち材料として使える場合はレビュー中にしてください。",
+		"必ずJSONのみを返してください。",
+	].join("\n");
+
+	const userPrompt = [
+		`評価ページ: ${input.title || "未設定"}`,
+		input.missing.length > 0 ? `不足情報: ${input.missing.join(" / ")}` : "不足情報: なし",
+		"",
+		"=== 評価材料 ===",
+		input.source.slice(0, 12000),
+	].join("\n");
+
+	const response = await fetch("https://api.openai.com/v1/chat/completions", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify({
+			model,
+			response_format: MANAGER_REVIEW_RESPONSE_FORMAT,
+			messages: [
+				{ role: "system", content: systemPrompt },
+				{ role: "user", content: userPrompt },
+			],
+		}),
+	});
+
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
+	}
+
+	const json = (await response.json()) as {
+		choices?: Array<{ message?: { content?: string } }>;
+	};
+	const raw = json.choices?.[0]?.message?.content;
+	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
+	return parseManagerReviewAIResponse(raw);
+}
+
+function parseManagerReviewAIResponse(raw: string): ManagerReviewAIResponse {
+	try {
+		const parsed = JSON.parse(raw) as Partial<ManagerReviewAIResponse>;
+		const recommendedStatus =
+			parsed.recommendedStatus === "レビュー中" || parsed.recommendedStatus === "要確認"
+				? parsed.recommendedStatus
+				: "要確認";
+		return {
+			summary: typeof parsed.summary === "string" ? parsed.summary : "",
+			managerTalkingPoints: stringArray(parsed.managerTalkingPoints),
+			strengths: stringArray(parsed.strengths),
+			risks: stringArray(parsed.risks),
+			coachingTheme: typeof parsed.coachingTheme === "string" ? parsed.coachingTheme : "",
+			nextMonthTheme: typeof parsed.nextMonthTheme === "string" ? parsed.nextMonthTheme : "",
+			confirmationItems: stringArray(parsed.confirmationItems),
+			recommendedStatus,
+		};
+	} catch (error) {
+		console.log("parseManagerReviewAIResponse failed", String(error));
+		return {
+			summary: "",
+			managerTalkingPoints: ["AI返却JSONの解析に失敗したため、人間確認が必要です。"],
+			strengths: [],
+			risks: [],
+			coachingTheme: "",
+			nextMonthTheme: "",
+			confirmationItems: [`JSONパース失敗: ${raw.slice(0, 200)}`],
+			recommendedStatus: "要確認",
+		};
+	}
+}
+
+async function processSalesPerformanceReview(
+	input: SalesPerformanceReviewInput,
+	notion: NotionClient,
+): Promise<SalesPerformanceReviewResult> {
+	const performancePage = await notion.pages.retrieve({
+		page_id: input.salesPerformancePageId,
+	});
+	const properties = performancePage.properties ?? {};
+	const titleText = text(properties["評価名"]) || "営業評価";
+	const aiStatus = text(properties["AI処理状態"]);
+	const evaluationStatus = text(properties["評価ステータス"]);
+	const auditStatus = text(properties["監査区分"]);
+	const targetPeriod = text(properties["対象期間"]) || dateStartFromProperty(properties["開始日"]);
+	const targetSalesUserIds = personIdsFromProperty(properties["対象営業ユーザー"]);
+	const evaluationReady = checkboxValue(properties["評価準備OK"]);
+	const auditOrTest = isAuditOrTestPerformance(properties, titleText);
+
+	if (evaluationStatus === "確定") {
+		return {
+			salesPerformancePageId: performancePage.id,
+			action: "needs-review",
+			status: evaluationStatus,
+			message:
+				"評価ステータスが確定済みのため、人見さんWorkerはAI評価メモ、点数、ランク、評価ステータスを変更しませんでした。",
+		};
+	}
+
+	const missing: string[] = [];
+	if (targetSalesUserIds.length === 0) missing.push("対象営業ユーザー");
+	if (!targetPeriod) missing.push("対象期間");
+	if (!evaluationReady && !auditOrTest) missing.push("評価準備OK");
+
+	const propertySource = buildSalesPerformanceReviewSource(properties);
+	const relatedSource = await buildSalesPerformanceRelatedSource(notion, properties);
+	const pageText = await fetchPageBlockPlainText(notion, performancePage.id);
+	const source = [
+		propertySource,
+		relatedSource,
+		pageText ? `【ページ本文】\n${pageText}` : "",
+	]
+		.filter(Boolean)
+		.join("\n\n")
+		.slice(0, 16000);
+
+	if (missing.length > 0 && !auditOrTest) {
+		const message = `評価の前提が不足しているため、点数・ランク・最終評価は変更せず要確認で停止しました。不足: ${missing.join(" / ")}`;
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, performancePage, {
+				AI処理状態: { kind: "select", value: "要確認" },
+				上司確認事項: {
+					kind: "text",
+					value: appendShortMemo(text(properties["上司確認事項"]), message),
+				},
+			});
+		}
+		return {
+			salesPerformancePageId: performancePage.id,
+			action: "needs-review",
+			status: "要確認",
+			message,
+		};
+	}
+
+	if (source.replace(/\s/g, "").length < 160) {
+		const message =
+			"評価材料が短すぎるため、点数・ランク・最終評価は変更せず要確認で停止しました。";
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, performancePage, {
+				AI処理状態: { kind: "select", value: "要確認" },
+				上司確認事項: {
+					kind: "text",
+					value: appendShortMemo(text(properties["上司確認事項"]), message),
+				},
+			});
+		}
+		return {
+			salesPerformancePageId: performancePage.id,
+			action: "needs-review",
+			status: "要確認",
+			message,
+		};
+	}
+
+	if (input.dryRun) {
+		return {
+			salesPerformancePageId: performancePage.id,
+			action: "dry-run",
+			status: "dry-run",
+			message: `dry-run: ${titleText} を ${source.length} 文字の評価材料から一次評価案化できます。不足警告: ${missing.join(" / ") || "なし"}。監査/テスト扱い: ${auditOrTest ? "はい" : "いいえ"}。`,
+		};
+	}
+
+	let review: SalesPerformanceReviewAIResponse;
+	try {
+		review = await callOpenAISalesPerformanceReview({
+			title: titleText,
+			auditStatus,
+			targetPeriod,
+			source,
+			missing,
+			auditOrTest,
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		await safeUpdateExistingProperties(notion, performancePage, {
+			AI処理状態: { kind: "select", value: "要確認" },
+			上司確認事項: {
+				kind: "text",
+				value: appendShortMemo(
+					text(properties["上司確認事項"]),
+					`人見さん営業評価Workerエラー: ${message.slice(0, 500)}`,
+				),
+			},
+		});
+		return {
+			salesPerformancePageId: performancePage.id,
+			action: "error",
+			status: "要確認",
+			message: `OpenAI API呼び出し失敗: ${message}`,
+		};
+	}
+
+	const status =
+		review.recommendedStatus === "要確認" && !auditOrTest ? "要確認" : "処理済";
+	const patches: Record<string, SafePatch> = {
+		AI処理状態: { kind: "select", value: status },
+		AI評価メモ: {
+			kind: "text",
+			value: appendShortMemo(
+				text(properties["AI評価メモ"]),
+				buildSalesPerformanceReviewMemo(review, missing, auditOrTest),
+			),
+		},
+		上司確認事項: {
+			kind: "text",
+			value: appendShortMemo(
+				text(properties["上司確認事項"]),
+				buildSalesPerformanceConfirmationMemo(review, missing, auditOrTest),
+			),
+		},
+	};
+	addPatchIfBlank(
+		patches,
+		properties,
+		"次月改善ポイント",
+		review.nextMonthImprovements.map((item) => `・${item}`).join("\n"),
+	);
+	addPatchIfBlank(patches, properties, "改善ポイント", review.actionGuidance);
+	addPatchIfBlank(patches, properties, "成長ポイント", review.personComment);
+	addPatchIfBlank(patches, properties, "次月テーマ", review.nextMonthImprovements[0] ?? "");
+
+	await safeUpdateExistingProperties(notion, performancePage, patches);
+
+	return {
+		salesPerformancePageId: performancePage.id,
+		action: status === "処理済" ? "reviewed" : "needs-review",
+		status,
+		message:
+			status === "処理済"
+				? "人見さん営業評価案を返却しました。総合スコア、評価ランク、評価ステータス確定は変更していません。"
+				: "一次評価案は作成しましたが、不足情報があるため要確認で止めました。総合スコア、評価ランク、評価ステータス確定は変更していません。",
+	};
+}
+
+function isAuditOrTestPerformance(
+	properties: Record<string, unknown>,
+	titleText: string,
+): boolean {
+	const joined = [
+		titleText,
+		text(properties["監査区分"]),
+		text(properties["本人コメント"]),
+		text(properties["上司確認事項"]),
+		text(properties["AI評価メモ"]),
+	].join(" ");
+	return /AIテスト|正式テスト|監査除外|ドライラン|削除可|検証/.test(joined);
+}
+
+function buildSalesPerformanceReviewSource(
+	properties: Record<string, unknown>,
+): string {
+	const numberLines = [
+		["売上目標", numberValue(properties["売上目標"])],
+		["実績売上額", numberValue(properties["実績売上額"])],
+		["粗利目標", numberValue(properties["粗利目標"])],
+		["実績粗利額", numberValue(properties["実績粗利額"])],
+		["粗利達成率", numberValue(properties["粗利達成率"])],
+		["商談件数", numberValue(properties["商談件数"])],
+		["成約件数", numberValue(properties["成約件数"])],
+		["案件化件数", numberValue(properties["案件化件数"])],
+		["日報提出数", numberValue(properties["日報提出数"])],
+		["日報継続率", numberValue(properties["日報継続率"])],
+		["商談準備実施数", numberValue(properties["商談準備実施数"])],
+		["平均営業スコア", numberValue(properties["平均営業スコア"])],
+		["総合スコア", numberValue(properties["総合スコア"])],
+		["営業成果スコア", numberValue(properties["営業成果スコア"])],
+		["行動継続スコア", numberValue(properties["行動継続スコア"])],
+		["商談品質スコア", numberValue(properties["商談品質スコア"])],
+		["チーム貢献スコア", numberValue(properties["チーム貢献スコア"])],
+		["ナレッジ貢献スコア", numberValue(properties["ナレッジ貢献スコア"])],
+		["仕入れ件数", numberValue(properties["仕入れ件数"])],
+		["仕入れ金額", numberValue(properties["仕入れ金額"])],
+		["案件化件数", numberValue(properties["案件化件数"])],
+		["専売許可件数", numberValue(properties["専売許可件数"])],
+	]
+		.filter(([, value]) => typeof value === "number")
+		.map(([label, value]) => `${label}: ${value}`);
+	const textLines = [
+		["評価名", text(properties["評価名"])],
+		["対象期間", text(properties["対象期間"])],
+		["期間種別", text(properties["期間種別"])],
+		["評価タイプ", text(properties["評価タイプ"])],
+		["評価ステータス", text(properties["評価ステータス"])],
+		["監査区分", text(properties["監査区分"])],
+		["AI処理状態", text(properties["AI処理状態"])],
+		["評価ランク", text(properties["評価ランク"])],
+		["本人コメント", text(properties["本人コメント"])],
+		["マネージャーコメント", text(properties["マネージャーコメント"])],
+		["AI評価メモ", text(properties["AI評価メモ"])],
+		["上司確認事項", text(properties["上司確認事項"])],
+		["次月改善ポイント", text(properties["次月改善ポイント"])],
+		["改善ポイント", text(properties["改善ポイント"])],
+		["成長ポイント", text(properties["成長ポイント"])],
+		["仕入れ評価メモ", text(properties["仕入れ評価メモ"])],
+	]
+		.filter(([, value]) => value)
+		.map(([label, value]) => `【${label}】\n${value}`);
+	const dates = [
+		dateStartFromProperty(properties["開始日"])
+			? `開始日: ${dateStartFromProperty(properties["開始日"])}`
+			: "",
+		dateStartFromProperty(properties["終了日"])
+			? `終了日: ${dateStartFromProperty(properties["終了日"])}`
+			: "",
+	].filter(Boolean);
+	return [
+		dates.join("\n"),
+		numberLines.length > 0 ? `【数値・スコア】\n${numberLines.join("\n")}` : "",
+		textLines.join("\n\n"),
+	]
+		.filter(Boolean)
+		.join("\n\n");
+}
+
+async function buildSalesPerformanceRelatedSource(
+	notion: NotionClient,
+	properties: Record<string, unknown>,
+): Promise<string> {
+	const relationMap: Array<[string, string[], number]> = [
+		["関連活動ログ", relationIdsFromProperty(properties["関連活動ログ"]), 8],
+		["活動ログ", relationIdsFromProperty(properties["活動ログ"]), 8],
+		["関連日報ログ", relationIdsFromProperty(properties["関連日報ログ"]), 5],
+		["日報ログ", relationIdsFromProperty(properties["日報ログ"]), 5],
+		["関連発言ログ", relationIdsFromProperty(properties["関連発言ログ"]), 5],
+		["発言ログ", relationIdsFromProperty(properties["発言ログ"]), 5],
+		["関連営業ログ", relationIdsFromProperty(properties["関連営業ログ"]), 5],
+		["営業ログ", relationIdsFromProperty(properties["営業ログ"]), 5],
+		["関連営業貢献ログ", relationIdsFromProperty(properties["関連営業貢献ログ"]), 5],
+		["関連ノルマ申請", relationIdsFromProperty(properties["関連ノルマ申請"]), 2],
+		["関連商談", relationIdsFromProperty(properties["関連商談"]), 3],
+		["関連成約", relationIdsFromProperty(properties["関連成約"]), 3],
+		["関連貢献ログ", relationIdsFromProperty(properties["関連貢献ログ"]), 5],
+		["関連マネージャー評価", relationIdsFromProperty(properties["関連マネージャー評価"]), 2],
+	];
+	const sections: string[] = [];
+	for (const [label, ids, limit] of relationMap) {
+		if (ids.length === 0) continue;
+		const lines: string[] = [];
+		for (const id of ids.slice(0, limit)) {
+			try {
+				const page = await notion.pages.retrieve({ page_id: id });
+				lines.push(buildGenericPageSummary(page.properties ?? {}));
+			} catch (error) {
+				lines.push(`取得失敗: ${String(error).slice(0, 120)}`);
+			}
+		}
+		sections.push(`【${label}】\n${lines.filter(Boolean).join("\n---\n")}`);
+	}
+	return sections.join("\n\n").slice(0, 10000);
+}
+
+function buildSalesPerformanceReviewMemo(
+	review: SalesPerformanceReviewAIResponse,
+	missing: string[],
+	auditOrTest: boolean,
+): string {
+	const lines = [
+		`人見さんWorker一次評価案: ${new Date().toISOString()}`,
+		"総合スコア・評価ランク・評価ステータス確定は未変更。",
+		auditOrTest ? "監査除外/テストデータとして確認。本番評価根拠には使わない。" : "",
+		missing.length > 0 ? `不足/人間確認: ${missing.join(" / ")}` : "",
+		"",
+		"【結論】",
+		review.conclusion,
+		"",
+		"【結果評価の読み解き】",
+		review.resultExplanation,
+		"",
+		"【行動評価への助言】",
+		review.actionGuidance,
+		"",
+		"【貢献評価の見立て】",
+		review.contributionView,
+		"",
+		"【本人に返す短いコメント】",
+		review.personComment,
+	].filter((line) => line !== undefined && line !== null);
+	return lines.join("\n").slice(0, 1800);
+}
+
+function buildSalesPerformanceConfirmationMemo(
+	review: SalesPerformanceReviewAIResponse,
+	missing: string[],
+	auditOrTest: boolean,
+): string {
+	const lines = [
+		`人見さん確認事項: ${new Date().toISOString()}`,
+		auditOrTest ? "監査除外/テストデータのため本番評価には反映しない。" : "",
+		missing.length > 0 ? `不足/人間確認: ${missing.join(" / ")}` : "",
+		...review.managerConfirmationItems.map((item) => `・${item}`),
+		review.riskNotes.length > 0 ? "注意:" : "",
+		...review.riskNotes.map((item) => `・${item}`),
+	].filter(Boolean);
+	return lines.join("\n").slice(0, 1800);
+}
+
+async function callOpenAISalesPerformanceReview(input: {
+	title: string;
+	auditStatus: string;
+	targetPeriod: string;
+	source: string;
+	missing: string[];
+	auditOrTest: boolean;
+}): Promise<SalesPerformanceReviewAIResponse> {
+	const apiKey = process.env.OPENAI_API_KEY;
+	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
+	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+	const systemPrompt = [
+		"あなたは和上ホールディングスのAI人事評価担当「人見さん」です。",
+		"営業パフォーマンスDBの月次評価材料を読み、一次評価案、上司確認事項、次月改善ポイントを返します。",
+		"",
+		"絶対ルール:",
+		"- 総合スコアを新規採点しない",
+		"- 評価ランクを新規確定しない",
+		"- 評価ステータスを確定にしない",
+		"- 給与、報酬、昇格、処遇判断をしない",
+		"- テスト/監査除外データを本番評価根拠にしない",
+		"- 人格評価をしない",
+		"- 不明なことは要確認と明示する",
+		"",
+		"出力方針:",
+		"- 既存の数値やスコアは、変更ではなく読み解きとして説明する",
+		"- 活動ログ、日報ログ、発言ログ、営業ログ、営業貢献ログが渡されている場合は、営業パフォーマンスDBの数字の裏付けとして読む",
+		"- 活動ログは証拠正本として扱い、生ログの横断ではなく活動ログに整理された要約を優先する",
+		"- 行動評価と貢献評価は、マネージャーが面談で確認する論点に落とす",
+		"- 本人に返す言葉は厳しさと成長支援を両立させる",
+		"- 次月改善ポイントは3件以内で具体化する",
+		"- recommendedStatus は、評価材料として使えるなら処理済、不足が大きいなら要確認にする",
+		"必ずJSONのみを返してください。",
+	].join("\n");
+
+	const userPrompt = [
+		`評価ページ: ${input.title || "未設定"}`,
+		`対象期間: ${input.targetPeriod || "未設定"}`,
+		`監査区分: ${input.auditStatus || "未設定"}`,
+		`監査/テスト扱い: ${input.auditOrTest ? "はい" : "いいえ"}`,
+		input.missing.length > 0 ? `不足情報: ${input.missing.join(" / ")}` : "不足情報: なし",
+		"",
+		"=== 評価材料 ===",
+		input.source.slice(0, 16000),
+	].join("\n");
+
+	const response = await fetch("https://api.openai.com/v1/chat/completions", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify({
+			model,
+			temperature: 0,
+			response_format: SALES_PERFORMANCE_REVIEW_RESPONSE_FORMAT,
+			messages: [
+				{ role: "system", content: systemPrompt },
+				{ role: "user", content: userPrompt },
+			],
+		}),
+	});
+
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
+	}
+
+	const json = (await response.json()) as {
+		choices?: Array<{ message?: { content?: string } }>;
+	};
+	const raw = json.choices?.[0]?.message?.content;
+	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
+	return parseSalesPerformanceReviewAIResponse(raw);
+}
+
+function parseSalesPerformanceReviewAIResponse(
+	raw: string,
+): SalesPerformanceReviewAIResponse {
+	try {
+		const parsed = JSON.parse(raw) as Partial<SalesPerformanceReviewAIResponse>;
+		return {
+			conclusion: typeof parsed.conclusion === "string" ? parsed.conclusion : "",
+			resultExplanation:
+				typeof parsed.resultExplanation === "string" ? parsed.resultExplanation : "",
+			actionGuidance:
+				typeof parsed.actionGuidance === "string" ? parsed.actionGuidance : "",
+			contributionView:
+				typeof parsed.contributionView === "string" ? parsed.contributionView : "",
+			evidence: stringArray(parsed.evidence),
+			personComment:
+				typeof parsed.personComment === "string" ? parsed.personComment : "",
+			managerConfirmationItems: stringArray(parsed.managerConfirmationItems),
+			nextMonthImprovements: stringArray(parsed.nextMonthImprovements).slice(0, 3),
+			riskNotes: stringArray(parsed.riskNotes),
+			recommendedStatus:
+				parsed.recommendedStatus === "処理済" ? "処理済" : "要確認",
+		};
+	} catch (error) {
+		console.log("parseSalesPerformanceReviewAIResponse failed", String(error));
+		return {
+			conclusion: "",
+			resultExplanation: "",
+			actionGuidance: "",
+			contributionView: "",
+			evidence: [],
+			personComment: "",
+			managerConfirmationItems: ["AI返却JSONの解析に失敗したため、人間確認が必要です。"],
+			nextMonthImprovements: [],
+			riskNotes: [`JSONパース失敗: ${raw.slice(0, 200)}`],
+			recommendedStatus: "要確認",
+		};
+	}
+}
+
+function stringArray(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.map((item) => (typeof item === "string" ? item.trim() : ""))
+		.filter(Boolean)
+		.slice(0, 8);
+}
+
+async function processMeetingPrepReport(
+	input: MeetingPrepInput,
+	notion: NotionClient,
+): Promise<MeetingPrepResult> {
+	const companyPage = await notion.pages.retrieve({
+		page_id: input.companyPageId,
+	});
+	const baseCompany = readCompany(companyPage);
+	const company = await enrichCompanyForMeetingPrep(baseCompany);
+	const report = await resolveMeetingPrepReport(notion, company, input.reportPageId);
+	const shouldAppendBody = !report || isBlankMeetingPrepReport(report);
+	const prep = await buildMeetingPrepReportWithAI(company);
+	const quality = assessMeetingPrepQuality(company, prep);
+	const finalPrep = {
+		...prep,
+		risks: withMeetingPrepQualityMemo(prep.risks, quality),
+	};
+
+	if (input.dryRun) {
+		return {
+			companyId: company.page.id,
+			reportId: report?.id ?? null,
+			reportUrl: report?.url ?? null,
+			action: "dry-run",
+			message: report
+				? "dry-run: 既存の商談準備レポートを更新できます。"
+				: "dry-run: 新しい商談準備レポートを作成できます。",
+		};
+	}
+
+	const targetReport =
+		report ??
+		(await createMeetingPrepReportPage(notion, company, "Workerが企業ページから新規作成。"));
+
+	await notion.pages.update({
+		page_id: targetReport.id,
+		properties: {
+			"企業名（商談日）": title(company.name || "商談準備レポート"),
+			対象企業: relation(company.page.id),
+			売買区分: select(company.dealType || "未設定"),
+			ステータス: select(quality.ready ? "準備完了" : "準備中"),
+			企業プロフィール: richText(finalPrep.profile),
+			"3C分析": richText(finalPrep.threeC),
+			商談仮説: richText(finalPrep.hypothesis),
+			ヒアリングリスト: richText(finalPrep.questions),
+			"注意点・リスク": richText(finalPrep.risks),
+		},
+	});
+	await addMeetingPrepRelationToCompany(notion, company.page.id, targetReport.id);
+
+	if (shouldAppendBody) {
+		await appendMeetingPrepReportBody(notion, targetReport.id, company, finalPrep);
+	}
+
+	return {
+		companyId: company.page.id,
+		reportId: targetReport.id,
+		reportUrl: targetReport.url ?? null,
+		action: report ? "updated-report" : "created-report",
+		message: quality.ready
+			? report
+				? "商談準備レポートの空欄を補完し、準備完了にしました。"
+				: "商談準備レポートを新規作成し、準備完了にしました。"
+			: "商談準備レポートを作成/補完しましたが、根拠不足または企業別情報不足のため準備中で止めました。",
+	};
+}
+
+type RequiredFieldCheck = {
+	label: string;
+	value: string | number | null;
+};
+
+type ResidentDocumentDraft = {
+	missingField: string | null;
+	nextRequiredFields: string[];
+	documentTitle: string;
+	summaryLines: string[];
+};
+
+type ProposalSimulationDraft = {
+	missingField: string | null;
+	nextRequiredFields: string[];
+	proposalKind: ProposalKind;
+	proposalTitle: string;
+	titleLabel: string;
+	typeGuideLines: string[];
+	salePrice: number | null;
+	purchaseCost: number | null;
+	annualIncome: number | null;
+	runningCost: number;
+	annualNetIncome: number | null;
+	solarDetails: SolarProposalDetails | null;
+	sitePhotos: ProposalSitePhoto[];
+	runningCostBreakdown: RunningCostBreakdownItem[];
+	annualReductionAmount: number | null;
+	reductionRate: number | null;
+	co2ReductionTons: number | null;
+	grossProfit: number | null;
+	expectedYield: number | null;
+	paybackYears: number | null;
+	conclusionText: string;
+	summaryLines: string[];
+	pageOneLines: string[];
+	pageTwoLines: string[];
+};
+
+type RunningCostBreakdownItem = {
+	label: string;
+	value: number;
+};
+
+type SolarProposalDetails = {
+	plantName: string;
+	location: string;
+	powerArea: string;
+	voltageClass: string;
+	panelMaker: string;
+	panelModel: string;
+	panelCount: number | null;
+	dcCapacityKw: number | null;
+	powerConditionerMaker: string;
+	powerConditionerModel: string;
+	pcsCapacityKw: number | null;
+	fitFipType: string;
+	unitPrice: number | null;
+	remainingSalesYears: number | null;
+	gridConnectionDate: string;
+	operationYears: string;
+};
+
+type ProposalSitePhoto = {
+	url: string;
+	name: string;
+};
+
+type ProposalKind = "corporate" | "individual" | "esg" | "gridBattery";
+
+async function processResidentDocument(
+	input: ResidentDocumentInput,
+	notion: NotionClient,
+): Promise<ResidentDocumentResult> {
+	const page = await notion.pages.retrieve({ page_id: input.pageId });
+	const draft = evaluateResidentDocumentDraft(page);
+
+	if (draft.missingField) {
+		const message = buildSequentialMissingMessage(
+			"住民説明会資料",
+			draft.missingField,
+			draft.nextRequiredFields,
+		);
+		if (!input.dryRun) {
+			const patches: Record<string, SafePatch> = {};
+			setAliasPatch(
+				patches,
+				["資料作成ステータス", "住民説明会資料ステータス", "生成ステータス"],
+				{ kind: "select", value: "入力待ち" },
+			);
+			setAliasPatch(
+				patches,
+				["不足項目", "最終不足項目", "入力エラー項目"],
+				{ kind: "text", value: draft.missingField },
+			);
+			setAliasPatch(
+				patches,
+				["資料作成メモ", "住民説明会メモ", "処理結果メモ"],
+				{ kind: "text", value: message },
+			);
+			await safeUpdateExistingProperties(notion, page, patches);
+			await createPageComment(notion, page.id, `⚠️ ${message}`);
+		}
+	return {
+		pageId: page.id,
+		action: input.dryRun ? "dry-run" : "needs-input",
+		status: "入力待ち",
+		missingField: draft.missingField,
+			message,
+		};
+	}
+
+	const readyMessage = [
+		"住民説明会資料の必須入力チェックを通過しました。",
+		...draft.summaryLines,
+		"次ステップ: PDF生成ワーカーに渡して資料を作成してください。",
+	].join("\n");
+	if (!input.dryRun) {
+		const patches: Record<string, SafePatch> = {};
+		setAliasPatch(
+			patches,
+			["資料作成ステータス", "住民説明会資料ステータス", "生成ステータス"],
+			{ kind: "select", value: "作成準備完了" },
+		);
+		setAliasPatch(
+			patches,
+			["不足項目", "最終不足項目", "入力エラー項目"],
+			{ kind: "clear" },
+		);
+		setAliasPatch(
+			patches,
+			["資料作成メモ", "住民説明会メモ", "処理結果メモ"],
+			{ kind: "text", value: readyMessage },
+		);
+		setAliasPatch(
+			patches,
+			["生成ドキュメント名", "資料タイトル", "住民説明会資料名"],
+			{ kind: "text", value: draft.documentTitle },
+		);
+		await safeUpdateExistingProperties(notion, page, patches);
+		await createPageComment(
+			notion,
+			page.id,
+			`✅ 住民説明会資料の準備が完了しました。\n${draft.documentTitle}`,
+		);
+	}
+	return {
+		pageId: page.id,
+		action: input.dryRun ? "dry-run" : "prepared",
+		status: "作成準備完了",
+		missingField: null,
+		message: readyMessage,
+	};
+}
+
+async function processProposalSimulation(
+	input: ProposalSimulationInput,
+	notion: NotionClient,
+): Promise<ProposalSimulationResult> {
+	const page = await notion.pages.retrieve({ page_id: input.pageId });
+	const draft = evaluateProposalSimulationDraft(page);
+
+	if (draft.missingField) {
+		const message = buildSequentialMissingMessage(
+			"提案シミュレーション",
+			draft.missingField,
+			draft.nextRequiredFields,
+		);
+		if (!input.dryRun) {
+			const patches: Record<string, SafePatch> = {};
+			setAliasPatch(
+				patches,
+				["シミュレーションステータス", "PDFシミュレーションステータス", "生成ステータス"],
+				{ kind: "select", value: "入力待ち" },
+			);
+			setAliasPatch(
+				patches,
+				["不足項目", "最終不足項目", "入力エラー項目"],
+				{ kind: "text", value: draft.missingField },
+			);
+			setAliasPatch(
+				patches,
+				["シミュレーションメモ", "資料作成メモ", "処理結果メモ"],
+				{ kind: "text", value: message },
+			);
+			setAliasPatch(
+				patches,
+				["御社への結論", "提案結論", "提案結論（自動）", "提案結論（下書き）"],
+				{ kind: "text", value: buildPlaceholderConclusionText(draft.proposalKind) },
+			);
+			setAliasPatch(
+				patches,
+				["提案タイプガイド", "提案タイプ説明", "資料タイプ説明"],
+				{ kind: "text", value: draft.typeGuideLines.join("\n") },
+			);
+			await safeUpdateExistingProperties(notion, page, patches);
+			await createPageComment(notion, page.id, `⚠️ ${message}`);
+		}
+		return {
+			pageId: page.id,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			status: "入力待ち",
+			missingField: draft.missingField,
+			grossProfit: null,
+			expectedYield: null,
+			paybackYears: null,
+			message,
+		};
+	}
+
+	const pdfExport = input.dryRun
+		? {
+				attached: false,
+				destination: "none" as const,
+				message: "dry-runのためPDFは保存していません。",
+				fileName: "",
+				fileUrl: null as string | null,
+		  }
+		: await exportProposalSimulationPdf(notion, page, draft);
+	const readyMessage = [
+		"提案シミュレーションの必須入力チェックを通過しました。",
+		`提案書タイトル: ${draft.proposalTitle}`,
+		...draft.summaryLines,
+		`【御社への結論】${draft.conclusionText}`,
+		"【A4 2枚構成｜1枚目】",
+		...draft.pageOneLines,
+		"【A4 2枚構成｜2枚目】",
+		...draft.pageTwoLines,
+		"【提案タイプの選び方】",
+		...draft.typeGuideLines,
+		`PDF出力: ${pdfExport.message}`,
+		pdfExport.destination === "property"
+			? "保存先: レコード内のPDFプロパティ（提案PDF / シミュレーションPDF 等）から確認できます。"
+			: pdfExport.destination === "page_block"
+				? "保存先: 同じレコード本文の末尾にPDFを追加しています。"
+				: "PDFが保存されていない場合は、レコードに files 型の「提案PDF」プロパティを1つ追加してください。",
+	].join("\n");
+	if (!input.dryRun) {
+		const patches: Record<string, SafePatch> = {};
+		setAliasPatch(
+			patches,
+			["シミュレーションステータス", "PDFシミュレーションステータス", "生成ステータス"],
+			{ kind: "select", value: "シミュレーション準備完了" },
+		);
+		setAliasPatch(
+			patches,
+			["不足項目", "最終不足項目", "入力エラー項目"],
+			{ kind: "clear" },
+		);
+		setAliasPatch(
+			patches,
+			["シミュレーションメモ", "資料作成メモ", "処理結果メモ"],
+			{ kind: "text", value: readyMessage },
+		);
+		setAliasPatch(
+			patches,
+			["御社への結論", "提案結論", "提案結論（自動）", "提案結論（下書き）"],
+			{ kind: "text", value: draft.conclusionText },
+		);
+		setAliasPatch(
+			patches,
+			["提案タイプガイド", "提案タイプ説明", "資料タイプ説明"],
+			{ kind: "text", value: draft.typeGuideLines.join("\n") },
+		);
+		if (pdfExport.fileUrl) {
+			setAliasPatch(patches, PROPOSAL_PDF_URL_PROPERTY_ALIASES, {
+				kind: "text",
+				value: pdfExport.fileUrl,
+			});
+		}
+		if (draft.grossProfit !== null) {
+			setAliasPatch(
+				patches,
+				["想定粗利額", "粗利試算", "試算粗利額"],
+				{ kind: "number", value: draft.grossProfit },
+			);
+		}
+		if (draft.expectedYield !== null) {
+			setAliasPatch(
+				patches,
+				["想定利回り", "利回り", "IRR(簡易)"],
+				{ kind: "number", value: draft.expectedYield },
+			);
+		}
+		if (draft.paybackYears !== null) {
+			setAliasPatch(
+				patches,
+				["想定回収年数", "回収年数"],
+			{ kind: "number", value: draft.paybackYears },
+			);
+		}
+		await safeUpdateExistingProperties(notion, page, patches);
+		if (pdfExport.fileUrl) {
+			await updateRelatedProjectProposalPdfLink(notion, page, pdfExport.fileUrl);
+		}
+		await createPageComment(
+			notion,
+			page.id,
+			`✅ 提案シミュレーションの準備が完了しました。\n${draft.summaryLines.join("\n")}\n${pdfExport.message}`,
+		);
+	}
+	return {
+		pageId: page.id,
+		action: input.dryRun ? "dry-run" : "prepared",
+		status: "シミュレーション準備完了",
+		missingField: null,
+		grossProfit: draft.grossProfit,
+		expectedYield: draft.expectedYield,
+		paybackYears: draft.paybackYears,
+		message: readyMessage,
+	};
+}
+
+const PROJECT_DOCUMENT_REQUEST_CONFIGS: Record<
+	ProjectDocumentRequestKind,
+	ProjectDocumentRequestConfig
+> = {
+	proposal: {
+		kind: "proposal",
+		documentType: "提案書",
+		requestTitleSuffix: "提案シミュレーション",
+		statusProperty: "シミュレーションステータス",
+		statusValue: "入力待ち",
+		createdLabel: "提案シミュレーション依頼",
+		nextActionMessage:
+			"次は資料作成依頼側で不足項目を補完し、PDF提案化してください。",
+		memo: "案件管理DBから作成しました。必要項目を補完してPDF提案化してください。",
+	},
+	resident: {
+		kind: "resident",
+		documentType: "住民説明会資料",
+		requestTitleSuffix: "説明会用資料",
+		statusProperty: "資料作成ステータス",
+		statusValue: "入力待ち",
+		createdLabel: "説明会用資料依頼",
+		nextActionMessage:
+			"次は資料作成依頼側で近隣周知・説明会資料の不足項目を補完してください。",
+		memo: "案件管理DBから作成しました。近隣周知・説明会資料の必須項目を補完してください。",
+		defaultProperties: {
+			周知方法: select("所有者変更周知"),
+		},
+	},
+};
+
+async function processProjectProposalRequest(
+	input: ProjectProposalRequestInput,
+	notion: NotionClient,
+): Promise<ProjectProposalRequestResult> {
+	return processProjectDocumentRequest(input, notion, "proposal");
+}
+
+async function processProjectResidentDocumentRequest(
+	input: ProjectProposalRequestInput,
+	notion: NotionClient,
+): Promise<ProjectDocumentRequestResult> {
+	return processProjectDocumentRequest(input, notion, "resident");
+}
+
+async function processProjectEquipmentDetailRequest(
+	input: ProjectProposalRequestInput,
+	notion: NotionClient,
+): Promise<ProjectEquipmentDetailRequestResult> {
+	const projectPage = await notion.pages.retrieve({ page_id: input.projectPageId });
+	const projectName = readGenericPageTitle(projectPage) || "案件";
+	const existingEquipmentIds = relationIdsFromAliases(
+		projectPage.properties ?? {},
+		PROJECT_EQUIPMENT_DETAIL_RELATION_ALIASES,
+	);
+	if (existingEquipmentIds.length > 0) {
+		const message = `既存の発電所設備詳細があります: ${projectName}`;
+		if (!input.dryRun) {
+			await createPageComment(
+				notion,
+				projectPage.id,
+				`⚡ ${message}\n設備詳細を重複作成しませんでした。`,
+			);
+		}
+		return {
+			projectPageId: projectPage.id,
+			equipmentPageId: existingEquipmentIds[0]!,
+			action: input.dryRun ? "dry-run" : "existing",
+			message,
+		};
+	}
+
+	const equipmentTitle = `${projectName}｜設備詳細`;
+	if (input.dryRun) {
+		return {
+			projectPageId: projectPage.id,
+			equipmentPageId: null,
+			action: "dry-run",
+			message: `dry-run: 発電所設備詳細DBへ「${equipmentTitle}」を作成します。`,
+		};
+	}
+
+	const equipmentPage = await notion.pages.create({
+		parent: { data_source_id: POWER_PLANT_EQUIPMENT_DATA_SOURCE_ID },
+		properties: {
+			設備詳細名: title(equipmentTitle),
+			関連案件: relation(projectPage.id),
+			...buildEquipmentDetailInitialProperties(projectPage),
+		},
+	});
+	const equipmentUrl = typeof (equipmentPage as Record<string, unknown>).url === "string"
+		? ((equipmentPage as Record<string, unknown>).url as string)
+		: "";
+	await safeUpdateExistingProperties(notion, projectPage, {
+		発電所設備詳細: { kind: "relation", ids: [equipmentPage.id] },
+		資料作成メモ: {
+			kind: "text",
+			value: `発電所設備詳細を作成しました。${equipmentUrl}`,
+		},
+	});
+	await createPageComment(
+		notion,
+		projectPage.id,
+		[
+			`⚡ 発電所設備詳細を作成しました: ${equipmentTitle}`,
+			equipmentUrl ? `開く: ${equipmentUrl}` : "",
+			"案件ページ上で設備詳細を入力してから、シミュレーション作成または説明会用資料作成へ進んでください。",
+		].filter(Boolean).join("\n"),
+	);
+	return {
+		projectPageId: projectPage.id,
+		equipmentPageId: equipmentPage.id,
+		action: "created",
+		message: `発電所設備詳細を作成しました: ${equipmentTitle}`,
+	};
+}
+
+function buildEquipmentDetailInitialProperties(
+	projectPage: Page,
+): Record<string, Record<string, unknown>> {
+	const properties = projectPage.properties ?? {};
+	const prefill: Record<string, Record<string, unknown>> = {};
+	setTextPrefill(prefill, "発電所名", properties, ["発電所名", "物件名", "案件名"]);
+	setTextPrefill(prefill, "所在地", properties, ["所在地", "住所"]);
+	setTextPrefill(prefill, "発電所住所", properties, ["発電所住所", "所在地", "住所"]);
+	setSelectPrefill(prefill, "電力会社エリア", properties, ["電力会社エリア"]);
+	setSelectPrefill(prefill, "低圧/高圧区分", properties, ["低圧/高圧区分"]);
+	setFilesPrefill(prefill, "現場写真", properties, [
+		"現場写真",
+		"発電所写真",
+		"現地写真",
+		"外観写真",
+		"設備写真",
+		"写真",
+	]);
+	return prefill;
+}
+
+async function processProjectDocumentRequest(
+	input: ProjectProposalRequestInput,
+	notion: NotionClient,
+	kind: ProjectDocumentRequestKind,
+): Promise<ProjectDocumentRequestResult> {
+	const config = PROJECT_DOCUMENT_REQUEST_CONFIGS[kind];
+	const projectPage = await notion.pages.retrieve({ page_id: input.projectPageId });
+	const equipmentPage = await retrieveProjectEquipmentDetailPage(notion, projectPage);
+	const documentSourcePage = mergeProjectWithEquipmentDetail(projectPage, equipmentPage);
+	const projectName = readGenericPageTitle(projectPage) || "案件";
+	const readiness = evaluateProjectDocumentRequestReadiness(documentSourcePage, kind);
+	if (readiness.missingField) {
+		const message = buildSequentialMissingMessage(
+			kind === "proposal" ? "シミュレーション作成" : "説明会用資料作成",
+			readiness.missingField,
+			readiness.nextRequiredFields,
+		);
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, projectPage, {
+				資料作成メモ: { kind: "text", value: message },
+				不足項目: { kind: "text", value: readiness.missingField },
+			});
+			await createPageComment(notion, projectPage.id, `⚠️ ${message}`);
+		}
+		return {
+			projectPageId: projectPage.id,
+			requestPageId: null,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			message,
+		};
+	}
+	const existingRequestIds = relationIdsFromProperty(
+		projectPage.properties?.["資料作成依頼"],
+	);
+	const existingRequest = await findExistingProjectDocumentRequest(
+		notion,
+		projectPage.id,
+		config.documentType,
+	);
+	if (existingRequest) {
+		const message = `既存の${config.createdLabel}があります: ${projectName}`;
+		if (!input.dryRun) {
+			await createPageComment(
+				notion,
+				projectPage.id,
+				`📄 ${message}\n${config.documentType}の資料作成依頼を重複作成しませんでした。`,
+			);
+		}
+		return {
+			projectPageId: projectPage.id,
+			requestPageId: existingRequest.id,
+			action: "existing",
+			message,
+		};
+	}
+
+	const requestTitle = `${projectName}｜${config.requestTitleSuffix}`;
+	if (input.dryRun) {
+		return {
+			projectPageId: projectPage.id,
+			requestPageId: null,
+			action: "dry-run",
+			message: `dry-run: 営業資料作成依頼DBへ「${requestTitle}」を作成します。`,
+		};
+	}
+
+	const requestPage = await notion.pages.create({
+		parent: { data_source_id: PROPOSAL_REQUEST_DATA_SOURCE_ID },
+		properties: {
+			案件名: title(requestTitle),
+			資料種別: select(config.documentType),
+			[config.statusProperty]: select(config.statusValue),
+			関連案件: relation(projectPage.id),
+			資料作成メモ: richText(config.memo),
+			...(config.defaultProperties ?? {}),
+			...readiness.prefillProperties,
+		},
+	});
+	const requestUrl = typeof (requestPage as Record<string, unknown>).url === "string"
+		? ((requestPage as Record<string, unknown>).url as string)
+		: "";
+	const requestIds = uniqueStrings([...existingRequestIds, requestPage.id]);
+	await safeUpdateExistingProperties(notion, projectPage, {
+		資料作成依頼: { kind: "relation", ids: requestIds },
+		資料作成メモ: {
+			kind: "text",
+			value: `${config.createdLabel}を作成しました。${requestUrl}`,
+		},
+	});
+	await createPageComment(
+		notion,
+		projectPage.id,
+		[
+			`📄 ${config.createdLabel}を作成しました: ${requestTitle}`,
+			requestUrl ? `開く: ${requestUrl}` : "",
+			config.nextActionMessage,
+		].filter(Boolean).join("\n"),
+	);
+	return {
+		projectPageId: projectPage.id,
+		requestPageId: requestPage.id,
+		action: "created",
+		message: `${config.createdLabel}を作成しました: ${requestTitle}`,
+	};
+}
+
+function evaluateProjectDocumentRequestReadiness(
+	projectPage: Page,
+	kind: ProjectDocumentRequestKind,
+): {
+	missingField: string | null;
+	nextRequiredFields: string[];
+	prefillProperties: Record<string, Record<string, unknown>>;
+} {
+	if (kind === "proposal") {
+		const draft = evaluateProposalSimulationDraft(projectPage);
+		return {
+			missingField: draft.missingField,
+			nextRequiredFields: draft.nextRequiredFields,
+			prefillProperties: draft.missingField
+				? {}
+				: buildProposalRequestPrefillProperties(projectPage, draft),
+		};
+	}
+	const draft = evaluateResidentDocumentDraft(projectPage);
+	return {
+		missingField: draft.missingField,
+		nextRequiredFields: draft.nextRequiredFields,
+		prefillProperties: draft.missingField
+			? {}
+			: buildResidentRequestPrefillProperties(projectPage),
+	};
+}
+
+function buildProposalRequestPrefillProperties(
+	projectPage: Page,
+	draft: ProposalSimulationDraft,
+): Record<string, Record<string, unknown>> {
+	const properties = projectPage.properties ?? {};
+	const prefill: Record<string, Record<string, unknown>> = {
+		提案タイプ: select(proposalKindJapaneseLabel(draft.proposalKind)),
+	};
+	if (draft.proposalKind === "gridBattery") {
+		if (draft.salePrice !== null) prefill.総事業費 = { number: draft.salePrice };
+		if (draft.purchaseCost !== null) prefill.実質投資額 = { number: draft.purchaseCost };
+		if (draft.annualIncome !== null) prefill.年間想定総売上 = { number: draft.annualIncome };
+		return prefill;
+	}
+	const details = draft.solarDetails;
+	if (draft.salePrice !== null) prefill.販売価格 = { number: draft.salePrice };
+	if (draft.purchaseCost !== null) prefill.仕入れ価格 = { number: draft.purchaseCost };
+	if (draft.annualIncome !== null) prefill.年間売電収入 = { number: draft.annualIncome };
+	prefill["年間維持費（ランニングコスト）"] = { number: draft.runningCost };
+	if (details) {
+		prefill.発電所名 = richText(details.plantName);
+		prefill.所在地 = richText(details.location);
+		prefill.電力会社エリア = select(details.powerArea);
+		prefill["低圧/高圧区分"] = select(details.voltageClass);
+		prefill.パネルメーカー = richText(details.panelMaker);
+		prefill.パネル型式 = richText(details.panelModel);
+		if (details.panelCount !== null) prefill.パネル枚数 = { number: details.panelCount };
+		if (details.dcCapacityKw !== null) {
+			prefill["DC容量（パネル側kW）"] = { number: details.dcCapacityKw };
+		}
+		prefill.パワコンメーカー = richText(details.powerConditionerMaker);
+		prefill.パワコン型式 = richText(details.powerConditionerModel);
+		if (details.pcsCapacityKw !== null) {
+			prefill["PCS容量（パワコン側kW）"] = { number: details.pcsCapacityKw };
+		}
+		prefill["FIT/FIP区分"] = select(details.fitFipType);
+		if (details.unitPrice !== null) prefill.売電単価 = { number: details.unitPrice };
+		if (details.remainingSalesYears !== null) {
+			prefill.残存売電期間 = { number: details.remainingSalesYears };
+		}
+		const gridConnectionDate = datePropertyValueFromAliases(properties, [
+			"連系開始日",
+			"発電開始日",
+			"売電開始日",
+			"稼働開始日",
+		]);
+		if (gridConnectionDate) prefill.連系開始日 = gridConnectionDate;
+	}
+	const sitePhotos = filesPropertyValueFromImages(draft.sitePhotos);
+	if (sitePhotos) prefill.現場写真 = sitePhotos;
+	return prefill;
+}
+
+function buildResidentRequestPrefillProperties(
+	projectPage: Page,
+): Record<string, Record<string, unknown>> {
+	const properties = projectPage.properties ?? {};
+	const prefill: Record<string, Record<string, unknown>> = {};
+	setTextPrefill(prefill, "案件番号", properties, [
+		"案件番号",
+		"発電所問合せ番号",
+		"案件ID",
+	]);
+	setTextPrefill(prefill, "発電所名", properties, ["発電所名", "物件名", "案件名"]);
+	setTextPrefill(prefill, "発電所住所", properties, ["発電所住所", "所在地", "住所"]);
+	setSelectPrefill(prefill, "周知方法", properties, ["周知方法", "説明会方式", "周知区分"]);
+	setDatePrefill(prefill, "質問受付期間", properties, ["質問受付期間", "質問受付期限"]);
+	setDatePrefill(prefill, "周知日", properties, ["周知日", "説明会日", "開催日"]);
+	setTextPrefill(prefill, "保守管理責任者 氏名", properties, [
+		"保守管理責任者 氏名",
+		"保守管理責任者",
+		"責任者氏名",
+	]);
+	setTextPrefill(prefill, "旧認定事業者", properties, [
+		"旧認定事業者",
+		"旧事業者",
+		"旧所有者",
+	]);
+	setTextPrefill(prefill, "新認定事業者", properties, [
+		"新認定事業者",
+		"新事業者",
+		"新所有者",
+	]);
+	setTextPrefill(prefill, "設備ID", properties, ["設備ID", "認定設備ID"]);
+	setFilesPrefill(prefill, "発電所所在地画像", properties, [
+		"発電所所在地画像",
+		"地図画像",
+		"所在地画像",
+		"位置図",
+	]);
+	setFilesPrefill(prefill, "ハザードマップ", properties, ["ハザードマップ"]);
+	setFilesPrefill(prefill, "説明会対象エリア画像", properties, [
+		"説明会対象エリア画像",
+		"対象エリア画像",
+		"周辺住民範囲画像",
+	]);
+	setFilesPrefill(prefill, "反射光画像（夏至）", properties, [
+		"反射光画像（夏至）",
+		"反射光画像",
+		"反射光シミュレーション画像",
+	]);
+	setFilesPrefill(prefill, "反射光画像（冬至）", properties, [
+		"反射光画像（冬至）",
+		"反射光画像",
+		"反射光シミュレーション画像",
+	]);
+	setFilesPrefill(prefill, "現場写真", properties, [
+		"現場写真",
+		"発電所写真",
+		"現地写真",
+		"外観写真",
+		"設備写真",
+		"写真",
+	]);
+	return prefill;
+}
+
+async function findExistingProjectDocumentRequest(
+	notion: NotionClient,
+	projectPageId: string,
+	documentType: string,
+): Promise<Page | null> {
+	const existing = await notion.dataSources.query({
+		data_source_id: PROPOSAL_REQUEST_DATA_SOURCE_ID,
+		filter: {
+			and: [
+				{ property: "関連案件", relation: { contains: projectPageId } },
+				{ property: "資料種別", select: { equals: documentType } },
+			],
+		},
+		page_size: 1,
+	});
+	return existing.results[0] ?? null;
+}
+
+const PROJECT_EQUIPMENT_DETAIL_RELATION_ALIASES = [
+	"発電所設備詳細",
+	"設備詳細",
+	"発電所情報",
+	"設備情報",
+];
+
+async function retrieveProjectEquipmentDetailPage(
+	notion: NotionClient,
+	projectPage: Page,
+): Promise<Page | null> {
+	const equipmentIds = relationIdsFromAliases(
+		projectPage.properties ?? {},
+		PROJECT_EQUIPMENT_DETAIL_RELATION_ALIASES,
+	);
+	if (equipmentIds.length === 0) return null;
+	try {
+		return await notion.pages.retrieve({ page_id: equipmentIds[0]! });
+	} catch (error) {
+		console.log("equipment detail retrieve skipped", {
+			projectPageId: projectPage.id,
+			equipmentPageId: equipmentIds[0],
+			error: String(error),
+		});
+		return null;
+	}
+}
+
+function relationIdsFromAliases(
+	properties: Record<string, unknown>,
+	aliases: string[],
+): string[] {
+	for (const alias of aliases) {
+		const ids = relationIdsFromProperty(properties[alias]);
+		if (ids.length > 0) return ids;
+	}
+	return [];
+}
+
+function mergeProjectWithEquipmentDetail(projectPage: Page, equipmentPage: Page | null): Page {
+	if (!equipmentPage) return projectPage;
+	const projectProperties = projectPage.properties ?? {};
+	const merged: Record<string, unknown> = { ...projectProperties };
+	for (const [name, value] of Object.entries(equipmentPage.properties ?? {})) {
+		if (name === "設備詳細名" || name === "関連案件") continue;
+		if (!notionPropertyHasValue(merged[name])) merged[name] = value;
+	}
+	return {
+		...projectPage,
+		properties: merged,
+	};
+}
+
+function notionPropertyHasValue(property: unknown): boolean {
+	if (!property || typeof property !== "object") return false;
+	const prop = property as Record<string, unknown>;
+	const type = prop.type;
+	if (type === "title" && Array.isArray(prop.title)) return prop.title.length > 0;
+	if (type === "rich_text" && Array.isArray(prop.rich_text)) {
+		return prop.rich_text.length > 0;
+	}
+	if (type === "select") return Boolean(prop.select);
+	if (type === "status") return Boolean(prop.status);
+	if (type === "number") return typeof prop.number === "number";
+	if (type === "date") return Boolean(prop.date);
+	if (type === "files" && Array.isArray(prop.files)) return prop.files.length > 0;
+	if (type === "relation" && Array.isArray(prop.relation)) {
+		return prop.relation.length > 0;
+	}
+	if (type === "email") return typeof prop.email === "string" && prop.email.length > 0;
+	if (type === "phone_number") {
+		return typeof prop.phone_number === "string" && prop.phone_number.length > 0;
+	}
+	if (type === "url") return typeof prop.url === "string" && prop.url.length > 0;
+	if (type === "checkbox") return prop.checkbox === true;
+	if (type === "multi_select" && Array.isArray(prop.multi_select)) {
+		return prop.multi_select.length > 0;
+	}
+	return false;
+}
+
+async function updateRelatedProjectProposalPdfLink(
+	notion: NotionClient,
+	proposalPage: Page,
+	pdfUrl: string,
+): Promise<void> {
+	const relatedProjectIds = relationIdsFromProperty(proposalPage.properties?.["関連案件"]);
+	if (relatedProjectIds.length === 0) return;
+	for (const projectPageId of relatedProjectIds) {
+		try {
+			const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
+			await safeUpdateExistingProperties(notion, projectPage, {
+				提案PDFリンク: { kind: "text", value: pdfUrl },
+				資料作成メモ: {
+					kind: "text",
+					value: `提案PDFを作成しました。${pdfUrl}`,
+				},
+			});
+		} catch (error) {
+			console.log("related project pdf link update skipped", {
+				projectPageId,
+				error: String(error),
+			});
+		}
+	}
+}
+
+type ProposalPdfExportResult = {
+	attached: boolean;
+	destination: "property" | "page_block" | "none";
+	message: string;
+	fileName: string;
+	fileUrl: string | null;
+};
+
+async function exportProposalSimulationPdf(
+	notion: NotionClient,
+	page: Page,
+	draft: ProposalSimulationDraft,
+): Promise<ProposalPdfExportResult> {
+	if (!notion.fileUploads?.create || !notion.fileUploads.send) {
+		return {
+			attached: false,
+			destination: "none",
+			message: "この実行環境ではPDFアップロード機能を利用できません。",
+			fileName: "",
+			fileUrl: null,
+		};
+	}
+
+	const properties = page.properties ?? {};
+	const filePropertyName = findFirstFilesPropertyNameByAliases(
+		properties,
+		PROPOSAL_PDF_FILE_PROPERTY_ALIASES,
+	);
+
+	const titleSeed = draft.titleLabel || readGenericPageTitle(page) || "proposal-simulation";
+	const fileName = `${sanitizeFileName(titleSeed)}_${todayIsoDateInTokyo()}.pdf`;
+	try {
+		const pdfBytes = await buildProposalSimulationPdfBytes(draft, page.id);
+		const created = await notion.fileUploads.create({
+			mode: "single_part",
+			filename: fileName,
+			content_type: "application/pdf",
+		});
+		const fileUploadId =
+			firstString(
+				(created as Record<string, unknown>).id,
+				readNestedString(created, ["file_upload", "id"]),
+			) ?? "";
+		if (!fileUploadId) {
+			return {
+				attached: false,
+				destination: "none",
+				message: "PDFアップロードIDの取得に失敗しました。",
+				fileName,
+				fileUrl: null,
+			};
+		}
+
+		await notion.fileUploads.send({
+			file_upload_id: fileUploadId,
+			file: {
+				filename: fileName,
+				data: new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" }),
+			},
+		});
+		if (notion.fileUploads.complete) {
+			try {
+				await notion.fileUploads.complete({ file_upload_id: fileUploadId });
+			} catch {
+				// single_partではcomplete不要の場合があるため無視
+			}
+		}
+
+		let fileUrl: string | null = null;
+		if (filePropertyName) {
+			await notion.pages.update({
+				page_id: page.id,
+				properties: {
+					[filePropertyName]: {
+						files: [
+							{
+								type: "file_upload",
+								file_upload: { id: fileUploadId },
+								name: fileName,
+							},
+						],
+					},
+				},
+			});
+			try {
+				const refreshed = await notion.pages.retrieve({ page_id: page.id });
+				fileUrl = readFirstFileUrlByAliases(refreshed.properties ?? {}, [filePropertyName]);
+			} catch {
+				// URL取得に失敗してもPDF保存は成功扱い
+			}
+			return {
+				attached: true,
+				destination: "property",
+				message: `PDFを保存しました（${filePropertyName}）。`,
+				fileName,
+				fileUrl,
+			};
+		}
+
+		if (notion.blocks?.children?.append) {
+			await notion.blocks.children.append({
+				block_id: page.id,
+				children: [
+					{
+						object: "block",
+						type: "heading_3",
+						heading_3: {
+							rich_text: [
+								{
+									type: "text",
+									text: { content: "提案シミュレーションPDF" },
+								},
+							],
+						},
+					},
+					{
+						object: "block",
+						type: "pdf",
+						pdf: {
+							file_upload: { id: fileUploadId },
+							caption: [
+								{
+									type: "text",
+									text: { content: fileName },
+								},
+							],
+						},
+					},
+				],
+			});
+			return {
+				attached: true,
+				destination: "page_block",
+				message:
+					"PDF保存先プロパティが無かったため、同じレコード本文の末尾にPDFを追加しました。",
+				fileName,
+				fileUrl: null,
+			};
+		}
+
+		return {
+			attached: false,
+			destination: "none",
+			message:
+				"PDFアップロードは完了しましたが、保存先が未設定です。files型の「提案PDF」を追加してください。",
+			fileName,
+			fileUrl,
+		};
+	} catch (error) {
+		return {
+			attached: false,
+			destination: "none",
+			message: `PDF保存に失敗しました。${String(error)}`,
+			fileName,
+			fileUrl: null,
+		};
+	}
+}
+
+async function buildProposalSimulationPdfBytes(
+	draft: ProposalSimulationDraft,
+	pageId: string,
+): Promise<Uint8Array> {
+	const pdf = await PDFDocument.create();
+	const font = await pdf.embedFont(StandardFonts.Helvetica);
+	const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+	const left = 42;
+	const createPageWriter = () => {
+		const page = pdf.addPage([595.28, 841.89]); // A4 portrait
+		const maxWidth = page.getWidth() - left * 2;
+		page.drawRectangle({
+			x: 0,
+			y: page.getHeight() - 88,
+			width: page.getWidth(),
+			height: 88,
+			color: rgb(0.06, 0.18, 0.24),
+		});
+		let y = page.getHeight() - 36;
+		const drawWrapped = (textLine: string, size = 11, strong = false) => {
+			const wrapped = wrapTextForPdf(toPdfSafeText(textLine), strong ? bold : font, size, maxWidth);
+			for (const line of wrapped) {
+				page.drawText(line, {
+					x: left,
+					y,
+					size,
+					font: strong ? bold : font,
+					color: rgb(0.11, 0.14, 0.18),
+				});
+				y -= size + 5;
+				if (y < 45) return;
+			}
+		};
+		const drawHeader = (title: string, subtitle: string) => {
+			page.drawText(toPdfSafeText(title), {
+				x: left,
+				y,
+				size: 17,
+				font: bold,
+				color: rgb(1, 1, 1),
+			});
+			y -= 22;
+			page.drawText(toPdfSafeText(subtitle), {
+				x: left,
+				y,
+				size: 9,
+				font,
+				color: rgb(0.84, 0.9, 0.88),
+			});
+			y = page.getHeight() - 114;
+		};
+		const drawSectionTitle = (title: string) => {
+			y -= 4;
+			page.drawText(toPdfSafeText(title).toUpperCase(), {
+				x: left,
+				y,
+				size: 9,
+				font: bold,
+				color: rgb(0.05, 0.32, 0.38),
+			});
+			y -= 8;
+			page.drawLine({
+				start: { x: left, y },
+				end: { x: page.getWidth() - left, y },
+				thickness: 0.7,
+				color: rgb(0.65, 0.78, 0.76),
+			});
+			y -= 14;
+		};
+		const drawMetricRows = (rows: Array<[string, string]>) => {
+			const rowHeight = 28;
+			for (const [label, value] of rows) {
+				if (y < 80) return;
+				page.drawRectangle({
+					x: left,
+					y: y - 8,
+					width: maxWidth,
+					height: rowHeight,
+					color: rgb(0.94, 0.97, 0.96),
+				});
+				page.drawText(toPdfSafeText(label), {
+					x: left + 12,
+					y,
+					size: 9,
+					font,
+					color: rgb(0.32, 0.39, 0.4),
+				});
+				page.drawText(toPdfSafeText(value), {
+					x: left + 240,
+					y,
+					size: 10,
+					font: bold,
+					color: rgb(0.09, 0.14, 0.16),
+				});
+				y -= rowHeight + 4;
+			}
+		};
+		const drawRule = () => {
+			y -= 6;
+			page.drawLine({
+				start: { x: left, y },
+				end: { x: page.getWidth() - left, y },
+				thickness: 0.8,
+				color: rgb(0.75, 0.78, 0.76),
+			});
+			y -= 14;
+		};
+		const drawSitePhotoFrame = async (
+			title: string,
+			sitePhotos: ProposalSitePhoto[],
+			height = 232,
+		) => {
+			drawSectionTitle(title);
+			const boxY = y - height;
+			page.drawRectangle({
+				x: left,
+				y: boxY,
+				width: maxWidth,
+				height,
+				borderColor: rgb(0.08, 0.12, 0.14),
+				borderWidth: 1.2,
+				color: rgb(0.98, 0.98, 0.96),
+			});
+			const gap = 14;
+			const slotHeight = height - 28;
+			const slotWidth = Math.min((maxWidth - gap - 24) / 2, slotHeight * 0.75);
+			const totalSlotWidth = slotWidth * 2 + gap;
+			const startX = left + (maxWidth - totalSlotWidth) / 2;
+			const slotY = boxY + 14;
+			for (let index = 0; index < 2; index += 1) {
+				const slotX = startX + index * (slotWidth + gap);
+				page.drawRectangle({
+					x: slotX,
+					y: slotY,
+					width: slotWidth,
+					height: slotHeight,
+					borderColor: rgb(0.16, 0.21, 0.23),
+					borderWidth: 1,
+					color: rgb(1, 1, 1),
+				});
+				const sitePhoto = sitePhotos[index] ?? null;
+				let drewImage = false;
+				if (sitePhoto?.url) {
+					const image = await embedPdfImageFromUrl(pdf, sitePhoto.url);
+					if (image) {
+						const padding = 5;
+						const fit = fitRectWithinBox(
+							image.width,
+							image.height,
+							slotWidth - padding * 2,
+							slotHeight - padding * 2,
+						);
+						page.drawImage(image, {
+							x: slotX + padding + fit.x,
+							y: slotY + padding + fit.y,
+							width: fit.width,
+							height: fit.height,
+						});
+						drewImage = true;
+					}
+				}
+				if (!drewImage) {
+					page.drawText(`SITE PHOTO ${index + 1}`, {
+						x: slotX + 14,
+						y: slotY + slotHeight / 2 + 8,
+						size: 11,
+						font: bold,
+						color: rgb(0.44, 0.48, 0.48),
+					});
+					page.drawText("Portrait 3:4", {
+						x: slotX + 14,
+						y: slotY + slotHeight / 2 - 10,
+						size: 8,
+						font,
+						color: rgb(0.44, 0.48, 0.48),
+					});
+				}
+				if (sitePhoto?.name) {
+					page.drawText(toPdfSafeText(sitePhoto.name).slice(0, 26), {
+						x: slotX,
+						y: slotY - 9,
+						size: 7,
+						font,
+						color: rgb(0.36, 0.4, 0.4),
+					});
+				}
+			}
+			y = boxY - 22;
+		};
+		return { drawWrapped, drawHeader, drawSectionTitle, drawMetricRows, drawRule, drawSitePhotoFrame };
+	};
+
+	const generatedDate = todayIsoDateInTokyo();
+	const first = createPageWriter();
+	first.drawHeader(
+		"WAJO Proposal Sheet",
+		`Page 1 / Executive Summary / ${proposalKindLabelForPdf(draft.proposalKind)} / ${generatedDate}`,
+	);
+	if (draft.proposalKind !== "gridBattery") {
+		await first.drawSitePhotoFrame("Site Photos", draft.sitePhotos, 232);
+	}
+	first.drawSectionTitle("Core Message");
+	for (const line of buildProposalPdfPageOneLines(draft)) {
+		first.drawWrapped(line, 10);
+	}
+	const saleMetricLabel = draft.proposalKind === "gridBattery" ? "Project Cost" : "Sales Price";
+	const purchaseMetricLabel = draft.proposalKind === "gridBattery" ? "Net Investment" : "Sourcing Price";
+	first.drawSectionTitle("Simulation Metrics");
+	first.drawMetricRows([
+		[saleMetricLabel, formatYenForPdf(draft.salePrice)],
+		[purchaseMetricLabel, formatYenForPdf(draft.purchaseCost)],
+		["Annual Income", formatYenForPdf(draft.annualIncome)],
+		["Annual Maintenance Cost", formatYenForPdf(draft.runningCost)],
+		["Annual Net Cashflow", formatYenForPdf(draft.annualNetIncome)],
+		["Gross Profit / Annual Net Profit", formatYenForPdf(draft.grossProfit)],
+		["Expected Yield", formatPercentForPdf(draft.expectedYield, 2)],
+		["Payback Years", formatDecimalForPdf(draft.paybackYears, 2)],
+	]);
+	first.drawRule();
+	first.drawWrapped(`Record ID: ${pageId}`, 8);
+
+	const second = createPageWriter();
+	second.drawHeader(
+		"WAJO Proposal Sheet",
+		`Page 2 / Assumptions, Risks and Type Guide / ${proposalKindLabelForPdf(draft.proposalKind)}`,
+	);
+	second.drawSectionTitle("Assumptions / Risk Notes");
+	for (const line of buildProposalPdfPageTwoLines(draft)) {
+		second.drawWrapped(line, 10);
+	}
+	second.drawSectionTitle("Energy / ESG Impact");
+	second.drawMetricRows([
+		["Annual Cost Reduction Rate", formatPercentForPdf(draft.reductionRate, 1)],
+		["Annual Cost Reduction Amount", formatYenForPdf(draft.annualReductionAmount)],
+		["Annual CO2 Reduction", `${formatDecimalForPdf(draft.co2ReductionTons, 2)} tons`],
+	]);
+	second.drawSectionTitle("Proposal Type Guide");
+	for (const line of buildProposalTypeGuidePdfLines(draft.proposalKind)) {
+		second.drawWrapped(line, 8.5);
+	}
+	second.drawRule();
+	second.drawWrapped(
+		"Full Japanese sales copy is stored on the Notion record. This PDF is a safe two-page summary generated by WAJO Sales OS.",
+		9,
+	);
+
+	return pdf.save();
+}
+
+function buildProposalPdfPageOneLines(draft: ProposalSimulationDraft): string[] {
+	if (draft.proposalKind === "gridBattery") {
+		return [
+			`Proposal focus: ${proposalKindLabelForPdf(draft.proposalKind)}`,
+			`Project cost: ${formatYenForPdf(draft.salePrice)} / Net investment: ${formatYenForPdf(draft.purchaseCost)}`,
+			`Annual revenue: ${formatYenForPdf(draft.annualIncome)} / Annual running cost: ${formatYenForPdf(draft.runningCost)}`,
+			`Annual net profit: ${formatYenForPdf(draft.annualNetIncome)} / Expected yield: ${formatPercentForPdf(draft.expectedYield, 2)} / Payback: ${formatDecimalForPdf(draft.paybackYears, 2)} years`,
+			"Positioning: Grid-scale battery storage revenue depends on market prices, awards, operation policy and grid conditions.",
+		];
+	}
+	const details = draft.solarDetails;
+	return nonEmptyLines([
+		`Proposal focus: ${proposalKindLabelForPdf(draft.proposalKind)}`,
+		details
+			? `Asset: Solar power plant / ${pdfSafeValue(details.plantName, "See Notion record")} / ${englishVoltageClass(details.voltageClass)}`
+			: "Asset: Solar power plant",
+		`Sales price: ${formatYenForPdf(draft.salePrice)} / Sourcing price: ${formatYenForPdf(draft.purchaseCost)}`,
+		`Annual revenue: ${formatYenForPdf(draft.annualIncome)} / Annual maintenance cost: ${formatYenForPdf(draft.runningCost)}`,
+		`Annual net cashflow: ${formatYenForPdf(draft.annualNetIncome)} / Expected yield: ${formatPercentForPdf(draft.expectedYield, 2)} / Payback: ${formatDecimalForPdf(draft.paybackYears, 2)} years`,
+		details
+			? `Equipment summary: ${pdfSafeValue(details.panelMaker, "Panel maker")} ${pdfSafeValue(details.panelModel, "")} / ${formatDecimalForPdf(details.panelCount, 0)} panels / DC ${formatDecimalForPdf(details.dcCapacityKw, 1)} kW`
+			: "",
+	]);
+}
+
+function buildProposalPdfPageTwoLines(draft: ProposalSimulationDraft): string[] {
+	if (draft.proposalKind === "gridBattery") {
+		return [
+			"Subsidy assumptions must be confirmed against the public offering guideline and grant decision.",
+			"Market revenue changes with JEPX spreads, capacity market awards, balancing market awards, degradation cost and penalties.",
+			"Required checks: grid connection, receiving point, PCS output, battery capacity, EMS or aggregator operation, insurance, O&M and land terms.",
+		];
+	}
+	const details = draft.solarDetails;
+	const maintenanceBreakdown =
+		draft.runningCostBreakdown.length > 0
+			? `Maintenance breakdown: ${draft.runningCostBreakdown
+					.map((item) => `${pdfSafeValue(item.label, "Cost")} ${formatYenForPdf(item.value)}`)
+					.join(" / ")}`
+			: "";
+	return nonEmptyLines([
+		details
+			? `Site: ${pdfSafeValue(details.location, "See Notion record")} / Power area: ${pdfSafeValue(details.powerArea, "See Notion record")} / Voltage: ${englishVoltageClass(details.voltageClass)}`
+			: "",
+		details
+			? `Panels: ${pdfSafeValue(details.panelMaker, "Panel maker")} / ${pdfSafeValue(details.panelModel, "Panel model")} / ${formatDecimalForPdf(details.panelCount, 0)} panels / DC ${formatDecimalForPdf(details.dcCapacityKw, 1)} kW`
+			: "",
+		details
+			? `PCS: ${pdfSafeValue(details.powerConditionerMaker, "PCS maker")} / ${pdfSafeValue(details.powerConditionerModel, "PCS model")} / ${formatDecimalForPdf(details.pcsCapacityKw, 1)} kW`
+			: "",
+		details
+			? `Feed-in terms: ${pdfSafeValue(details.fitFipType, "FIT/FIP")} / ${formatDecimalForPdf(details.unitPrice, 2)} JPY per kWh / remaining ${formatDecimalForPdf(details.remainingSalesYears, 1)} years`
+			: "",
+		details
+			? `Operation: grid connection ${pdfSafeValue(details.gridConnectionDate, "See Notion record")} / operating period ${formatOperationYearsForPdf(details.operationYears)}`
+			: "",
+		maintenanceBreakdown,
+		"Risk notes: generation variance, curtailment, insurance deductible, equipment failure, financing terms and future disposal cost must be shown before submission.",
+	]);
+}
+
+function buildProposalTypeGuidePdfLines(currentKind: ProposalKind): string[] {
+	return [
+		`Current proposal type: ${proposalKindLabelForPdf(currentKind)}`,
+		"Individual Investor: private customer, retirement income, asset formation, inheritance and monthly cashflow.",
+		"Corporate Owner: tax planning, depreciation, tax credit review, financing and internal approval.",
+		"ESG / Decarbonization Company: CO2 reduction, supply-chain explanation, bank dialogue and corporate value.",
+		"Grid-Scale Battery Storage: BESS, grid connection, JEPX, capacity market, balancing market and land screening.",
+	];
+}
+
+async function embedPdfImageFromUrl(
+	pdf: PDFDocument,
+	url: string,
+): Promise<PDFImage | null> {
+	try {
+		const response = await fetch(url);
+		if (!response.ok) return null;
+		const bytes = new Uint8Array(await response.arrayBuffer());
+		if (isPngBytes(bytes)) return await pdf.embedPng(bytes);
+		if (isJpegBytes(bytes)) return await pdf.embedJpg(bytes);
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+function isPngBytes(bytes: Uint8Array): boolean {
+	return (
+		bytes.length > 8 &&
+		bytes[0] === 0x89 &&
+		bytes[1] === 0x50 &&
+		bytes[2] === 0x4e &&
+		bytes[3] === 0x47
+	);
+}
+
+function isJpegBytes(bytes: Uint8Array): boolean {
+	return bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+}
+
+function fitRectWithinBox(
+	sourceWidth: number,
+	sourceHeight: number,
+	boxWidth: number,
+	boxHeight: number,
+): { x: number; y: number; width: number; height: number } {
+	const scale = Math.min(boxWidth / sourceWidth, boxHeight / sourceHeight);
+	const width = sourceWidth * scale;
+	const height = sourceHeight * scale;
+	return {
+		x: (boxWidth - width) / 2,
+		y: (boxHeight - height) / 2,
+		width,
+		height,
+	};
+}
+
+function formatOperationYearsForPdf(value: string): string {
+	const match = value.match(/(\d+)年(?:(\d+)か月)?/);
+	if (!match) return pdfSafeValue(value, "Calculated from Notion date");
+	const years = Number(match[1]);
+	const months = match[2] ? Number(match[2]) : 0;
+	return months > 0 ? `${years} years ${months} months` : `${years} years`;
+}
+
+function proposalKindLabelForPdf(kind: ProposalKind): string {
+	if (kind === "individual") return "Individual Investor";
+	if (kind === "esg") return "ESG / Decarbonization Company";
+	if (kind === "gridBattery") return "Grid-Scale Battery Storage";
+	return "Corporate Owner";
+}
+
+function toPdfSafeText(value: string): string {
+	const replacements: Array<[RegExp, string]> = [
+		[/御社への結論/g, "Conclusion"],
+		[/本案件/g, "This project"],
+		[/提案/g, "proposal"],
+		[/補助金/g, "subsidy"],
+		[/市場収益/g, "market revenue"],
+		[/系統用蓄電池/g, "grid-scale battery storage"],
+		[/太陽光発電/g, "solar power"],
+		[/販売価格/g, "Sales Price"],
+		[/仕入れ価格/g, "Sourcing Price"],
+		[/年間売電収入/g, "Annual Revenue"],
+		[/年間維持費（ランニングコスト）/g, "Annual Maintenance Cost"],
+		[/年間維持費/g, "Annual Maintenance Cost"],
+		[/年間ランニングコスト/g, "Annual Running Cost"],
+		[/年間手残り/g, "Annual Net Cashflow"],
+		[/発電所名/g, "Plant Name"],
+		[/所在地/g, "Location"],
+		[/電力会社エリア/g, "Power Area"],
+		[/低圧\/高圧区分/g, "Voltage Class"],
+		[/パネルメーカー/g, "Panel Maker"],
+		[/パネル型式/g, "Panel Model"],
+		[/パネル枚数/g, "Panel Count"],
+		[/パワコンメーカー/g, "PCS Maker"],
+		[/パワコン型式/g, "PCS Model"],
+		[/連系開始日/g, "Grid Connection Date"],
+		[/稼働年数/g, "Operation Years"],
+		[/売電単価/g, "Feed-in Unit Price"],
+		[/残存売電期間/g, "Remaining Sales Years"],
+		[/年間想定純利益/g, "annual net profit"],
+		[/想定実質利回り/g, "expected net yield"],
+		[/回収年数/g, "payback years"],
+	];
+	let safe = value;
+	for (const [pattern, replacement] of replacements) {
+		safe = safe.replace(pattern, replacement);
+	}
+	return safe.replace(/[^\x20-\x7E]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function findFirstFilesPropertyNameByAliases(
+	properties: Record<string, unknown>,
+	aliases: string[],
+): string | null {
+	for (const alias of aliases) {
+		const property = properties[alias];
+		if (!property || typeof property !== "object") continue;
+		if ((property as Record<string, unknown>).type === "files") return alias;
+	}
+	return null;
+}
+
+function readFirstFileUrlByAliases(
+	properties: Record<string, unknown>,
+	aliases: string[],
+): string | null {
+	for (const alias of aliases) {
+		const property = properties[alias];
+		if (!property || typeof property !== "object") continue;
+		const prop = property as Record<string, unknown>;
+		if (prop.type !== "files" || !Array.isArray(prop.files) || prop.files.length === 0) continue;
+		const first = prop.files[0];
+		if (!first || typeof first !== "object") continue;
+		const fileObj = first as Record<string, unknown>;
+		if (fileObj.type === "file" && fileObj.file && typeof fileObj.file === "object") {
+			const file = fileObj.file as Record<string, unknown>;
+			if (typeof file.url === "string" && file.url) return file.url;
+		}
+		if (fileObj.type === "external" && fileObj.external && typeof fileObj.external === "object") {
+			const external = fileObj.external as Record<string, unknown>;
+			if (typeof external.url === "string" && external.url) return external.url;
+		}
+	}
+	return null;
+}
+
+function readImageFilesByAliases(
+	properties: Record<string, unknown>,
+	aliases: string[],
+	limit = 2,
+): ProposalSitePhoto[] {
+	const images: ProposalSitePhoto[] = [];
+	const seenFiles = new Set<string>();
+	for (const alias of aliases) {
+		const property = properties[alias];
+		if (!property || typeof property !== "object") continue;
+		const prop = property as Record<string, unknown>;
+		if (prop.type !== "files" || !Array.isArray(prop.files) || prop.files.length === 0) continue;
+		for (const item of prop.files) {
+			const image = readFileUrlFromNotionFile(item);
+			if (!image) continue;
+			const imageKey = `${image.name}\n${image.url}`;
+			if (seenFiles.has(imageKey)) continue;
+			images.push(image);
+			seenFiles.add(imageKey);
+			if (images.length >= limit) return images;
+		}
+	}
+	return images;
+}
+
+function filesPropertyValueFromImages(
+	images: ProposalSitePhoto[],
+): Record<string, unknown> | null {
+	if (images.length === 0) return null;
+	return {
+		files: images.map((image) => ({
+			name: image.name,
+			type: "external",
+			external: { url: image.url },
+		})),
+	};
+}
+
+function filesPropertyValueFromAliases(
+	properties: Record<string, unknown>,
+	aliases: string[],
+	limit = 2,
+): Record<string, unknown> | null {
+	return filesPropertyValueFromImages(readImageFilesByAliases(properties, aliases, limit));
+}
+
+function datePropertyValueFromAliases(
+	properties: Record<string, unknown>,
+	aliases: string[],
+): Record<string, unknown> | null {
+	for (const alias of aliases) {
+		const property = properties[alias];
+		if (!property || typeof property !== "object") continue;
+		const prop = property as Record<string, unknown>;
+		if (prop.type === "date" && prop.date && typeof prop.date === "object") {
+			const date = prop.date as Record<string, unknown>;
+			const start = typeof date.start === "string" ? date.start : "";
+			const end = typeof date.end === "string" ? date.end : "";
+			if (start) return { date: { start, end: end || null } };
+		}
+		const label = dateLabelFromProperty(property);
+		const start = label.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? "";
+		if (start) return { date: { start, end: null } };
+	}
+	return null;
+}
+
+function setTextPrefill(
+	prefill: Record<string, Record<string, unknown>>,
+	targetName: string,
+	properties: Record<string, unknown>,
+	aliases: string[],
+): void {
+	const value = readFirstTextByAliases(properties, aliases);
+	if (value) prefill[targetName] = richText(value);
+}
+
+function setSelectPrefill(
+	prefill: Record<string, Record<string, unknown>>,
+	targetName: string,
+	properties: Record<string, unknown>,
+	aliases: string[],
+): void {
+	const value = readFirstTextByAliases(properties, aliases);
+	if (value) prefill[targetName] = select(value);
+}
+
+function setDatePrefill(
+	prefill: Record<string, Record<string, unknown>>,
+	targetName: string,
+	properties: Record<string, unknown>,
+	aliases: string[],
+): void {
+	const value = datePropertyValueFromAliases(properties, aliases);
+	if (value) prefill[targetName] = value;
+}
+
+function setFilesPrefill(
+	prefill: Record<string, Record<string, unknown>>,
+	targetName: string,
+	properties: Record<string, unknown>,
+	aliases: string[],
+): void {
+	const value = filesPropertyValueFromAliases(properties, aliases);
+	if (value) prefill[targetName] = value;
+}
+
+function readFileUrlFromNotionFile(item: unknown): ProposalSitePhoto | null {
+	if (!item || typeof item !== "object") return null;
+	const fileObj = item as Record<string, unknown>;
+	const name = typeof fileObj.name === "string" ? fileObj.name : "site-photo";
+	if (fileObj.type === "file" && fileObj.file && typeof fileObj.file === "object") {
+		const file = fileObj.file as Record<string, unknown>;
+		const url = typeof file.url === "string" ? file.url : "";
+		return url ? { url, name } : null;
+	}
+	if (fileObj.type === "external" && fileObj.external && typeof fileObj.external === "object") {
+		const external = fileObj.external as Record<string, unknown>;
+		const url = typeof external.url === "string" ? external.url : "";
+		return url ? { url, name } : null;
+	}
+	return null;
+}
+
+function sanitizeFileName(value: string): string {
+	const normalized = value
+		.replace(/[\\/:*?"<>|]/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+	return normalized.length > 0 ? normalized.slice(0, 80) : "proposal-simulation";
+}
+
+function wrapTextForPdf(
+	textLine: string,
+	font: { widthOfTextAtSize: (text: string, size: number) => number },
+	size: number,
+	maxWidth: number,
+): string[] {
+	if (!textLine) return [""];
+	const words = textLine.split(" ");
+	const lines: string[] = [];
+	let current = "";
+	for (const word of words) {
+		const candidate = current ? `${current} ${word}` : word;
+		if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
+			current = candidate;
+			continue;
+		}
+		if (current) lines.push(current);
+		current = word;
+	}
+	if (current) lines.push(current);
+	return lines.length > 0 ? lines : [textLine];
+}
+
+function formatYenForPdf(value: number | null): string {
+	if (value === null || !Number.isFinite(value)) return "N/A";
+	return `${Math.round(value).toLocaleString("en-US")} JPY`;
+}
+
+function formatPercentForPdf(value: number | null, digits: number): string {
+	if (value === null || !Number.isFinite(value)) return "N/A";
+	return `${value.toFixed(digits).replace(/\.?0+$/, "")}%`;
+}
+
+function formatDecimalForPdf(value: number | null, digits: number): string {
+	if (value === null || !Number.isFinite(value)) return "N/A";
+	return value.toFixed(digits).replace(/\.?0+$/, "");
+}
+
+function pdfSafeValue(value: string, fallback: string): string {
+	const safe = toPdfSafeText(value);
+	return safe.length > 0 ? safe : fallback;
+}
+
+function englishVoltageClass(value: string): string {
+	if (/特高/.test(value)) return "Extra high voltage";
+	if (/高圧/.test(value)) return "High voltage";
+	if (/低圧/.test(value)) return "Low voltage";
+	return pdfSafeValue(value, "Voltage class");
+}
+
+function todayIsoDateInTokyo(date = new Date()): string {
+	return new Intl.DateTimeFormat("en-CA", {
+		timeZone: "Asia/Tokyo",
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+	}).format(date);
+}
+
+function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
+	const properties = page.properties ?? {};
+	const caseNumber = readFirstTextByAliases(properties, [
+		"案件番号",
+		"発電所問合せ番号",
+		"案件ID",
+	]);
+	const plantName = readFirstTextByAliases(properties, ["発電所名", "物件名", "案件名"]);
+	const plantAddress = readFirstTextByAliases(properties, ["発電所住所", "所在地", "住所"]);
+	const notifyMethod = readFirstTextByAliases(properties, ["周知方法", "説明会方式", "周知区分"]);
+	const questionPeriod = readFirstDateLabelByAliases(properties, [
+		"質問受付期間",
+		"質問受付期限",
+	]);
+	const briefingDate = readFirstDateLabelByAliases(properties, ["周知日", "説明会日", "開催日"]);
+	const managerName = readFirstTextByAliases(properties, [
+		"保守管理責任者 氏名",
+		"保守管理責任者",
+		"責任者氏名",
+	]);
+	const oldOperator = readFirstTextByAliases(properties, [
+		"旧認定事業者",
+		"旧事業者",
+		"旧所有者",
+	]);
+	const newOperator = readFirstTextByAliases(properties, [
+		"新認定事業者",
+		"新事業者",
+		"新所有者",
+	]);
+	const facilityId = readFirstTextByAliases(properties, ["設備ID", "認定設備ID"]);
+	const plantLocationImages = readImageFilesByAliases(properties, [
+		"発電所所在地画像",
+		"地図画像",
+		"所在地画像",
+		"位置図",
+	]);
+	const hazardMapImages = readImageFilesByAliases(properties, ["ハザードマップ"]);
+	const targetAreaImages = readImageFilesByAliases(properties, [
+		"説明会対象エリア画像",
+		"対象エリア画像",
+		"周辺住民範囲画像",
+	]);
+	const reflectionImages = readImageFilesByAliases(properties, [
+		"反射光画像",
+		"反射光画像（夏至）",
+		"反射光画像（冬至）",
+		"反射光シミュレーション画像",
+	]);
+	const siteImages = readImageFilesByAliases(properties, [
+		"現場写真",
+		"発電所写真",
+		"現地写真",
+		"外観写真",
+		"設備写真",
+		"写真",
+	]);
+
+	const checks: RequiredFieldCheck[] = [
+		{ label: "案件番号", value: caseNumber },
+		{ label: "発電所名", value: plantName },
+		{ label: "発電所住所", value: plantAddress },
+		{ label: "周知方法", value: notifyMethod },
+		{ label: "質問受付期間", value: questionPeriod },
+		{ label: "周知日", value: briefingDate },
+		{ label: "保守管理責任者", value: managerName },
+		{ label: "旧認定事業者", value: oldOperator },
+		{ label: "新認定事業者", value: newOperator },
+		{ label: "設備ID", value: facilityId },
+		{ label: "発電所所在地画像", value: plantLocationImages.length > 0 ? "あり" : "" },
+		{ label: "ハザードマップ", value: hazardMapImages.length > 0 ? "あり" : "" },
+		{ label: "説明会対象エリア画像", value: targetAreaImages.length > 0 ? "あり" : "" },
+		{ label: "反射光画像", value: reflectionImages.length > 0 ? "あり" : "" },
+		{ label: "現場写真", value: siteImages.length > 0 ? "あり" : "" },
+	];
+	const missingIndex = checks.findIndex((check) => !hasFieldValue(check.value));
+	if (missingIndex >= 0) {
+		return {
+			missingField: checks[missingIndex]!.label,
+			nextRequiredFields: checks
+				.slice(missingIndex + 1)
+				.map((check) => check.label),
+			documentTitle: "",
+			summaryLines: [],
+		};
+	}
+
+	const titleBase = caseNumber || plantName || readGenericPageTitle(page) || "住民説明会資料";
+	return {
+		missingField: null,
+		nextRequiredFields: [],
+		documentTitle: `${titleBase}｜住民説明会資料`,
+		summaryLines: [
+			`案件番号: ${caseNumber}`,
+			`発電所名: ${plantName}`,
+			`周知方法: ${notifyMethod}`,
+			`質問受付期間: ${questionPeriod}`,
+			`周知日: ${briefingDate}`,
+		],
+	};
+}
+
+const SOLAR_RUNNING_COST_TOTAL_ALIASES = [
+	"年間維持費（ランニングコスト）",
+	"年間ランニングコスト（合計）",
+	"年間ランニングコスト",
+	"ランニングコスト（年）",
+	"年間維持費",
+	"年間運用費",
+];
+
+const RUNNING_COST_BREAKDOWN_ALIASES: Array<[string, string[]]> = [
+	["O&M費", ["O&M費", "年間O&M費", "O&M費（年）"]],
+	["保険料", ["保険料", "年間保険料"]],
+	["地代", ["地代", "年間地代", "土地賃料"]],
+	["固定資産税", ["固定資産税", "年間固定資産税"]],
+	["除草費", ["除草費", "年間除草費", "草刈費"]],
+	["監視通信費", ["監視通信費", "通信費", "監視費"]],
+	["管理費", ["管理費", "年間管理費"]],
+];
+
+function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
+	const properties = page.properties ?? {};
+	const titleLabel = readFirstTextByAliases(properties, [
+		"案件名",
+		"提案名",
+		"案件タイトル",
+		"発電所名",
+		"タイトル",
+		"名称",
+	]);
+	const proposalKind = inferProposalKind(
+		readFirstTextByAliases(properties, [
+			"提案タイプ",
+			"提案相手タイプ",
+			"提案書タイプ",
+			"資料タイプ",
+			"対象者",
+			"顧客タイプ",
+			"AI案件種別",
+		]),
+		titleLabel,
+	);
+	const proposalTitle = buildProposalTitle(proposalKind, titleLabel);
+	const typeGuideLines = buildProposalTypeGuideLines(proposalKind);
+	const isGridBattery = proposalKind === "gridBattery";
+	const salePrice = readFirstNumberByAliases(
+		properties,
+		isGridBattery
+			? [
+					"総事業費",
+					"物件総額",
+					"投資額",
+					"販売価格",
+					"提案価格",
+					"売価",
+					"契約金額（税込）",
+			  ]
+			: [
+					"販売価格",
+					"提案価格",
+					"売価",
+					"物件総額",
+					"投資額",
+					"契約金額（税込）",
+					"総事業費",
+			  ],
+	);
+	let purchaseCost = readFirstNumberByAliases(
+		properties,
+		isGridBattery
+			? [
+					"実質投資額",
+					"補助金控除後投資額",
+					"自己投資額",
+					"仕入れ価格",
+					"仕入価格",
+					"仕入れ総額",
+					"仕入総額",
+					"買取価格",
+					"買取総額",
+					"原価",
+					"取得費合計",
+			  ]
+			: [
+					"仕入れ価格",
+					"仕入価格",
+					"仕入れ総額",
+					"仕入総額",
+					"買取価格",
+					"買取総額",
+					"原価",
+					"取得費合計",
+					"実質投資額",
+					"自己投資額",
+			  ],
+	);
+	const subsidyAmount = readFirstNumberByAliases(properties, [
+		"補助金想定額",
+		"補助金額",
+		"導入補助金",
+		"補助金",
+	]);
+	if (isGridBattery && purchaseCost === null && salePrice !== null && subsidyAmount !== null) {
+		purchaseCost = Math.max(0, salePrice - subsidyAmount);
+	}
+	const monthlyGeneration = readFirstNumberByAliases(properties, [
+		"月間発電量",
+		"想定月間発電量",
+	]);
+	const unitPrice = readFirstNumberByAliases(properties, [
+		"売電単価",
+		"kWh単価",
+		"FIT単価",
+		"FIP単価",
+	]);
+	let annualIncome = readFirstNumberByAliases(properties, [
+		"年間想定総売上",
+		"年間想定収益",
+		"年間収益",
+		"年間売上",
+		"想定年間売電収入",
+		"年間売電収入",
+		"年間収入",
+		"売電収入（年）",
+	]);
+	if (annualIncome === null && monthlyGeneration !== null && unitPrice !== null) {
+		annualIncome = roundTo(monthlyGeneration * unitPrice * 12, 0);
+	}
+	const runningCostInput = readRunningCostInput(properties);
+	const runningCost = runningCostInput.total ?? 0;
+	const solarDetails = isGridBattery
+		? null
+		: buildSolarProposalDetails(properties, unitPrice);
+	const sitePhotos = readImageFilesByAliases(properties, [
+		"現場写真",
+		"発電所写真",
+		"現地写真",
+		"外観写真",
+		"設備写真",
+		"写真",
+	]);
+	const annualElectricCost = readFirstNumberByAliases(properties, [
+		"現在年間電気代",
+		"現状年間電気代",
+		"年間電気代",
+		"年間電力コスト",
+	]);
+	const annualReductionAmountRaw = readFirstNumberByAliases(properties, [
+		"年間電気代削減額",
+		"想定年間削減額",
+		"年間削減額",
+	]);
+	const co2ReductionTons = readFirstNumberByAliases(properties, [
+		"年間CO2削減量",
+		"CO2削減量（年）",
+		"年間CO2排出削減量",
+	]);
+	const reductionRateFromProperty = readFirstNumberByAliases(properties, [
+		"年間電気代削減率",
+		"削減率",
+	]);
+
+	const checks: RequiredFieldCheck[] = isGridBattery
+		? [
+				{ label: "総事業費", value: salePrice },
+				{ label: "実質投資額（または補助金想定額）", value: purchaseCost },
+				{ label: "年間想定総売上", value: annualIncome },
+		  ]
+		: [
+				{ label: "販売価格", value: salePrice },
+				{ label: "仕入れ価格", value: purchaseCost },
+				{ label: "年間売電収入（または月間発電量・売電単価）", value: annualIncome },
+				{ label: "年間維持費（ランニングコスト）", value: runningCostInput.total },
+				{ label: "発電所名", value: solarDetails?.plantName ?? "" },
+				{ label: "所在地", value: solarDetails?.location ?? "" },
+				{ label: "電力会社エリア", value: solarDetails?.powerArea ?? "" },
+				{ label: "低圧/高圧区分", value: solarDetails?.voltageClass ?? "" },
+				{ label: "パネルメーカー", value: solarDetails?.panelMaker ?? "" },
+				{ label: "パネル型式", value: solarDetails?.panelModel ?? "" },
+				{ label: "パネル枚数", value: solarDetails?.panelCount ?? null },
+				{ label: "DC容量（パネル側kW）", value: solarDetails?.dcCapacityKw ?? null },
+				{ label: "パワコンメーカー", value: solarDetails?.powerConditionerMaker ?? "" },
+				{ label: "パワコン型式", value: solarDetails?.powerConditionerModel ?? "" },
+				{ label: "PCS容量（パワコン側kW）", value: solarDetails?.pcsCapacityKw ?? null },
+				{ label: "FIT/FIP区分", value: solarDetails?.fitFipType ?? "" },
+				{ label: "売電単価", value: solarDetails?.unitPrice ?? null },
+				{ label: "残存売電期間", value: solarDetails?.remainingSalesYears ?? null },
+				{ label: "連系開始日", value: solarDetails?.gridConnectionDate ?? "" },
+				{ label: "現場写真", value: sitePhotos.length > 0 ? "あり" : "" },
+		  ];
+	const missingIndex = checks.findIndex((check) => !hasFieldValue(check.value));
+	if (missingIndex >= 0) {
+		return {
+			missingField: checks[missingIndex]!.label,
+			nextRequiredFields: checks
+				.slice(missingIndex + 1)
+				.map((check) => check.label),
+			proposalKind,
+			proposalTitle,
+			titleLabel,
+			typeGuideLines,
+			salePrice,
+			purchaseCost,
+			annualIncome,
+			runningCost,
+			annualNetIncome: null,
+			solarDetails,
+			sitePhotos,
+			runningCostBreakdown: runningCostInput.breakdown,
+			annualReductionAmount: null,
+			reductionRate: null,
+			co2ReductionTons,
+			grossProfit: null,
+			expectedYield: null,
+			paybackYears: null,
+			conclusionText: buildPlaceholderConclusionText(proposalKind),
+			summaryLines: [],
+			pageOneLines: [],
+			pageTwoLines: [],
+		};
+	}
+
+	const grossProfit =
+		isGridBattery
+			? roundTo((annualIncome as number) - runningCost, 0)
+			: roundTo((salePrice as number) - (purchaseCost as number), 0);
+	const annualNetIncome = roundTo((annualIncome as number) - runningCost, 0);
+	const investmentBase = isGridBattery ? (purchaseCost as number) : (salePrice as number);
+	const expectedYield =
+		investmentBase > 0 && annualNetIncome > 0
+			? roundTo((annualNetIncome / investmentBase) * 100, 2)
+			: null;
+	const paybackYears =
+		annualNetIncome > 0 ? roundTo(investmentBase / annualNetIncome, 2) : null;
+	const annualReductionAmount = annualReductionAmountRaw ?? annualNetIncome;
+	const reductionRate = annualElectricCost && annualReductionAmount
+		? roundTo((annualReductionAmount / annualElectricCost) * 100, 1)
+		: (reductionRateFromProperty ?? expectedYield);
+	const conclusionText = buildProposalConclusionText({
+		proposalKind,
+		reductionRate,
+		annualReductionAmount,
+		co2ReductionTons,
+	});
+	const summaryLines = buildProposalSummaryLines({
+		proposalKind,
+		salePrice: salePrice as number,
+		purchaseCost: purchaseCost as number,
+		annualIncome: annualIncome as number,
+		runningCost,
+		annualNetIncome,
+		grossProfit,
+		expectedYield,
+		paybackYears,
+		subsidyAmount,
+	});
+	const pageLines = buildTwoPageProposalLines({
+		proposalKind,
+		proposalTitle,
+		titleLabel,
+		salePrice: salePrice as number,
+		purchaseCost: purchaseCost as number,
+		annualIncome: annualIncome as number,
+		runningCost,
+		annualNetIncome,
+		grossProfit,
+		expectedYield,
+		paybackYears,
+		annualReductionAmount,
+		reductionRate,
+		co2ReductionTons,
+		subsidyAmount,
+		solarDetails,
+		runningCostBreakdown: runningCostInput.breakdown,
+	});
+
+	return {
+		missingField: null,
+		nextRequiredFields: [],
+		proposalKind,
+		proposalTitle,
+		titleLabel,
+		typeGuideLines,
+		salePrice,
+		purchaseCost,
+		annualIncome,
+		runningCost,
+		annualNetIncome,
+		solarDetails,
+		sitePhotos,
+		runningCostBreakdown: runningCostInput.breakdown,
+		annualReductionAmount,
+		reductionRate,
+		co2ReductionTons,
+		grossProfit,
+		expectedYield,
+		paybackYears,
+		conclusionText,
+		summaryLines,
+		pageOneLines: pageLines.pageOneLines,
+		pageTwoLines: pageLines.pageTwoLines,
+	};
+}
+
+function readRunningCostInput(properties: Record<string, unknown>): {
+	total: number | null;
+	breakdown: RunningCostBreakdownItem[];
+} {
+	const total = readFirstNumberByAliases(properties, SOLAR_RUNNING_COST_TOTAL_ALIASES);
+	const breakdown = RUNNING_COST_BREAKDOWN_ALIASES.flatMap(([label, aliases]) => {
+		const value = readFirstNumberByAliases(properties, aliases);
+		return value !== null ? [{ label, value }] : [];
+	});
+	if (total !== null) {
+		return { total, breakdown };
+	}
+	if (breakdown.length === 0) {
+		return { total: null, breakdown };
+	}
+	return {
+		total: roundTo(
+			breakdown.reduce((sum, item) => sum + item.value, 0),
+			0,
+		),
+		breakdown,
+	};
+}
+
+function buildSolarProposalDetails(
+	properties: Record<string, unknown>,
+	unitPrice: number | null,
+): SolarProposalDetails {
+	const gridConnectionDate = readFirstDateLabelByAliases(properties, [
+		"連系開始日",
+		"発電開始日",
+		"売電開始日",
+		"稼働開始日",
+	]);
+	return {
+		plantName: readFirstTextByAliases(properties, ["発電所名", "物件名", "案件名"]),
+		location: readFirstTextByAliases(properties, ["所在地", "発電所住所", "住所"]),
+		powerArea: readFirstTextByAliases(properties, [
+			"電力会社エリア",
+			"電力エリア",
+			"管轄電力会社",
+		]),
+		voltageClass: readFirstTextByAliases(properties, [
+			"低圧/高圧区分",
+			"電圧区分",
+			"低圧高圧区分",
+			"高圧低圧",
+		]),
+		panelMaker: readFirstTextByAliases(properties, [
+			"パネルメーカー",
+			"太陽光パネルメーカー",
+			"モジュールメーカー",
+		]),
+		panelModel: readFirstTextByAliases(properties, [
+			"パネル型式",
+			"太陽光パネル型式",
+			"モジュール型式",
+		]),
+		panelCount: readFirstNumberByAliases(properties, ["パネル枚数", "モジュール枚数"]),
+		dcCapacityKw: readFirstNumberByAliases(properties, [
+			"DC容量（パネル側kW）",
+			"DC容量",
+			"パネル容量kW",
+			"パネル容量",
+			"設備容量（DC）",
+		]),
+		powerConditionerMaker: readFirstTextByAliases(properties, [
+			"パワコンメーカー",
+			"PCSメーカー",
+			"パワーコンディショナメーカー",
+		]),
+		powerConditionerModel: readFirstTextByAliases(properties, [
+			"パワコン型式",
+			"PCS型式",
+			"パワーコンディショナ型式",
+		]),
+		pcsCapacityKw: readFirstNumberByAliases(properties, [
+			"PCS容量（パワコン側kW）",
+			"PCS容量",
+			"パワコン容量",
+			"AC容量（PCS側kW）",
+		]),
+		fitFipType: readFirstTextByAliases(properties, [
+			"FIT/FIP区分",
+			"売電区分",
+			"FIT区分",
+		]),
+		unitPrice,
+		remainingSalesYears: readFirstNumberByAliases(properties, [
+			"残存売電期間",
+			"残り売電期間",
+			"残存FIT期間",
+		]),
+		gridConnectionDate,
+		operationYears: calculateOperationYearsLabel(gridConnectionDate),
+	};
+}
+
+function calculateOperationYearsLabel(dateLabel: string, now = new Date()): string {
+	const match = dateLabel.match(/\d{4}-\d{2}-\d{2}/);
+	if (!match) return "";
+	const start = new Date(`${match[0]}T00:00:00+09:00`);
+	if (Number.isNaN(start.getTime())) return "";
+	let months = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth());
+	if (now.getDate() < start.getDate()) months -= 1;
+	if (months < 0) return "0年未満";
+	const years = Math.floor(months / 12);
+	const remainderMonths = months % 12;
+	return remainderMonths > 0 ? `${years}年${remainderMonths}か月` : `${years}年`;
+}
+
+function inferProposalKind(rawValue: string, titleLabel: string): ProposalKind {
+	const value = `${rawValue} ${titleLabel}`;
+	if (/蓄電池|系統|BESS|電力貯蔵/i.test(value)) return "gridBattery";
+	if (/個人|投資家|私的年金|資産形成/.test(value)) return "individual";
+	if (/環境|ESG|脱炭素|SDGs|実業|非化石/.test(value)) return "esg";
+	return "corporate";
+}
+
+function buildProposalTitle(proposalKind: ProposalKind, titleLabel: string): string {
+	const suffix = titleLabel ? `｜${titleLabel}` : "";
+	if (proposalKind === "individual") {
+		return `【個人投資家向け】私的年金型 太陽光発電投資 御提案書${suffix}`;
+	}
+	if (proposalKind === "esg") {
+		return `【企業価値向上】ESG・脱炭素経営実現型 太陽光発電投資 御提案書${suffix}`;
+	}
+	if (proposalKind === "gridBattery") {
+		return `【次世代エネルギー投資】系統用蓄電池 事業シミュレーション 御提案書${suffix}`;
+	}
+	return `【法人オーナー向け】黒字対策・即時償却検討型 太陽光発電投資 御提案書${suffix}`;
+}
+
+function buildProposalTypeGuideLines(currentKind: ProposalKind): string[] {
+	return [
+		`現在の提案タイプ: ${proposalKindJapaneseLabel(currentKind)}`,
+		"個人投資家向けを選ぶ条件: 個人のお客様、私的年金、資産形成、相続、毎月の手残りを重視する提案。",
+		"法人対象を選ぶ条件: 法人オーナー、黒字対策、即時償却、税額控除、融資、社内決裁を重視する提案。",
+		"環境配慮型企業向けを選ぶ条件: ESG、脱炭素、CO2削減、取引先説明、金融機関への企業価値訴求を重視する提案。",
+		"系統用蓄電池を選ぶ条件: BESS、蓄電池、系統接続、JEPX、容量市場、需給調整市場、土地評価から蓄電池候補になった案件。",
+		"迷った場合: 提案タイプを先に選ぶ。未選択時はタイトルや案件種別から推測するが、営業提出前は人間が選び直す。",
+	];
+}
+
+function proposalKindJapaneseLabel(kind: ProposalKind): string {
+	if (kind === "individual") return "個人投資家向け";
+	if (kind === "esg") return "環境配慮型企業向け";
+	if (kind === "gridBattery") return "系統用蓄電池";
+	return "法人対象";
+}
+
+function buildProposalSummaryLines(input: {
+	proposalKind: ProposalKind;
+	salePrice: number;
+	purchaseCost: number;
+	annualIncome: number;
+	runningCost: number;
+	annualNetIncome: number;
+	grossProfit: number;
+	expectedYield: number | null;
+	paybackYears: number | null;
+	subsidyAmount: number | null;
+}): string[] {
+	const yieldText = input.expectedYield !== null ? `${input.expectedYield}%` : "算出不可";
+	const paybackText = input.paybackYears !== null ? `${input.paybackYears}年` : "算出不可";
+	if (input.proposalKind === "gridBattery") {
+		return [
+			`総事業費: ${formatYen(input.salePrice)}`,
+			`補助金想定額: ${input.subsidyAmount !== null ? formatYen(input.subsidyAmount) : "未入力"}`,
+		`実質投資額: ${formatYen(input.purchaseCost)}`,
+		`年間想定総売上: ${formatYen(input.annualIncome)}`,
+		`年間ランニングコスト: ${formatYen(input.runningCost)}`,
+		`年間想定純利益: ${formatYen(input.annualNetIncome)}`,
+		`想定実質利回り: ${yieldText}`,
+		`想定回収年数: ${paybackText}`,
+	];
+	}
+	return [
+	`販売価格: ${formatYen(input.salePrice)}`,
+	`仕入れ価格: ${formatYen(input.purchaseCost)}`,
+	`年間売電収入: ${formatYen(input.annualIncome)}`,
+	`年間維持費（ランニングコスト）: ${formatYen(input.runningCost)}`,
+	`年間手残り: ${formatYen(input.annualNetIncome)}`,
+	`想定粗利: ${formatYen(input.grossProfit)}`,
+	`想定利回り: ${yieldText}`,
+	`想定回収年数: ${paybackText}`,
+	];
+}
+
+function buildTwoPageProposalLines(input: {
+	proposalKind: ProposalKind;
+	proposalTitle: string;
+	titleLabel: string;
+	salePrice: number;
+	purchaseCost: number;
+	annualIncome: number;
+	runningCost: number;
+	annualNetIncome: number;
+	grossProfit: number;
+	expectedYield: number | null;
+	paybackYears: number | null;
+	annualReductionAmount: number | null;
+	reductionRate: number | null;
+	co2ReductionTons: number | null;
+	subsidyAmount: number | null;
+	solarDetails: SolarProposalDetails | null;
+	runningCostBreakdown: RunningCostBreakdownItem[];
+}): { pageOneLines: string[]; pageTwoLines: string[] } {
+	const yieldText = input.expectedYield !== null ? `${input.expectedYield}%` : "算出不可";
+	const paybackText = input.paybackYears !== null ? `${input.paybackYears}年` : "算出不可";
+	if (input.proposalKind === "gridBattery") {
+		return {
+			pageOneLines: [
+				"1枚目｜提案の結論",
+				input.proposalTitle,
+				"御社への結論: 本案件は、土地・系統条件が整う場合に、JEPXの価格差、容量市場、需給調整市場など複数の収益源を検討できる系統用蓄電池候補です。",
+				"なぜ今か: 再エネ導入拡大により、余剰電力の有効活用と電力需給の調整力が重要になっています。",
+				`案件概要: 総事業費 ${formatYen(input.salePrice)} / 実質投資額 ${formatYen(input.purchaseCost)} / 年間想定総売上 ${formatYen(input.annualIncome)}`,
+				`収益目安: 年間想定純利益 ${formatYen(input.annualNetIncome)} / 想定実質利回り ${yieldText} / 回収年数 ${paybackText}`,
+			],
+			pageTwoLines: [
+				"2枚目｜前提・未確認事項",
+				"補助金は採択・交付決定が前提です。補助率や対象経費は公募要領、交付決定、GX関連要件を確認してから確定します。",
+				"市場収益は、JEPX価格差、容量市場、需給調整市場の約定、運用者、劣化コスト、ペナルティ条件により変動します。",
+				"必須確認: 系統連系可否 / 接続検討状況 / 受電地点 / PCS出力 / 蓄電容量 / アグリゲーターまたはEMS運用体制 / 保険 / O&M / 地代または土地取得条件。",
+				"次アクション: 土地情報DBの所在地・面積・電力会社エリア・変電所距離・接道・用途地域を確認し、蓄電池候補として案件化できるか人間が最終判断します。",
+			],
+		};
+	}
+	const siteLine = buildSolarSiteLine(input.solarDetails);
+	const equipmentLines = buildSolarEquipmentLines(input.solarDetails);
+	const revenueLine = buildSolarRevenueLine(input.solarDetails);
+	const maintenanceLine = buildMaintenanceBreakdownLine(input.runningCostBreakdown);
+	const mainMetricsLine =
+		`主要数字: 販売価格 ${formatYen(input.salePrice)} / 年間売電収入 ${formatYen(input.annualIncome)} / ` +
+		`年間維持費（ランニングコスト） ${formatYen(input.runningCost)} / 年間手残り ${formatYen(input.annualNetIncome)} / 想定利回り ${yieldText}`;
+	if (input.proposalKind === "individual") {
+		return {
+			pageOneLines: nonEmptyLines([
+				"1枚目｜提案の結論",
+				input.proposalTitle,
+				siteLine,
+				"お客様への結論: 本案件は、株式や不動産とは異なる収入源を持つ、私的年金づくり向けの太陽光発電投資候補です。",
+				"選ばれる理由: 不動産のような入居者退去リスクがなく、管理はO&M体制に委託できます。",
+				mainMetricsLine,
+			]),
+			pageTwoLines: nonEmptyLines([
+				"2枚目｜前提・リスク",
+				...equipmentLines,
+				revenueLine,
+				maintenanceLine,
+				`実質収支: 年間維持費（ランニングコスト） ${formatYen(input.runningCost)} を控除後、年間手残りは ${formatYen(input.annualNetIncome)}、回収年数は ${paybackText} です。`,
+				"発電量変動、出力抑制、保険免責、設備故障、将来の廃棄費用積立を前提に、都合の良い数字だけで判断しない資料にします。",
+				"次アクション: 融資利用の有無、投資期間、相続・出口方針、毎月の手残り目線を確認します。",
+			]),
+		};
+	}
+	if (input.proposalKind === "esg") {
+		return {
+			pageOneLines: nonEmptyLines([
+				"1枚目｜提案の結論",
+				input.proposalTitle,
+				siteLine,
+				"御社への結論: 本案件は、投資収益だけでなく、脱炭素対応、取引先への説明、金融機関への企業価値訴求に使える再エネ資産候補です。",
+				`環境効果: 年間CO2削減量 ${input.co2ReductionTons !== null ? `${trimTrailingZeros(input.co2ReductionTons)}トン` : "未入力"} / 想定利回り ${yieldText}`,
+				mainMetricsLine,
+				"選ばれる理由: サプライチェーンの脱炭素要請、ESG評価、採用広報、銀行との対話材料に展開できます。",
+			]),
+			pageTwoLines: nonEmptyLines([
+				"2枚目｜前提・リスク",
+				...equipmentLines,
+				revenueLine,
+				maintenanceLine,
+				`経済効果: 年間手残り ${formatYen(input.annualNetIncome)} / 回収年数 ${paybackText}`,
+				"環境価値や非化石価値の主張可否は、契約形態、証書、トラッキング、電力利用形態により変わります。",
+				"次アクション: 取引先からの要請内容、RE100等の基準、社内稟議で必要な環境指標を確認します。",
+			]),
+		};
+	}
+	return {
+		pageOneLines: nonEmptyLines([
+			"1枚目｜提案の結論",
+			input.proposalTitle,
+			siteLine,
+			"御社への結論: 本案件は、黒字対策と安定収益を同時に検討したい法人オーナー向けの太陽光発電投資候補です。",
+			"選ばれる理由: 税制活用の可能性、FIT/FIP制度に基づく収益見通し、本業への管理負担を抑えた運用を一体で検討できます。",
+			mainMetricsLine,
+		]),
+		pageTwoLines: nonEmptyLines([
+			"2枚目｜前提・リスク",
+			...equipmentLines,
+			revenueLine,
+			maintenanceLine,
+			`実質収支: 年間維持費（ランニングコスト） ${formatYen(input.runningCost)} を控除後、年間手残りは ${formatYen(input.annualNetIncome)}、回収年数は ${paybackText} です。`,
+			"税制適用は事前手続き、設備要件、経営力向上計画の認定、税理士・会計士確認が前提です。",
+			"FIT/FIP、発電量、出力抑制、保険免責、将来の解体・廃棄費用積立まで開示し、社内決裁に耐える提案にします。",
+		]),
+	};
+}
+
+function nonEmptyLines(lines: string[]): string[] {
+	return lines.filter((line) => line.trim().length > 0);
+}
+
+function buildSolarSiteLine(details: SolarProposalDetails | null): string {
+	if (!details) return "";
+	return `物件概要: ${details.plantName} / ${details.location} / ${details.powerArea} / ${details.voltageClass}`;
+}
+
+function buildSolarEquipmentLines(details: SolarProposalDetails | null): string[] {
+	if (!details) return [];
+	return [
+		`設備: パネルメーカー ${details.panelMaker} / パネル型式 ${details.panelModel} / パネル枚数 ${formatNumberWithUnit(details.panelCount, "枚")} / DC容量 ${formatNumberWithUnit(details.dcCapacityKw, "kW")}`,
+		`パワコン: パワコンメーカー ${details.powerConditionerMaker} / パワコン型式 ${details.powerConditionerModel} / PCS容量 ${formatNumberWithUnit(details.pcsCapacityKw, "kW")}`,
+	];
+}
+
+function buildSolarRevenueLine(details: SolarProposalDetails | null): string {
+	if (!details) return "";
+	return `売電条件: ${details.fitFipType} / 売電単価 ${formatNumberWithUnit(details.unitPrice, "円/kWh")} / 残存売電期間 ${formatNumberWithUnit(details.remainingSalesYears, "年")} / 連系開始日 ${details.gridConnectionDate} / 稼働年数 ${details.operationYears}`;
+}
+
+function buildMaintenanceBreakdownLine(items: RunningCostBreakdownItem[]): string {
+	if (items.length === 0) return "";
+	return `維持費内訳: ${items.map((item) => `${item.label} ${formatYen(item.value)}`).join(" / ")}`;
+}
+
+function formatNumberWithUnit(value: number | null, unit: string): string {
+	return value !== null && Number.isFinite(value) ? `${trimTrailingZeros(value)}${unit}` : "未入力";
+}
+
+function buildProposalConclusionText(input: {
+	proposalKind: ProposalKind;
+	reductionRate: number | null;
+	annualReductionAmount: number | null;
+	co2ReductionTons: number | null;
+}): string {
+	const rateText =
+		input.reductionRate !== null && Number.isFinite(input.reductionRate)
+			? `${trimTrailingZeros(input.reductionRate)}`
+			: "○○";
+	const amountText =
+		input.annualReductionAmount !== null && Number.isFinite(input.annualReductionAmount)
+			? `${trimTrailingZeros(yenToManYen(input.annualReductionAmount))}`
+			: "○○";
+	const co2Text =
+		input.co2ReductionTons !== null && Number.isFinite(input.co2ReductionTons)
+			? `${trimTrailingZeros(input.co2ReductionTons)}`
+			: "○○";
+	if (input.proposalKind === "gridBattery") {
+		return [
+			"本プランは、系統用蓄電池を用いてJEPXの価格差、容量市場、需給調整市場など複数の収益源を検討する次世代エネルギー投資です。",
+			"ただし、収益は市場価格・約定・運用条件・系統連系条件・蓄電池劣化・ペナルティ条件により変動します。",
+			"補助金は採択・交付決定が前提であり、補助率や対象経費は公募要領と個別審査で確認します。",
+			"土地情報が入った段階では、所在地、面積、電力会社エリア、変電所距離、接道、用途地域、接続検討状況を確認し、蓄電池候補として案件化できるかを人間が最終判断します。",
+		].join("\n");
+	}
+	if (input.proposalKind === "individual") {
+		return [
+			"本プランは、老後資金や家族への資産引き継ぎを見据えた、私的年金型の太陽光発電投資候補です。",
+			"不動産のような入居者退去リスクはありませんが、発電量変動、出力抑制、設備故障、保険免責、将来の解体・廃棄費用は前提として開示します。",
+			`想定では年間${amountText}万円規模の収益改善と、年間${co2Text}トンのCO2削減効果を確認できます。`,
+			"融資利用、投資期間、出口方針、相続方針を確認した上で、無理のない収支表へ落とし込みます。",
+		].join("\n");
+	}
+	if (input.proposalKind === "esg") {
+		return [
+			"本プランは、投資収益だけでなく、脱炭素対応、取引先への説明、金融機関への企業価値訴求に使える再エネ資産候補です。",
+			`想定では年間${co2Text}トンのCO2削減効果と、年間${amountText}万円規模の収益改善を同時に検討できます。`,
+			"環境価値や非化石価値の主張可否は、契約形態、証書、トラッキング、電力利用形態により変わるため、個別に確認します。",
+			"社内稟議では、経済効果、環境指標、リスク、運用体制を同じ資料内で説明できる形にします。",
+		].join("\n");
+	}
+	return [
+		`本プランは、年間電気代を約${rateText}%（${amountText}万円）削減し、同時に年間${co2Text}トンのCO2排出量削減を検討できる太陽光発電投資候補です。`,
+		"中小企業経営強化税制は、要件を満たす場合に即時償却または税額控除を選択できる可能性があります。設備取得前の証明書・確認書、経営力向上計画の認定、税理士・会計士確認を前提にします。",
+		"不動産のような入居者退去リスクはありませんが、発電量変動、出力抑制、設備故障、保険免責、将来の解体・廃棄費用は前提として開示します。",
+		"信頼される提案は、表面利回りだけでなく実質利回り、融資条件、20年後の解体・廃棄費用まで正直に示します。",
+	].join("\n");
+}
+
+function buildPlaceholderConclusionText(proposalKind: ProposalKind = "corporate"): string {
+	if (proposalKind === "gridBattery") {
+		return buildProposalConclusionText({
+			proposalKind,
+			reductionRate: null,
+			annualReductionAmount: null,
+			co2ReductionTons: null,
+		});
+	}
+	return [
+		"本プランは、年間電気代を約○○%（○○万円）削減し、同時に年間○○トンのCO2排出量削減を検討できる太陽光発電投資候補です。",
+		"中小企業経営強化税制は、要件を満たす場合に即時償却または税額控除を選択できる可能性があります。設備取得前の証明書・確認書、経営力向上計画の認定、税理士・会計士確認を前提にします。",
+		"表面利回りだけでなく、実質利回り、融資条件、発電量変動、出力抑制、保険免責、20年後の解体・廃棄費用まで正直に示します。",
+	].join("\n");
+}
+
+function yenToManYen(value: number): number {
+	return roundTo(value / 10000, 1);
+}
+
+function trimTrailingZeros(value: number): string {
+	return value.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function buildSequentialMissingMessage(
+	workLabel: string,
+	missingField: string,
+	nextFields: string[],
+): string {
+	const remaining = nextFields.length > 0 ? `\n次に確認する項目: ${nextFields.join(" / ")}` : "";
+	return `${workLabel}を実行する前に「${missingField}」を入力してください。修正後にもう一度ボタンを押してください。${remaining}`;
+}
+
+function hasFieldValue(value: string | number | null): boolean {
+	if (typeof value === "number") return Number.isFinite(value);
+	if (typeof value === "string") return value.trim().length > 0;
+	return false;
+}
+
+function readFirstTextByAliases(
+	properties: Record<string, unknown>,
+	aliases: string[],
+): string {
+	for (const alias of aliases) {
+		const value = text(properties[alias]);
+		if (value) return value;
+	}
+	return "";
+}
+
+function readFirstDateLabelByAliases(
+	properties: Record<string, unknown>,
+	aliases: string[],
+): string {
+	for (const alias of aliases) {
+		const value = dateLabelFromProperty(properties[alias]);
+		if (value) return value;
+	}
+	return "";
+}
+
+function readFirstNumberByAliases(
+	properties: Record<string, unknown>,
+	aliases: string[],
+): number | null {
+	for (const alias of aliases) {
+		const property = properties[alias];
+		const direct = numberValue(property);
+		if (direct !== null) return direct;
+		const fromText = numberFromText(text(property));
+		if (fromText !== null) return fromText;
+	}
+	return null;
+}
+
+function dateLabelFromProperty(property: unknown): string {
+	if (!property || typeof property !== "object") return "";
+	const prop = property as Record<string, unknown>;
+	if (prop.type === "date" && prop.date && typeof prop.date === "object") {
+		const date = prop.date as Record<string, unknown>;
+		const start = typeof date.start === "string" ? date.start : "";
+		const end = typeof date.end === "string" ? date.end : "";
+		if (!start) return "";
+		return end ? `${start}〜${end}` : start;
+	}
+	return text(property);
+}
+
+function setAliasPatch(
+	patches: Record<string, SafePatch>,
+	aliases: string[],
+	patch: SafePatch,
+): void {
+	for (const alias of aliases) {
+		patches[alias] = patch;
+	}
+}
+
+function roundTo(value: number, digits: number): number {
+	const scale = 10 ** digits;
+	return Math.round(value * scale) / scale;
+}
+
+async function enrichCompanyForMeetingPrep(company: CompanyInfo): Promise<CompanyInfo> {
+	const research = await researchCompany(companyToCardInfo(company));
+	return withCompanyResearch(company, mergeCompanyResearch(company, research));
+}
+
+async function processDailyReportReceiptSync(
+	input: DailyReportReceiptSyncInput,
+	notion: NotionClient,
+): Promise<DailyReportReceiptSyncResult> {
+	const receiptPage = await notion.pages.retrieve({ page_id: input.receiptPageId });
+	const receipt = readDailyReportReceipt(receiptPage);
+	const reportId = receipt.reportIds[0];
+	if (!reportId) {
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, receipt.page, {
+				依頼状態: { kind: "select", value: "要確認" },
+				処理結果メモ: {
+					kind: "text",
+					value: "生成対象日報が未設定のため、受付票同期を停止しました。",
+				},
+			});
+		}
+		return {
+			receiptPageId: receipt.page.id,
+			dailyReportPageId: null,
+			action: "needs-review",
+			status: "要確認",
+			message: "生成対象日報が未設定です。",
+		};
+	}
+
+	const reportPage = await notion.pages.retrieve({ page_id: reportId });
+	const report = readDailyReport(reportPage);
+	const hasAiFive = [
+		report.todaySummary,
+		report.progressView,
+		report.noGo,
+		report.pitfalls,
+		report.nextMove,
+	].some((value) => value.replace(/\s/g, "").length > 0);
+
+	if (!hasAiFive) {
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, receipt.page, {
+				依頼状態: { kind: "select", value: "要確認" },
+				処理結果メモ: {
+					kind: "text",
+					value:
+						"生成対象日報のAI5項目が未生成のため、受付票へ返却せず要確認で停止しました。",
+				},
+			});
+		}
+		return {
+			receiptPageId: receipt.page.id,
+			dailyReportPageId: report.page.id,
+			action: "needs-review",
+			status: "要確認",
+			message: "生成対象日報のAI5項目が未生成です。",
+		};
+	}
+
+	const feedback = buildDailyReportReceiptFeedback(report);
+	const tomorrow = buildDailyReportTomorrowLine(report);
+	const focus = buildDailyReportFocusPoints(report);
+
+	if (input.dryRun) {
+		return {
+			receiptPageId: receipt.page.id,
+			dailyReportPageId: report.page.id,
+			action: "dry-run",
+			status: "完了予定",
+			message: `dry-run: ${report.title} のAI5項目から受付票へ返却欄を同期できます。日報原本は更新しません。`,
+		};
+	}
+
+	const properties = receipt.page.properties ?? {};
+	const patches: Record<string, SafePatch> = {
+		依頼状態: { kind: "select", value: "完了" },
+		処理結果メモ: {
+			kind: "text",
+			value: [
+				`WANiPO受付票同期Worker: ${new Date().toISOString()}`,
+				`生成対象日報: ${report.title}`,
+				"日報原本は書き換えず、受付票の返却欄のみ同期。",
+			].join("\n"),
+		},
+		接続確認メモ: {
+			kind: "text",
+			value: "Workerで生成対象日報のAI5項目を確認し、受付票へ返却同期済み。",
+		},
+	};
+	addPatchIfBlank(patches, properties, "AIフィードバック", feedback);
+	addPatchIfBlank(patches, properties, "明日へのひとこと", tomorrow);
+	addPatchIfBlank(patches, properties, "重点確認ポイント", focus);
+
+	await safeUpdateExistingProperties(notion, receipt.page, patches);
+
+	return {
+		receiptPageId: receipt.page.id,
+		dailyReportPageId: report.page.id,
+		action: "synced",
+		status: "完了",
+		message:
+			"WANiPO日報受付票へAIフィードバック、明日へのひとこと、重点確認ポイントを同期しました。日報原本は更新していません。",
+	};
+}
+
+async function processDailyReportLog(
+	input: DailyReportLogInput,
+	notion: NotionClient,
+): Promise<DailyReportLogResult> {
+	const reportPage = await notion.pages.retrieve({ page_id: input.dailyReportPageId });
+	const report = readDailyReport(reportPage);
+	const existingLog = await findDailyReportLogByReport(notion, report.page.id);
+	const hasAiFive = [
+		report.todaySummary,
+		report.progressView,
+		report.noGo,
+		report.pitfalls,
+		report.nextMove,
+	].some((value) => value.replace(/\s/g, "").length > 0);
+
+	if (report.submissionStatus !== "承認済み") {
+		return {
+			dailyReportPageId: report.page.id,
+			logPageId: existingLog?.id ?? null,
+			action: "needs-review",
+			status: "対象外",
+			message: `提出状態が承認済みではないため、日報ログ化しません。現在: ${report.submissionStatus || "未設定"}`,
+		};
+	}
+	if (!report.bossComment.trim()) {
+		return {
+			dailyReportPageId: report.page.id,
+			logPageId: existingLog?.id ?? null,
+			action: "needs-review",
+			status: "要確認",
+			message:
+				"上司コメントプロパティが空のため、ページコメントではなく上司コメントプロパティ第一参照の方針で停止しました。",
+		};
+	}
+	if (!hasAiFive) {
+		return {
+			dailyReportPageId: report.page.id,
+			logPageId: existingLog?.id ?? null,
+			action: "needs-review",
+			status: "要確認",
+			message: "日報本体のAI5項目が不足しているため、評価材料ログ化を停止しました。",
+		};
+	}
+
+	const patches = buildDailyReportLogPatches(report, existingLog ?? undefined);
+	if (input.dryRun) {
+		return {
+			dailyReportPageId: report.page.id,
+			logPageId: existingLog?.id ?? null,
+			action: "dry-run",
+			status: "処理済予定",
+			message: existingLog
+				? `dry-run: 既存日報ログ ${existingLog.id} を上司コメントプロパティ参照で更新できます。日報原本は更新しません。`
+				: "dry-run: 日報ログDBへ評価材料ログを新規作成できます。日報原本は更新しません。",
+		};
+	}
+
+	let targetLog = existingLog;
+	if (!targetLog) {
+		const createProperties: Record<string, unknown> = {
+			タイトル: title(buildDailyReportLogTitle(report)),
+			関連日報: relation(report.page.id),
+			提出状態: select("承認済み"),
+			承認状態: select("承認済み"),
+			ワニポ評価材料化ステータス: select("処理済"),
+			月次反映状態: select("未反映"),
+			評価対象区分: select("通常評価"),
+		};
+		if (report.date) createProperties["日付"] = { date: { start: report.date } };
+		targetLog = await notion.pages.create({
+			parent: { data_source_id: DAILY_REPORT_LOG_DATA_SOURCE_ID },
+			properties: createProperties,
+		});
+	}
+
+	await safeUpdateExistingProperties(notion, targetLog, patches);
+
+	return {
+		dailyReportPageId: report.page.id,
+		logPageId: targetLog.id,
+		action: existingLog ? "updated-log" : "created-log",
+		status: "処理済",
+		message:
+			"WANiPO日報ログ化Workerで日報ログDBへ評価材料ログを作成/更新しました。上司コメントプロパティを第一参照し、日報原本・AI5項目・点数・最終評価は更新していません。",
+	};
+}
+
+async function findDailyReportLogByReport(
+	notion: NotionClient,
+	dailyReportPageId: string,
+): Promise<Page | null> {
+	try {
+		const response = await notion.dataSources.query({
+			data_source_id: DAILY_REPORT_LOG_DATA_SOURCE_ID,
+			page_size: 10,
+			filter: {
+				property: "関連日報",
+				relation: { contains: dailyReportPageId },
+			},
+		});
+		return response.results[0] ?? null;
+	} catch (error) {
+		console.log("daily report log lookup skipped", String(error));
+		return null;
+	}
+}
+
+function buildDailyReportLogPatches(
+	report: DailyReportInfo,
+	existingLog?: Page,
+): Record<string, SafePatch> {
+	const currentPerformanceIds = existingLog
+		? relationIdsFromProperty(existingLog.properties?.["関連営業パフォーマンス"])
+		: [];
+	const patches: Record<string, SafePatch> = {
+		タイトル: { kind: "text", value: buildDailyReportLogTitle(report) },
+		関連日報: { kind: "relation", ids: [report.page.id] },
+		提出状態: { kind: "select", value: "承認済み" },
+		承認状態: { kind: "select", value: "承認済み" },
+		ワニポ評価材料化ステータス: { kind: "select", value: "処理済" },
+		月次反映状態: { kind: "select", value: "未反映" },
+		評価対象区分: { kind: "select", value: "通常評価" },
+		日報評価メモ: { kind: "text", value: buildDailyReportEvaluationMemo(report) },
+		加点候補: { kind: "text", value: buildDailyReportPlusMemo(report) },
+		注意・見落とし: { kind: "text", value: buildDailyReportRiskMemo(report) },
+		本人修正要約: {
+			kind: "text",
+			value: report.factCorrection || "本人の事実修正・実結果は未入力。",
+		},
+		本人ひとこと要約: {
+			kind: "text",
+			value: report.personComment || "本人のひとことは未入力。",
+		},
+		上司コメント要約: {
+			kind: "text",
+			value: report.bossComment,
+		},
+	};
+	if (report.date) patches["日付"] = { kind: "date", value: report.date };
+	if (report.userIds.length > 0) {
+		patches["対象営業ユーザー"] = { kind: "people", ids: report.userIds };
+	}
+	if (currentPerformanceIds.length > 0) {
+		patches["関連営業パフォーマンス"] = {
+			kind: "relation",
+			ids: currentPerformanceIds,
+		};
+	}
+	return patches;
+}
+
+function buildDailyReportLogTitle(report: DailyReportInfo): string {
+	const date = report.date ? report.date.replace(/-/g, "/") : "日付未設定";
+	return `${date} 日報ログ｜${report.title}`;
+}
+
+function buildDailyReportEvaluationMemo(report: DailyReportInfo): string {
+	return [
+		"【AI今日の要約】",
+		report.todaySummary,
+		"",
+		"【AI進捗の見立て】",
+		report.progressView,
+		"",
+		"【AI明日の一手】",
+		report.nextMove,
+	].filter((value) => value !== "").join("\n").slice(0, 1800);
+}
+
+function buildDailyReportPlusMemo(report: DailyReportInfo): string {
+	return [
+		"日報AI5項目が生成済みで、承認済みとして評価材料化可能。",
+		report.nextMove ? `明日の一手: ${report.nextMove}` : "",
+		report.bossComment ? `上司コメント: ${report.bossComment}` : "",
+	].filter(Boolean).join("\n").slice(0, 1800);
+}
+
+function buildDailyReportRiskMemo(report: DailyReportInfo): string {
+	return [
+		report.noGo ? `【絶対にやってはいけないこと】\n${report.noGo}` : "",
+		report.pitfalls ? `【ハマりがちなパターン】\n${report.pitfalls}` : "",
+		"点数付け・最終評価・総合評価は禁止。月次反映状態は未反映のまま。",
+	].filter(Boolean).join("\n\n").slice(0, 1800);
+}
+
+function readDailyReportReceipt(page: Page): DailyReportReceiptInfo {
+	const properties = page.properties ?? {};
+	return {
+		page,
+		name: text(properties["受付名"]),
+		status: text(properties["依頼状態"]),
+		targetDate: dateStartFromProperty(properties["対象日付"]),
+		reportIds: relationIdsFromProperty(properties["生成対象日報"]),
+	};
+}
+
+function readDailyReport(page: Page): DailyReportInfo {
+	const properties = page.properties ?? {};
+	return {
+		page,
+		title: text(properties["タイトル"]) || text(properties["日報名"]) || page.id,
+		date: dateStartFromProperty(properties["日付"]),
+		submissionStatus: text(properties["提出状態"]),
+		userIds: personIdsFromProperty(properties["担当営業ユーザー"]),
+		bossComment: text(properties["上司コメント"]),
+		todaySummary: text(properties["AI今日の要約"]),
+		progressView: text(properties["AI進捗の見立て"]),
+		noGo: text(properties["AI絶対にやってはいけないこと"]),
+		pitfalls: text(properties["AIハマりがちなパターン3つ"]),
+		nextMove: text(properties["AI明日の一手"]),
+		factCorrection: text(properties["本人の事実修正・実結果"]),
+		personComment: text(properties["本人のひとこと"]),
+	};
+}
+
+function buildDailyReportReceiptFeedback(report: DailyReportInfo): string {
+	return [
+		report.todaySummary ? `【今日の要約】\n${report.todaySummary}` : "",
+		report.progressView ? `【進捗の見立て】\n${report.progressView}` : "",
+		report.nextMove ? `【明日の一手】\n${report.nextMove}` : "",
+	].filter(Boolean).join("\n\n").slice(0, 1800);
+}
+
+function buildDailyReportTomorrowLine(report: DailyReportInfo): string {
+	const source = report.nextMove || report.progressView || report.todaySummary;
+	if (!source) return "明日の一手を日報原本で確認してください。";
+	const first = source.split(/[。\n]/).map((item) => item.trim()).find(Boolean);
+	return (first ? `${first}。` : source).slice(0, 500);
+}
+
+function buildDailyReportFocusPoints(report: DailyReportInfo): string {
+	return [
+		report.noGo ? `【絶対にやってはいけないこと】\n${report.noGo}` : "",
+		report.pitfalls ? `【ハマりがちなパターン】\n${report.pitfalls}` : "",
+	].filter(Boolean).join("\n\n").slice(0, 1800);
+}
+
+async function processLandEvaluation(
+	input: LandInput,
+	notion: NotionClient,
+): Promise<LandResult> {
+	const page =
+		input.pageData ??
+		(await notion.pages.retrieve({
+			page_id: input.pageId,
+		}));
+	const land = readLand(page);
+	const evaluation = buildLandEvaluation(land);
+
+	if (input.dryRun) {
+		return {
+			pageId: input.pageId,
+			action: "dry-run",
+			overallGrade: evaluation.overallGrade,
+			score: evaluation.score,
+			bucket: evaluation.bucket,
+			message: `dry-run: ${evaluation.bucket} / ${evaluation.overallGrade} / ${evaluation.score}点。`,
+		};
+	}
+
+	if (!shouldProcessLand(land)) {
+		await markLandNeedsReview(notion, land, evaluation);
+		return {
+			pageId: input.pageId,
+			action: "needs-review",
+			overallGrade: evaluation.overallGrade,
+			score: evaluation.score,
+			bucket: evaluation.bucket,
+			message: "所在地または面積が不足しているため、詳細評価前の要確認にしました。",
+		};
+	}
+
+	await markLandProcessing(notion, land);
+
+	try {
+		await writeLandEvaluation(notion, land, evaluation);
+		await createLandEvaluationLearningLog(notion, land, evaluation).catch((error) => {
+			console.log("land evaluation learning log skipped", String(error));
+		});
+		return {
+			pageId: input.pageId,
+			action: "evaluated",
+			overallGrade: evaluation.overallGrade,
+			score: evaluation.score,
+			bucket: evaluation.bucket,
+			message: "土地詳細評価を返却しました。案件化判断は人間確認前提です。",
+		};
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		await markLandFailure(notion, land, message);
+		throw error;
+	}
+}
+
+async function processLandCaseCreation(
+	input: LandCaseInput,
+	notion: NotionClient,
+): Promise<LandCaseResult> {
+	const landPage = await notion.pages.retrieve({ page_id: input.landPageId });
+	const land = readLand(landPage);
+	const existingProjects = await findProjectsByLand(notion, land.page.id);
+	const existingRelationIds = relationIdsFromProperty(
+		land.page.properties?.["関連案件"],
+	);
+	const allExistingIds = uniqueStrings([
+		...existingRelationIds,
+		...existingProjects.map((project) => project.page.id),
+	]);
+
+	if (!land.name || !land.address) {
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, land.page, {
+				案件化状態: { kind: "select", value: "案件化保留" },
+				案件化メモ: {
+					kind: "text",
+					value:
+						"土地名または所在地が不足しているため、案件管理DBへ作成せず要確認にしました。",
+				},
+			});
+		}
+		return {
+			landPageId: input.landPageId,
+			action: "needs-review",
+			projectId: null,
+			created: 0,
+			message: "土地名または所在地が不足しているため、案件化せず停止しました。",
+		};
+	}
+
+	if (allExistingIds.length > 0) {
+		if (!input.dryRun) {
+			await markLandCaseLinked(notion, land, allExistingIds, "既存の関連案件を検出したため、新規案件は作成していません。");
+			await markAiLearningLogsOutcome(notion, {
+				relationProperty: "関連土地",
+				pageId: land.page.id,
+				outcome: "案件化",
+				scoreThreshold: 65,
+				note: "土地案件化Workerが既存関連案件を検出し、実結果を案件化として反映。",
+			}).catch((error) => {
+				console.log("land case learning outcome skipped", String(error));
+			});
+		}
+		return {
+			landPageId: input.landPageId,
+			action: input.dryRun ? "dry-run" : "skipped-existing",
+			projectId: allExistingIds[0] ?? null,
+			created: 0,
+			message: `既存の関連案件 ${allExistingIds.length} 件を検出。新規作成は行いません。`,
+		};
+	}
+
+	if (input.dryRun) {
+		return {
+			landPageId: input.landPageId,
+			action: "dry-run",
+			projectId: null,
+			created: 1,
+			message: `dry-run: 案件管理DBへ土地案件を1件作成予定です。対象: ${land.name}`,
+		};
+	}
+
+	try {
+		const project = await createProjectFromLand(notion, land);
+		await markLandCaseLinked(notion, land, [project.id], "案件管理DBへ土地案件を1件作成しました。");
+		await markAiLearningLogsOutcome(notion, {
+			relationProperty: "関連土地",
+			pageId: land.page.id,
+			outcome: "案件化",
+			scoreThreshold: 65,
+			note: "土地案件化Workerが案件管理DBへ新規案件を作成し、実結果を案件化として反映。",
+		}).catch((error) => {
+			console.log("land case learning outcome skipped", String(error));
+		});
+		await notifySalesTeam(
+			notion,
+			project.id,
+			`📣 案件化しました: ${land.name}\n土地情報から案件管理DBへ新しい案件が作成されました。`,
+		);
+		return {
+			landPageId: input.landPageId,
+			action: "created-project",
+			projectId: project.id,
+			created: 1,
+			message: "案件管理DBへ土地案件を1件作成し、関連土地情報で紐づけました。",
+		};
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		await safeUpdateExistingProperties(notion, land.page, {
+			案件化状態: { kind: "select", value: "案件化保留" },
+			案件化メモ: { kind: "text", value: `土地案件化Worker処理失敗: ${message}` },
+		});
+		return {
+			landPageId: input.landPageId,
+			action: "error",
+			projectId: null,
+			created: 0,
+			message: `土地案件化に失敗しました: ${message.slice(0, 300)}`,
+		};
+	}
+}
+
+async function findProjectsByLand(
+	notion: NotionClient,
+	landPageId: string,
+): Promise<ProjectInfo[]> {
+	try {
+		const response = await notion.dataSources.query({
+			data_source_id: PROJECT_DATA_SOURCE_ID,
+			page_size: 20,
+			filter: {
+				property: "関連土地情報",
+				relation: { contains: landPageId },
+			},
+		});
+		return response.results.map(readProjectInfo);
+	} catch (error) {
+		console.log("project lookup skipped", String(error));
+		return [];
+	}
+}
+
+function readProjectInfo(page: Page): ProjectInfo {
+	return {
+		page,
+		name: text(page.properties?.["案件名"]),
+	};
+}
+
+async function createProjectFromLand(
+	notion: NotionClient,
+	land: LandInfo,
+): Promise<Page> {
+	const projectName = `${land.name}｜土地案件`;
+	const created = await notion.pages.create({
+		parent: { data_source_id: PROJECT_DATA_SOURCE_ID },
+		properties: {
+			案件名: title(projectName),
+		},
+	});
+	const projectPage = await notion.pages.retrieve({ page_id: created.id });
+	const projectType = inferProjectTypeFromLand(land);
+	const memo = [
+		`土地情報DBからWorker案件化。`,
+		`土地名: ${land.name}`,
+		`所在地: ${land.address}`,
+		land.areaTsubo ? `面積: ${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪` : "",
+		land.powerArea ? `電力エリア: ${land.powerArea}` : "",
+		land.road ? `接道: ${land.road}` : "",
+		"重複防止: 関連土地情報から既存案件を確認してから作成。",
+	].filter(Boolean).join("\n");
+	const patches: Record<string, SafePatch> = {
+		ステータス: { kind: "select", value: "🔴 情報収集中" },
+		仕入れ元区分: { kind: "select", value: "土地情報" },
+		獲得ソース: { kind: "select", value: "土地情報" },
+		対象物種別: { kind: "select", value: "土地" },
+		案件種別: { kind: "select", value: projectType },
+		売買区分: { kind: "select", value: "不明" },
+		作成日: { kind: "date", value: todayDateJST() },
+		最終アクション日: { kind: "date", value: todayDateJST() },
+		案件詳細: { kind: "text", value: memo },
+		情報ソース: { kind: "text", value: "土地情報DB / Worker案件化" },
+		確認待ち内容: {
+			kind: "text",
+			value:
+				"系統、接道、農転/登記、所有者、売却条件、現地確認を人間が確認してください。",
+		},
+		関連土地情報: { kind: "relation", ids: [land.page.id] },
+	};
+	const assigneeIds = personIdsFromProperty(land.page.properties?.["担当営業ユーザー"]);
+	if (assigneeIds.length > 0) {
+		patches["担当営業ユーザー"] = {
+			kind: "people",
+			ids: assigneeIds.slice(0, 3),
+		};
+	}
+	await safeUpdateExistingProperties(notion, projectPage, patches);
+	return notion.pages.retrieve({ page_id: created.id });
+}
+
+async function markLandCaseLinked(
+	notion: NotionClient,
+	land: LandInfo,
+	projectIds: string[],
+	message: string,
+): Promise<void> {
+	const current = relationIdsFromProperty(land.page.properties?.["関連案件"]);
+	await safeUpdateExistingProperties(notion, land.page, {
+		案件化状態: { kind: "select", value: "案件化済" },
+		案件化日: { kind: "date", value: todayDateJST() },
+		関連案件: { kind: "relation", ids: uniqueStrings([...current, ...projectIds]) },
+		案件化メモ: {
+			kind: "text",
+			value: [
+				message,
+				`関連案件数: ${uniqueStrings([...current, ...projectIds]).length}`,
+				"同一土地の再実行時は既存関連案件を検出し、新規作成しない。",
+			].join("\n"),
+		},
+	});
+}
+
+function inferProjectTypeFromLand(land: LandInfo): string {
+	const area = land.areaTsubo ?? 0;
+	if (/蓄電池|系統/.test(land.powerArea) || area >= 1500) return "蓄電池";
+	if (area >= 300) return "低圧";
+	return "その他";
+}
+
+// ── 商談フィードバック二次レビュー ────────────────────────────────────────────
+
+async function processDealMeetingFeedback(
+	input: DealMeetingFeedbackInput,
+	notion: NotionClient,
+): Promise<DealMeetingFeedbackResult> {
+	const dealPage = await notion.pages.retrieve({ page_id: input.dealPageId });
+	const deal = readDeal(dealPage);
+	const lastProcessedMeetingId = text(
+		dealPage.properties?.["営業FB最終処理議事録ID"],
+	);
+	const meetingContext = deal.relatedMeetingId
+		? await fetchMeetingContext(notion, deal.relatedMeetingId)
+		: null;
+	const payload = buildDealMeetingFeedbackPayload(deal, meetingContext);
+
+	if (!deal.relatedMeetingId && payload.replace(/\s/g, "").length < 160) {
+		return {
+			dealPageId: input.dealPageId,
+			action: "needs-review",
+			score: null,
+			message:
+				"関連会議議事録がなく、商談フィードバックに必要な材料も短いため要確認で停止しました。",
+		};
+	}
+
+	if (
+		deal.relatedMeetingId &&
+		lastProcessedMeetingId === deal.relatedMeetingId &&
+		deal.salesFeedback &&
+		deal.improvementPoints &&
+		deal.nextTalkImage
+	) {
+		return {
+			dealPageId: input.dealPageId,
+			action: "skipped-existing",
+			score: numberValue(dealPage.properties?.["営業スコア"]),
+			message:
+				"同じ関連会議議事録IDで既に営業フィードバックを返却済みのため、二重処理せず停止しました。",
+		};
+	}
+
+	if (input.dryRun) {
+		return {
+			dealPageId: input.dealPageId,
+			action: "dry-run",
+			score: null,
+			message: `dry-run: ${deal.name || input.dealPageId} を ${payload.length} 文字の商談材料からフィードバックできます。関連会議: ${deal.relatedMeetingId || "なし"}。`,
+		};
+	}
+
+	let feedback: DealMeetingFeedbackAIResponse;
+	try {
+		feedback = await callOpenAIDealMeetingFeedback(payload);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			dealPageId: input.dealPageId,
+			action: "error",
+			score: null,
+			message: `OpenAI API呼び出し失敗: ${message}`,
+		};
+	}
+
+	if (feedback.status === "対象外" || !feedback.salesFeedback.trim()) {
+		return {
+			dealPageId: input.dealPageId,
+			action: "needs-review",
+			score: null,
+			message:
+				feedback.memo ||
+				"商談フィードバックに必要な材料が不足しているため、書き戻しせず要確認で停止しました。",
+		};
+	}
+
+	const score = clampScore(feedback.score);
+	await safeUpdateExistingProperties(notion, dealPage, {
+		営業スコア: { kind: "number", value: score },
+		営業フィードバック: { kind: "text", value: feedback.salesFeedback },
+		改善ポイント: {
+			kind: "text",
+			value: feedback.improvementPoints.map((item) => `・${item}`).join("\n"),
+		},
+		次回トークイメージ: { kind: "text", value: feedback.nextTalkImage },
+		フォローメールヒント: { kind: "text", value: feedback.followMailHint },
+		成約へのヒント: { kind: "text", value: feedback.closingHint },
+		営業FB更新日時: { kind: "date", value: todayDateJST() },
+		営業FB最終処理議事録ID: {
+			kind: "text",
+			value: deal.relatedMeetingId || input.dealPageId,
+		},
+	});
+	await createDealFeedbackLearningLog(notion, {
+		dealPageId: dealPage.id,
+		meetingPageId: deal.relatedMeetingId || null,
+		dealName: deal.name || input.dealPageId,
+		score,
+		salesFeedback: feedback.salesFeedback,
+		improvementPoints: feedback.improvementPoints,
+		nextTalkImage: feedback.nextTalkImage,
+		followMailHint: feedback.followMailHint,
+		closingHint: feedback.closingHint,
+	}).catch((error) => {
+		console.log("deal feedback learning log skipped", String(error));
+	});
+
+	return {
+		dealPageId: input.dealPageId,
+		action: "feedback-created",
+		score,
+		message:
+			"商談議事録フィードバックを返却しました。チームトラッカー、成約DB、営業評価DB、二次レビュー欄は更新していません。",
+	};
+}
+
+function buildDealMeetingFeedbackPayload(
+	deal: DealInfo,
+	meeting: MeetingContext | null,
+): string {
+	const lines: string[] = [
+		"=== 商談情報 ===",
+		`商談名: ${deal.name || "未設定"}`,
+		`商談ステータス: ${deal.status || "未設定"}`,
+		`商談回数: ${deal.count || "不明"}`,
+		`商談日: ${deal.date || "不明"}`,
+		`商談概要: ${deal.summary || "未入力"}`,
+		`既存営業スコア: ${deal.salesScore || "未入力"}`,
+		`既存営業フィードバック: ${deal.salesFeedback || "未入力"}`,
+	];
+	if (meeting) {
+		lines.push(
+			"",
+			"=== 関連会議議事録 ===",
+			`要約: ${meeting.summary || "未入力"}`,
+			`議事内容: ${meeting.minutes || "未入力"}`,
+			`決定事項: ${meeting.decisions || "未入力"}`,
+			`アクション項目: ${meeting.actionItems || "未入力"}`,
+			`文字起こし/本文: ${meeting.text || "未入力"}`,
+		);
+	}
+	return lines.join("\n").slice(0, 12000);
+}
+
+async function callOpenAIDealMeetingFeedback(
+	payload: string,
+): Promise<DealMeetingFeedbackAIResponse> {
+	const apiKey = process.env.OPENAI_API_KEY;
+	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
+	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+	const systemPrompt = [
+		"あなたは和上ホールディングスの商談議事録フィードバックAIです。",
+		"商談管理DBと関連会議議事録を読み、営業マンが次の商談を良くするためのフィードバックを返します。",
+		"",
+		"重要:",
+		"- これは営業担当者の最終評価ではなく、商談品質のフィードバックです。",
+		"- 根拠がある場合は遠慮せず、改善点をはっきり書きます。",
+		"- 分からないことは推測で断定せず、要確認に寄せます。",
+		"",
+		"出力:",
+		"- score は0〜100の商談品質スコア。会話の具体性、顧客理解、次アクション、成約可能性を総合して付ける。",
+		"- salesFeedback は良い点と甘い点を1段落で率直に書く。",
+		"- improvementPoints は次回までに直す具体行動を3〜5個。",
+		"- nextTalkImage は次回商談でそのまま話せるトーク例。",
+		"- followMailHint は商談後メールの要点。",
+		"- closingHint は成約へ近づけるための確認・提案。",
+		"- 材料不足なら status=要確認、明確に商談でなければ status=対象外。",
+		"",
+		"禁止:",
+		"- チームトラッカーにタスクを作成しない。",
+		"- 成約判断、給与評価、最終評価、総合評価をしない。",
+		"- 商談ステータスを成約/失注へ確定しない。",
+		"必ずJSONのみを返してください。",
+	].join("\n");
+
+	const response = await fetch("https://api.openai.com/v1/chat/completions", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify({
+			model,
+			temperature: 0,
+			response_format: DEAL_MEETING_FEEDBACK_RESPONSE_FORMAT,
+			messages: [
+				{ role: "system", content: systemPrompt },
+				{ role: "user", content: payload },
+			],
+		}),
+	});
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
+	}
+	const json = (await response.json()) as {
+		choices?: Array<{ message?: { content?: string } }>;
+	};
+	const raw = json.choices?.[0]?.message?.content;
+	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
+	return parseDealMeetingFeedbackAIResponse(raw);
+}
+
+function parseDealMeetingFeedbackAIResponse(
+	raw: string,
+): DealMeetingFeedbackAIResponse {
+	try {
+		const parsed = JSON.parse(raw) as Partial<DealMeetingFeedbackAIResponse>;
+		const status =
+			parsed.status === "返却済" ||
+			parsed.status === "要確認" ||
+			parsed.status === "対象外"
+				? parsed.status
+				: "要確認";
+		return {
+			score: typeof parsed.score === "number" ? parsed.score : 0,
+			salesFeedback:
+				typeof parsed.salesFeedback === "string" ? parsed.salesFeedback : "",
+			improvementPoints: Array.isArray(parsed.improvementPoints)
+				? parsed.improvementPoints.filter((item): item is string => typeof item === "string")
+				: [],
+			nextTalkImage:
+				typeof parsed.nextTalkImage === "string" ? parsed.nextTalkImage : "",
+			followMailHint:
+				typeof parsed.followMailHint === "string" ? parsed.followMailHint : "",
+			closingHint: typeof parsed.closingHint === "string" ? parsed.closingHint : "",
+			status,
+			memo: typeof parsed.memo === "string" ? parsed.memo : "",
+		};
+	} catch (error) {
+		console.log("parseDealMeetingFeedbackAIResponse failed", String(error));
+		return {
+			score: 0,
+			salesFeedback: "",
+			improvementPoints: [],
+			nextTalkImage: "",
+			followMailHint: "",
+			closingHint: "",
+			status: "要確認",
+			memo: `JSONパース失敗: ${raw.slice(0, 200)}`,
+		};
+	}
+}
+
+function clampScore(value: number): number {
+	if (!Number.isFinite(value)) return 0;
+	return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+async function processDealFeedbackSecondReview(
+	input: DealSecondReviewInput,
+	notion: NotionClient,
+): Promise<DealSecondReviewResult> {
+	const dealPage = await notion.pages.retrieve({ page_id: input.dealPageId });
+	const deal = readDeal(dealPage);
+
+	// 一次フィードバックが空なら対象外
+	if (!deal.salesFeedback && !deal.improvementPoints && !deal.closingHint) {
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, dealPage, {
+				二次FBステータス: { kind: "select", value: "対象外" },
+				二次レビューコメント: {
+					kind: "text",
+					value: "一次フィードバックが未入力のため対象外にしました。",
+				},
+			});
+		}
+		return {
+			dealPageId: input.dealPageId,
+			action: "needs-review",
+			quality: null,
+			message: "一次フィードバックが未入力のため対象外にしました。",
+		};
+	}
+
+	// 関連会議の取得（失敗しても続行）
+	let meetingContext: MeetingContext | null = null;
+	if (deal.relatedMeetingId) {
+		meetingContext = await fetchMeetingContext(notion, deal.relatedMeetingId);
+	}
+
+	// OpenAI送信ペイロード構築（個人情報を除外）
+	const payload = buildSecondReviewPayload(deal, meetingContext);
+
+	if (input.dryRun) {
+		return {
+			dealPageId: input.dealPageId,
+			action: "dry-run",
+			quality: null,
+			message: [
+				`dry-run: 送信予定ペイロード ${JSON.stringify(payload).length} 文字。`,
+				`商談名=${deal.name || "（未入力）"}。`,
+				`フィードバック有無: スコア=${Boolean(deal.salesScore)}, FB=${Boolean(deal.salesFeedback)}, 改善=${Boolean(deal.improvementPoints)}, 成約ヒント=${Boolean(deal.closingHint)}。`,
+				meetingContext ? "関連会議: あり。" : "関連会議: なし。",
+			].join(""),
+		};
+	}
+
+	// OpenAI 呼び出し
+	let reviewResponse: SecondReviewAIResponse;
+	try {
+		reviewResponse = await callOpenAISecondReview(payload);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		await safeUpdateExistingProperties(notion, dealPage, {
+			二次FBステータス: { kind: "select", value: "エラー" },
+			二次レビューコメント: {
+				kind: "text",
+				value: `二次レビューAPIエラー: ${message.slice(0, 500)}`,
+			},
+		});
+		return {
+			dealPageId: input.dealPageId,
+			action: "error",
+			quality: null,
+			message: `OpenAI API呼び出し失敗: ${message}`,
+		};
+	}
+
+	// Notion 書き戻し（一次フィードバック欄は更新しない）
+	const comment = buildSecondReviewComment(reviewResponse);
+	await safeUpdateExistingProperties(notion, dealPage, {
+		二次FBステータス: {
+			kind: "select",
+			value: reviewResponse.recommendedStatus || "レビュー済",
+		},
+		二次レビューコメント: { kind: "text", value: comment },
+		フィードバック品質: {
+			kind: "select",
+			value: reviewResponse.quality || "情報不足",
+		},
+		二次レビュー更新日時: { kind: "date", value: new Date().toISOString() },
+		二次レビュー最終処理商談ID: { kind: "text", value: input.dealPageId },
+	});
+
+	// 活動ログへ記録（評価対象フラグON・冪等）
+	try {
+		await createDealActivityLog(notion, deal, reviewResponse);
+	} catch (error) {
+		console.log("activity log creation skipped", String(error));
+	}
+
+	return {
+		dealPageId: input.dealPageId,
+		action: "reviewed",
+		quality: reviewResponse.quality,
+		message: `二次レビュー完了。品質: ${reviewResponse.quality}、ステータス: ${reviewResponse.recommendedStatus}。`,
+	};
+}
+
+function readDeal(page: Page): DealInfo {
+	const properties = page.properties ?? {};
+	const meetingIds = relationIdsFromProperty(properties["関連会議"]);
+	const score = numberValue(properties["営業スコア"]);
+	return {
+		page,
+		name: text(properties["商談名"]),
+		date: text(properties["商談日"]) || text(properties["商談日時"]),
+		dateISO: dateStartFromProperty(properties["商談日"]),
+		summary: text(properties["商談概要"]),
+		count: text(properties["商談回数"]),
+		status: text(properties["商談ステータス"]),
+		relatedMeetingId: meetingIds[0] ?? null,
+		assignedUserIds: personIdsFromProperty(properties["担当営業ユーザー"]),
+		relatedCompanyIds: relationIdsFromProperty(properties["関連企業"]),
+		salesScore: score !== null ? String(score) : text(properties["営業スコア"]),
+		salesFeedback: text(properties["営業フィードバック"]),
+		improvementPoints: text(properties["改善ポイント"]),
+		nextTalkImage: text(properties["次回トークイメージ"]),
+		followMailHint: text(properties["フォローメールヒント"]),
+		closingHint: text(properties["成約へのヒント"]),
+	};
+}
+
+async function fetchMeetingContext(
+	notion: NotionClient,
+	meetingId: string,
+): Promise<MeetingContext | null> {
+	try {
+		const page = await notion.pages.retrieve({ page_id: meetingId });
+		const properties = page.properties ?? {};
+		return {
+			summary: text(properties["要約"]) || text(properties["サマリー"]),
+			minutes: text(properties["議事内容"]) || text(properties["議事録"]),
+			decisions: text(properties["決定事項"]),
+			actionItems:
+				text(properties["アクション項目"]) || text(properties["アクションアイテム"]),
+			text: text(properties["テキスト"]) || text(properties["本文"]),
+		};
+	} catch (error) {
+		console.log("meeting context fetch skipped", String(error));
+		return null;
+	}
+}
+
+function buildSecondReviewPayload(
+	deal: DealInfo,
+	meeting: MeetingContext | null,
+): string {
+	const lines: string[] = [
+		"=== 商談情報 ===",
+		`商談ステータス: ${deal.status || "未設定"}`,
+		`商談回数: ${deal.count || "不明"}`,
+		`商談日: ${deal.date || "不明"}`,
+		`商談概要: ${deal.summary || "（未入力）"}`,
+		"",
+		"=== 一次AIフィードバック ===",
+		`営業スコア: ${deal.salesScore || "（未入力）"}`,
+		`営業フィードバック: ${deal.salesFeedback || "（未入力）"}`,
+		`改善ポイント: ${deal.improvementPoints || "（未入力）"}`,
+		`次回トークイメージ: ${deal.nextTalkImage || "（未入力）"}`,
+		`フォローメールヒント: ${deal.followMailHint || "（未入力）"}`,
+		`成約へのヒント: ${deal.closingHint || "（未入力）"}`,
+	];
+
+	if (meeting) {
+		const meetingLines: string[] = [];
+		if (meeting.summary) meetingLines.push(`会議要約: ${meeting.summary}`);
+		if (meeting.minutes) meetingLines.push(`議事内容: ${meeting.minutes}`);
+		if (meeting.decisions) meetingLines.push(`決定事項: ${meeting.decisions}`);
+		if (meeting.actionItems) meetingLines.push(`アクション項目: ${meeting.actionItems}`);
+		if (meeting.text) meetingLines.push(`会議テキスト: ${meeting.text}`);
+		if (meetingLines.length > 0) {
+			lines.push("", "=== 関連会議情報 ===", ...meetingLines);
+		}
+	}
+
+	return lines.join("\n").slice(0, 6000);
+}
+
+async function callOpenAISecondReview(payload: string): Promise<SecondReviewAIResponse> {
+	const apiKey = process.env.OPENAI_API_KEY;
+	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
+	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+	const systemPrompt = [
+		"あなたは和上ホールディングスの営業フィードバック二次レビュアーです。",
+		"一次AIが返した営業フィードバックを、営業現場で本当に次の商談に使えるかという観点でレビューしてください。",
+		"",
+		"レビュー観点:",
+		"1. フィードバックが具体的か",
+		"2. 次回トークイメージがそのまま話せるレベルか",
+		"3. 改善ポイントが行動に落ちているか",
+		"4. 成約へのヒントが商談状況に合っているか",
+		"5. 根拠が薄い断定や、言い過ぎがないか",
+		"6. もっと踏み込むべき質問があるか",
+		"",
+		"禁止:",
+		"- 最終評価、総合評価、給与、処遇判断をしない",
+		"- 商談ステータスや成約判断を確定しない",
+		"- タスクを作らない",
+		"- 人格評価をしない",
+		"- 不明なことを断定しない",
+		"",
+		"必ずJSONのみを返してください。",
+		"キー: quality(良い|要修正|情報不足), summary(文字列), strongPoints(配列), revisionSuggestions(配列), nextTalkUpgrade(文字列), riskNotes(配列), recommendedStatus(レビュー済|要確認)",
+	].join("\n");
+
+	const response = await fetch("https://api.openai.com/v1/chat/completions", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify({
+			model,
+			response_format: SECOND_REVIEW_RESPONSE_FORMAT,
+			messages: [
+				{ role: "system", content: systemPrompt },
+				{ role: "user", content: payload },
+			],
+		}),
+	});
+
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
+	}
+
+	const json = (await response.json()) as {
+		choices?: Array<{ message?: { content?: string } }>;
+	};
+	const raw = json.choices?.[0]?.message?.content;
+	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
+
+	return parseSecondReviewResponse(raw);
+}
+
+function parseSecondReviewResponse(raw: string): SecondReviewAIResponse {
+	try {
+		const parsed = JSON.parse(raw) as Partial<SecondReviewAIResponse>;
+		const toStringArray = (value: unknown): string[] =>
+			Array.isArray(value)
+				? value.filter((s): s is string => typeof s === "string")
+				: [];
+		return {
+			quality:
+				typeof parsed.quality === "string" ? parsed.quality : "情報不足",
+			summary: typeof parsed.summary === "string" ? parsed.summary : "",
+			strongPoints: toStringArray(parsed.strongPoints),
+			revisionSuggestions: toStringArray(parsed.revisionSuggestions),
+			nextTalkUpgrade:
+				typeof parsed.nextTalkUpgrade === "string" ? parsed.nextTalkUpgrade : "",
+			riskNotes: toStringArray(parsed.riskNotes),
+			recommendedStatus:
+				parsed.recommendedStatus === "要確認" ? "要確認" : "レビュー済",
+		};
+	} catch (error) {
+		console.log("parseSecondReviewResponse failed", String(error));
+		return {
+			quality: "情報不足",
+			summary: `JSONパース失敗: ${raw.slice(0, 200)}`,
+			strongPoints: [],
+			revisionSuggestions: ["AIレスポンスのパースに失敗しました。"],
+			nextTalkUpgrade: "",
+			riskNotes: [],
+			recommendedStatus: "要確認",
+		};
+	}
+}
+
+function buildSecondReviewComment(response: SecondReviewAIResponse): string {
+	const parts: string[] = [];
+	if (response.summary) parts.push(`【サマリー】\n${response.summary}`);
+	if (response.strongPoints.length > 0) {
+		parts.push(`【良い点】\n${response.strongPoints.map((p) => `・${p}`).join("\n")}`);
+	}
+	if (response.revisionSuggestions.length > 0) {
+		parts.push(
+			`【修正提案】\n${response.revisionSuggestions.map((p) => `・${p}`).join("\n")}`,
+		);
+	}
+	if (response.nextTalkUpgrade) {
+		parts.push(`【次回トーク強化】\n${response.nextTalkUpgrade}`);
+	}
+	if (response.riskNotes.length > 0) {
+		parts.push(`【注意点】\n${response.riskNotes.map((p) => `・${p}`).join("\n")}`);
+	}
+	return parts.join("\n\n").slice(0, 1800);
+}
+
+async function createDealActivityLog(
+	notion: NotionClient,
+	deal: DealInfo,
+	reviewResponse: SecondReviewAIResponse,
+): Promise<void> {
+	const workerProcessId = `deal-review-${deal.page.id}`;
+
+	// 冪等性チェック：同じ商談の活動ログが既に存在すればスキップ
+	const existing = await notion.dataSources.query({
+		data_source_id: ACTIVITY_LOG_DATA_SOURCE_ID,
+		filter: {
+			property: "Worker処理ID",
+			rich_text: { equals: workerProcessId },
+		},
+		page_size: 1,
+	});
+	if (existing.results.length > 0) {
+		console.log("deal activity log already exists, skipping", deal.page.id);
+		return;
+	}
+
+	const properties: Record<string, unknown> = {
+		活動タイトル: title(`${deal.name || "商談"}（二次レビュー済）`),
+		活動種別: select("商談"),
+		活動処理状態: select("完了"),
+		評価対象: { checkbox: true },
+		AIサマリ: richText(reviewResponse.summary || ""),
+		"Worker処理ID": richText(workerProcessId),
+		関連商談: relationIds([deal.page.id]),
+	};
+
+	if (deal.dateISO) {
+		properties["活動日時"] = { date: { start: deal.dateISO } };
+	}
+	if (deal.assignedUserIds.length > 0) {
+		properties["活動者"] = {
+			people: deal.assignedUserIds.map((id) => ({ object: "user", id })),
+		};
+	}
+	if (deal.relatedCompanyIds.length > 0) {
+		properties["関連企業"] = relationIds(deal.relatedCompanyIds);
+	}
+
+	await notion.pages.create({
+		parent: { data_source_id: ACTIVITY_LOG_DATA_SOURCE_ID },
+		properties,
+	});
+	console.log("deal activity log created", deal.page.id);
+}
+
+// ── ネクストアクションAI ─────────────────────────────────────────────────────
+
+async function processDealNextActions(
+	input: DealNextActionInput,
+	notion: NotionClient,
+): Promise<DealNextActionResult> {
+	const dealPage = await notion.pages.retrieve({ page_id: input.dealPageId });
+	const deal = readDeal(dealPage);
+	const meetingContext = deal.relatedMeetingId
+		? await fetchMeetingContext(notion, deal.relatedMeetingId)
+		: null;
+	const source = buildDealNextActionPayload(deal, meetingContext);
+
+	if (source.replace(/\s/g, "").length < 120) {
+		return {
+			dealPageId: input.dealPageId,
+			action: "needs-review",
+			created: 0,
+			skipped: 0,
+			message:
+				"商談フィードバック、改善ポイント、次回トーク、成約ヒントが不足しているため、タスク作成せず停止しました。",
+		};
+	}
+
+	const existingTasks = await findTeamTasksByDeal(notion, deal.page.id);
+	let aiResponse: DealNextActionAIResponse;
+	try {
+		aiResponse = await callOpenAIDealNextActions(source);
+	} catch (error) {
+		return {
+			dealPageId: input.dealPageId,
+			action: "error",
+			created: 0,
+			skipped: 0,
+			message: `ネクストアクションAIの生成に失敗しました: ${String(error).slice(0, 300)}`,
+		};
+	}
+
+	const candidates = normalizeDealNextActionCandidates(aiResponse.actions);
+	if (aiResponse.status !== "作成候補あり" || candidates.length === 0) {
+		return {
+			dealPageId: input.dealPageId,
+			action: "needs-review",
+			created: 0,
+			skipped: existingTasks.length,
+			message:
+				aiResponse.memo ||
+				"明確にチームトラッカーへ作るべき次アクションがないため、タスク作成せず停止しました。",
+		};
+	}
+
+	const planned = candidates.map((candidate) => ({
+		candidate,
+		duplicate: existingTasks.find((task) =>
+			taskTitlesSimilar(task.title, candidate.title),
+		),
+	}));
+
+	if (input.dryRun) {
+		const duplicateCount = planned.filter((item) => item.duplicate).length;
+		return {
+			dealPageId: input.dealPageId,
+			action: "dry-run",
+			created: planned.length - duplicateCount,
+			skipped: duplicateCount,
+			message: [
+				`dry-run: 作成候補 ${planned.length} 件。`,
+				`既存関連タスク ${existingTasks.length} 件。`,
+				`重複スキップ予定 ${duplicateCount} 件。`,
+				`候補: ${planned.map((item) => item.candidate.title).join(" / ")}`,
+			].join(""),
+		};
+	}
+
+	let created = 0;
+	let skipped = 0;
+	for (const item of planned) {
+		if (item.duplicate) {
+			skipped += 1;
+			continue;
+		}
+		await createTeamTrackerTaskFromDealAction(notion, deal, item.candidate);
+		created += 1;
+	}
+
+	return {
+		dealPageId: input.dealPageId,
+		action: created > 0 ? "created-tasks" : "skipped-existing",
+		created,
+		skipped,
+		message:
+			created > 0
+				? `ネクストアクションを ${created} 件作成しました。重複 ${skipped} 件は作成していません。`
+				: `既存の関連タスクと重複するため、新規作成は行いませんでした。重複スキップ ${skipped} 件。`,
+	};
+}
+
+function buildDealNextActionPayload(
+	deal: DealInfo,
+	meeting: MeetingContext | null,
+): string {
+	const lines = [
+		"=== 商談 ===",
+		`商談名: ${deal.name || "未設定"}`,
+		`商談日: ${deal.date || "未設定"}`,
+		`商談ステータス: ${deal.status || "未設定"}`,
+		`商談概要: ${deal.summary || "未入力"}`,
+		`担当営業ユーザーID数: ${deal.assignedUserIds.length}`,
+		"",
+		"=== 営業フィードバック ===",
+		`営業フィードバック: ${deal.salesFeedback || "未入力"}`,
+		`改善ポイント: ${deal.improvementPoints || "未入力"}`,
+		`次回トークイメージ: ${deal.nextTalkImage || "未入力"}`,
+		`フォローメールヒント: ${deal.followMailHint || "未入力"}`,
+		`成約へのヒント: ${deal.closingHint || "未入力"}`,
+	];
+	if (meeting) {
+		lines.push(
+			"",
+			"=== 関連会議 ===",
+			`要約: ${meeting.summary || "未入力"}`,
+			`決定事項: ${meeting.decisions || "未入力"}`,
+			`アクション項目: ${meeting.actionItems || "未入力"}`,
+		);
+	}
+	return lines.join("\n").slice(0, 10000);
+}
+
+async function callOpenAIDealNextActions(
+	payload: string,
+): Promise<DealNextActionAIResponse> {
+	const apiKey = process.env.OPENAI_API_KEY;
+	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
+	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+	const today = new Date().toISOString().slice(0, 10);
+
+	const systemPrompt = [
+		"あなたは和上ホールディングスのネクストアクションAIです。",
+		"商談管理DBの営業フィードバック、改善ポイント、次回トーク、成約ヒントを読み、チームトラッカーへ作るべき具体タスク候補だけを抽出します。",
+		"",
+		"重要ルール:",
+		"- タスク候補は最大5件",
+		"- 具体的な行動がないものは作らない",
+		"- 担当者を推測しない。担当者の割当はWorkerが商談の担当営業ユーザーから行う",
+		"- 期限が明確でない場合、dueDate は空文字にして dueText に「期限要確認」と書く",
+		"- 今日の日付は " + today,
+		"- 商談ステータス、営業スコア、営業フィードバック、成約判断、評価は更新しない",
+		"- 既存タスクの重複判定はWorker側で行うため、同じ意味のタスクを細かく分割しすぎない",
+		"- 商談名にテスト、ドライラン、確認などの語が含まれていても、材料が具体的なら通常通り候補を返す",
+		"",
+		"良いタスク例:",
+		"- 決裁者同席を打診する",
+		"- 返金条件を確認する",
+		"- A社向け提案資料の初版を作成する",
+		"- フォローメールを送る",
+		"",
+		"必ずJSONのみを返してください。",
+	].join("\n");
+
+	const response = await fetch("https://api.openai.com/v1/chat/completions", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify({
+			model,
+			temperature: 0,
+			response_format: DEAL_NEXT_ACTION_RESPONSE_FORMAT,
+			messages: [
+				{ role: "system", content: systemPrompt },
+				{ role: "user", content: payload },
+			],
+		}),
+	});
+
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
+	}
+	const json = (await response.json()) as {
+		choices?: Array<{ message?: { content?: string } }>;
+	};
+	const raw = json.choices?.[0]?.message?.content;
+	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
+	return parseDealNextActionAIResponse(raw);
+}
+
+function parseDealNextActionAIResponse(raw: string): DealNextActionAIResponse {
+	try {
+		const parsed = JSON.parse(raw) as Partial<DealNextActionAIResponse>;
+		const status =
+			parsed.status === "作成候補あり" ||
+			parsed.status === "要確認" ||
+			parsed.status === "対象外"
+				? parsed.status
+				: "要確認";
+		return {
+			status,
+			memo: typeof parsed.memo === "string" ? parsed.memo : "",
+			actions: Array.isArray(parsed.actions)
+				? parsed.actions
+						.map(normalizeDealNextActionCandidate)
+						.filter((action): action is DealNextActionCandidate => Boolean(action))
+				: [],
+		};
+	} catch (error) {
+		console.log("parseDealNextActionAIResponse failed", String(error));
+		return {
+			status: "要確認",
+			memo: `JSONパース失敗: ${raw.slice(0, 200)}`,
+			actions: [],
+		};
+	}
+}
+
+function normalizeDealNextActionCandidates(
+	actions: DealNextActionCandidate[],
+): DealNextActionCandidate[] {
+	const seen = new Set<string>();
+	const result: DealNextActionCandidate[] = [];
+	for (const raw of actions) {
+		const action = normalizeDealNextActionCandidate(raw);
+		if (!action) continue;
+		const key = normalizeTaskTitle(action.title);
+		if (!key || seen.has(key)) continue;
+		seen.add(key);
+		result.push(action);
+	}
+	return result.slice(0, 5);
+}
+
+function normalizeDealNextActionCandidate(
+	raw: Partial<DealNextActionCandidate>,
+): DealNextActionCandidate | null {
+	const titleText = typeof raw.title === "string" ? raw.title.trim() : "";
+	const description =
+		typeof raw.description === "string" ? raw.description.trim() : "";
+	if (titleText.replace(/\s/g, "").length < 6) return null;
+	const priority =
+		raw.priority === "高" || raw.priority === "中" || raw.priority === "低"
+			? raw.priority
+			: "中";
+	const taskType =
+		raw.taskType === "確認・調査" ||
+		raw.taskType === "書類作成" ||
+		raw.taskType === "顧客フォロー" ||
+		raw.taskType === "社内タスク"
+			? raw.taskType
+			: "確認・調査";
+	const dueDate =
+		typeof raw.dueDate === "string" && isISODateOnly(raw.dueDate)
+			? raw.dueDate
+			: "";
+	const dueText =
+		typeof raw.dueText === "string" && raw.dueText.trim()
+			? raw.dueText.trim()
+			: dueDate || "期限要確認";
+	return {
+		title: titleText.slice(0, 90),
+		description: description || titleText,
+		priority,
+		taskType,
+		dueText,
+		dueDate,
+		requiresHumanCheck: Boolean(raw.requiresHumanCheck),
+	};
+}
+
+async function findTeamTasksByDeal(
+	notion: NotionClient,
+	dealId: string,
+): Promise<TeamTaskInfo[]> {
+	try {
+		const response = await notion.dataSources.query({
+			data_source_id: TEAM_TRACKER_DATA_SOURCE_ID,
+			page_size: 50,
+			filter: {
+				property: "関連商談",
+				relation: { contains: dealId },
+			},
+		});
+		return response.results.map(readTeamTaskInfo);
+	} catch (error) {
+		console.log("team task lookup skipped", String(error));
+		return [];
+	}
+}
+
+function readTeamTaskInfo(page: Page): TeamTaskInfo {
+	const properties = page.properties ?? {};
+	return {
+		page,
+		title: text(properties["タスク名"]) || text(properties["名前"]) || "",
+		status: text(properties["ステータス"]),
+		done: checkboxValue(properties["完了"]),
+	};
+}
+
+async function createTeamTrackerTaskFromDealAction(
+	notion: NotionClient,
+	deal: DealInfo,
+	action: DealNextActionCandidate,
+): Promise<void> {
+	const created = await notion.pages.create({
+		parent: { data_source_id: TEAM_TRACKER_DATA_SOURCE_ID },
+		properties: {
+			タスク名: title(action.title),
+		},
+	});
+	const fullPage = await notion.pages.retrieve({ page_id: created.id });
+	const memo = buildDealNextActionTaskMemo(deal, action);
+	const patches: Record<string, SafePatch> = {
+		概要: { kind: "text", value: memo },
+		"説明⚠️まず入力": { kind: "text", value: memo },
+		ステータス: { kind: "select", value: "未着手" },
+		優先順位: { kind: "select", value: action.priority },
+		タスクタイプ: { kind: "multi_select", values: [action.taskType] },
+		関連商談: { kind: "relation", ids: [deal.page.id] },
+	};
+	if (deal.relatedMeetingId) {
+		patches["関連会議議事録"] = {
+			kind: "relation",
+			ids: [deal.relatedMeetingId],
+		};
+	}
+	if (deal.relatedCompanyIds.length > 0) {
+		patches["関連企業"] = {
+			kind: "relation",
+			ids: deal.relatedCompanyIds.slice(0, 3),
+		};
+	}
+	if (deal.assignedUserIds.length > 0) {
+		patches["タスク担当者"] = {
+			kind: "people",
+			ids: deal.assignedUserIds.slice(0, 3),
+		};
+	}
+	if (action.dueDate) {
+		patches["期限"] = { kind: "date", value: action.dueDate };
+	}
+	await safeUpdateExistingProperties(notion, fullPage, patches);
+}
+
+function buildDealNextActionTaskMemo(
+	deal: DealInfo,
+	action: DealNextActionCandidate,
+): string {
+	const assignee =
+		deal.assignedUserIds.length > 0
+			? "商談の担当営業ユーザーを設定"
+			: "担当者要確認";
+	return [
+		`商談: ${deal.name || deal.page.id}`,
+		`根拠: ${action.description}`,
+		`期限: ${action.dueText || "期限要確認"}`,
+		`担当: ${assignee}`,
+		action.requiresHumanCheck ? "確認: 内容に曖昧さがあるため人間確認を推奨。" : "",
+		`Worker処理ID: deal-next-action-${deal.page.id}-${normalizeTaskTitle(action.title).slice(0, 40)}`,
+	].filter(Boolean).join("\n").slice(0, 1800);
+}
+
+// ── ニュース収集Worker：RSSから業界ニュースDBへ候補登録 ────────────────────────
+
+async function collectSalesNews(
+	input: SalesNewsCollectInput,
+	notion: NotionClient,
+): Promise<SalesNewsCollectResult> {
+	const limit = Math.max(1, Math.min(input.limit ?? 5, 20));
+	const feeds = buildSalesNewsFeeds();
+	const fetchedItems = await fetchSalesNewsItems(feeds);
+	const scoredItems = scoreAndDeduplicateSalesNews(fetchedItems)
+		.filter((item) => item.score >= 25)
+		.slice(0, Math.max(limit * 4, 12));
+
+	let created = 0;
+	let skipped = 0;
+	let finalized = 0;
+	const pages: string[] = [];
+	const selected: ScoredSalesNewsItem[] = [];
+
+	for (const item of scoredItems) {
+		if (selected.length >= limit) break;
+		const exists = await salesNewsAlreadyExists(notion, item);
+		if (exists) {
+			skipped += 1;
+			continue;
+		}
+		selected.push(item);
+	}
+
+	if (input.dryRun) {
+		return {
+			action: "dry-run",
+			fetched: fetchedItems.length,
+			candidates: selected.length,
+			created: selected.length,
+			skipped,
+			finalized: 0,
+			pages: selected.map((item) => `${item.title} (${item.url})`),
+			message: [
+				`dry-run: RSS ${feeds.length}本から ${fetchedItems.length} 件取得。`,
+				`候補 ${selected.length} 件、既存スキップ ${skipped} 件。`,
+				`キーワード: ${feeds.map((feed) => feed.name).join(" / ")}`,
+			].join(""),
+		};
+	}
+
+	for (const item of selected) {
+		const page = await createSalesNewsPage(notion, item, Boolean(input.autoGenerateTalk));
+		created += 1;
+		pages.push(page.url ?? page.id);
+		if (input.autoGenerateTalk && input.autoFinalize) {
+			const result = await processSalesTalkFinalize(
+				{ newsPageId: page.id, dryRun: false },
+				notion,
+			);
+			if (result.action === "finalized") finalized += result.created + result.updated;
+		}
+	}
+
+	return {
+		action: "collected",
+		fetched: fetchedItems.length,
+		candidates: selected.length,
+		created,
+		skipped,
+		finalized,
+		pages,
+		message: [
+			`ニュース候補を ${created} 件登録しました。`,
+			`既存スキップ ${skipped} 件。`,
+			input.autoGenerateTalk
+				? "営業トーク生成文もニュース側へ下書きしました。"
+				: "営業トーク生成は未実行です。",
+			input.autoFinalize
+				? `営業トーク管理DB仕上げ ${finalized} 件。`
+				: "営業トーク管理DBへの仕上げは未実行です。",
+		].join(""),
+	};
+}
+
+function buildSalesNewsFeeds(): SalesNewsFeed[] {
+	const configuredFeeds = parseSalesNewsFeedsJson(
+		process.env.SALES_NEWS_RSS_FEEDS_JSON ?? process.env.NEWS_RSS_FEEDS_JSON,
+	);
+	if (configuredFeeds.length > 0) return configuredFeeds;
+
+	const keywords = parseSalesNewsKeywords(
+		process.env.SALES_NEWS_RSS_KEYWORDS ?? process.env.NEWS_RSS_KEYWORDS,
+	);
+	return (keywords.length > 0 ? keywords : DEFAULT_SALES_NEWS_KEYWORDS).map(
+		(keyword) => ({
+			name: keyword,
+			url: googleNewsRssUrl(keyword),
+			defaultCategory: inferSalesNewsCategory(keyword),
+		}),
+	);
+}
+
+function parseSalesNewsKeywords(value: string | undefined): string[] {
+	if (!value) return [];
+	return uniqueStrings(
+		value
+			.split(/[\n,、]/)
+			.map((keyword) => keyword.trim())
+			.filter(Boolean),
+	).slice(0, 30);
+}
+
+function parseSalesNewsFeedsJson(value: string | undefined): SalesNewsFeed[] {
+	if (!value) return [];
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		if (!Array.isArray(parsed)) return [];
+		return parsed
+			.map((item): SalesNewsFeed | null => {
+				if (!item || typeof item !== "object") return null;
+				const record = item as Record<string, unknown>;
+				const name = firstString(record.name, record.title, record.keyword) ?? "";
+				const url = firstString(record.url, record.feedUrl, record.feed_url) ?? "";
+				const defaultCategory = firstString(record.defaultCategory, record.category);
+				if (!name || !url) return null;
+				return { name, url, defaultCategory };
+			})
+			.filter((feed): feed is SalesNewsFeed => Boolean(feed))
+			.slice(0, 30);
+	} catch (error) {
+		console.log("NEWS_RSS_FEEDS_JSON parse skipped", String(error));
+		return [];
+	}
+}
+
+function googleNewsRssUrl(keyword: string): string {
+	return `https://news.google.com/rss/search?q=${encodeURIComponent(keyword)}&hl=ja&gl=JP&ceid=JP:ja`;
+}
+
+async function fetchSalesNewsItems(feeds: SalesNewsFeed[]): Promise<SalesNewsItem[]> {
+	const results: SalesNewsItem[] = [];
+	for (const feed of feeds.slice(0, 30)) {
+		const items = await fetchSalesNewsFeed(feed);
+		results.push(...items);
+	}
+	return results;
+}
+
+async function fetchSalesNewsFeed(feed: SalesNewsFeed): Promise<SalesNewsItem[]> {
+	try {
+		const response = await fetch(feed.url, {
+			headers: {
+				"User-Agent": "WAJO-Sales-News-Collector/1.0",
+				Accept: "application/rss+xml, application/atom+xml, text/xml, */*",
+			},
+			signal: AbortSignal.timeout(12000),
+		});
+		if (!response.ok) {
+			console.log("news rss fetch skipped", { feed: feed.name, status: response.status });
+			return [];
+		}
+		const xml = await response.text();
+		return parseSalesNewsXml(xml, feed);
+	} catch (error) {
+		console.log("news rss fetch failed", { feed: feed.name, error: String(error) });
+		return [];
+	}
+}
+
+function parseSalesNewsXml(xml: string, feed: SalesNewsFeed): SalesNewsItem[] {
+	const chunks = xml.match(/<item\b[\s\S]*?<\/item>/gi);
+	if (chunks?.length) {
+		return chunks
+			.map((chunk) => parseRssItem(chunk, feed))
+			.filter((item): item is SalesNewsItem => Boolean(item));
+	}
+	const entries = xml.match(/<entry\b[\s\S]*?<\/entry>/gi) ?? [];
+	return entries
+		.map((chunk) => parseAtomEntry(chunk, feed))
+		.filter((item): item is SalesNewsItem => Boolean(item));
+}
+
+function parseRssItem(chunk: string, feed: SalesNewsFeed): SalesNewsItem | null {
+	const titleText = xmlField(chunk, "title");
+	const link = xmlField(chunk, "link");
+	const summary = xmlField(chunk, "description") || xmlField(chunk, "content:encoded");
+	const pubDate = xmlField(chunk, "pubDate") || xmlField(chunk, "dc:date");
+	const titleClean = cleanNewsText(titleText);
+	const url = cleanNewsUrl(link);
+	if (!titleClean || !url) return null;
+	return {
+		feedName: feed.name,
+		title: titleClean,
+		url,
+		summary: cleanNewsText(summary),
+		publishedDate: normalizeNewsDate(pubDate),
+	};
+}
+
+function parseAtomEntry(chunk: string, feed: SalesNewsFeed): SalesNewsItem | null {
+	const titleText = xmlField(chunk, "title");
+	const link = atomLink(chunk) || xmlField(chunk, "link");
+	const summary = xmlField(chunk, "summary") || xmlField(chunk, "content");
+	const pubDate = xmlField(chunk, "updated") || xmlField(chunk, "published");
+	const titleClean = cleanNewsText(titleText);
+	const url = cleanNewsUrl(link);
+	if (!titleClean || !url) return null;
+	return {
+		feedName: feed.name,
+		title: titleClean,
+		url,
+		summary: cleanNewsText(summary),
+		publishedDate: normalizeNewsDate(pubDate),
+	};
+}
+
+function xmlField(chunk: string, name: string): string {
+	const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const match = chunk.match(new RegExp(`<${escaped}\\b[^>]*>([\\s\\S]*?)<\\/${escaped}>`, "i"));
+	if (!match) return "";
+	return decodeXmlEntities(stripCdata(match[1] ?? ""));
+}
+
+function atomLink(chunk: string): string {
+	const match =
+		chunk.match(/<link\b[^>]*rel=["']alternate["'][^>]*href=["']([^"']+)["'][^>]*\/?>/i) ??
+		chunk.match(/<link\b[^>]*href=["']([^"']+)["'][^>]*\/?>/i);
+	return match ? decodeXmlEntities(match[1] ?? "") : "";
+}
+
+function stripCdata(value: string): string {
+	return value.replace(/^<!\[CDATA\[/, "").replace(/\]\]>$/, "");
+}
+
+function cleanNewsText(value: string): string {
+	return decodeXmlEntities(value)
+		.replace(/<[^>]+>/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function decodeXmlEntities(value: string): string {
+	return value
+		.replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)))
+		.replace(/&#x([0-9a-f]+);/gi, (_, code: string) =>
+			String.fromCharCode(Number.parseInt(code, 16)),
+		)
+		.replace(/&amp;/g, "&")
+		.replace(/&lt;/g, "<")
+		.replace(/&gt;/g, ">")
+		.replace(/&quot;/g, '"')
+		.replace(/&apos;/g, "'");
+}
+
+function cleanNewsUrl(value: string): string {
+	const url = value.trim();
+	if (!url) return "";
+	try {
+		return new URL(url).toString();
+	} catch {
+		return url;
+	}
+}
+
+function normalizeNewsDate(value: string): string {
+	const parsed = value ? new Date(value) : new Date();
+	if (Number.isNaN(parsed.getTime())) return todayDateJST();
+	return parsed.toISOString().slice(0, 10);
+}
+
+function scoreAndDeduplicateSalesNews(items: SalesNewsItem[]): ScoredSalesNewsItem[] {
+	const seen = new Set<string>();
+	const seenTopicTitles: string[] = [];
+	const result: ScoredSalesNewsItem[] = [];
+	for (const item of items) {
+		const key = normalizeNewsUniqueKey(item.url, item.title);
+		if (!key || seen.has(key)) continue;
+		seen.add(key);
+		if (seenTopicTitles.some((titleText) => salesNewsTopicsSimilar(titleText, item.title))) {
+			continue;
+		}
+		const scored = scoreSalesNewsItem(item);
+		if (scored) {
+			result.push(scored);
+			seenTopicTitles.push(item.title);
+		}
+	}
+	return result.sort((a, b) => b.score - a.score);
+}
+
+function normalizeNewsUniqueKey(url: string, titleText: string): string {
+	const normalizedUrl = url
+		.replace(/[?#].*$/, "")
+		.replace(/^https?:\/\/(www\.)?/, "")
+		.replace(/\/$/, "")
+		.toLowerCase();
+	const normalizedTitle = normalizeLookupText(titleText);
+	return normalizedUrl || normalizedTitle;
+}
+
+function scoreSalesNewsItem(item: SalesNewsItem): ScoredSalesNewsItem | null {
+	const body = `${item.title}\n${item.summary}\n${item.feedName}`;
+	let score = 0;
+	score += scoreByKeywords(body, [
+		["系統用蓄電池", 40],
+		["蓄電池", 28],
+		["系統接続", 25],
+		["接続検討", 18],
+		["容量市場", 22],
+		["電力市場", 20],
+		["補助金", 25],
+		["助成", 18],
+		["制度改正", 22],
+		["FIP", 18],
+		["FIT", 12],
+		["太陽光", 18],
+		["再生可能エネルギー", 18],
+		["再エネ", 18],
+		["PPA", 16],
+		["発電所", 15],
+		["売買", 14],
+		["用地", 14],
+		["脱炭素", 12],
+		["電力", 10],
+	]);
+	score += recencyScore(item.publishedDate);
+	if (/芸能|スポーツ|ゲーム|暗号資産|占い/.test(body)) score -= 30;
+	if (score < 10) return null;
+	const category = inferSalesNewsCategory(body);
+	const importance = score >= 70 ? "🔴 必読" : score >= 35 ? "🟡 参考" : "⚪ 情報";
+	return {
+		...item,
+		score,
+		category,
+		importance,
+			oneLine: buildSalesNewsOneLine(item, category),
+		shouldCreateTalk: score >= 35,
+	};
+}
+
+function scoreByKeywords(value: string, rules: Array<[string, number]>): number {
+	return rules.reduce((total, [keyword, score]) => {
+		return total + (value.toLowerCase().includes(keyword.toLowerCase()) ? score : 0);
+	}, 0);
+}
+
+function salesNewsTopicsSimilar(a: string, b: string): boolean {
+	const left = significantSalesNewsTokens(a);
+	const right = significantSalesNewsTokens(b);
+	if (left.length === 0 || right.length === 0) return false;
+	const overlap = left.filter((token) => right.includes(token));
+	return overlap.length >= 2;
+}
+
+function significantSalesNewsTokens(value: string): string[] {
+	const body = value.replace(/\s+-\s+[^-]+$/, "");
+	const fixedTokens = [
+		"系統用蓄電池",
+		"蓄電池",
+		"系統接続",
+		"接続検討",
+		"容量市場",
+		"需給調整市場",
+		"電力調整市場",
+		"電力市場",
+		"補助金",
+		"制度改正",
+		"太陽光",
+		"再生可能エネルギー",
+		"再エネ",
+		"PPA",
+		"発電所",
+		"プロロジス",
+		"物流施設",
+		"低圧",
+		"用地",
+		"脱炭素",
+	];
+	return uniqueStrings(
+		fixedTokens.filter((token) => body.toLowerCase().includes(token.toLowerCase())),
+	);
+}
+
+function recencyScore(dateText: string): number {
+	const time = Date.parse(dateText);
+	if (Number.isNaN(time)) return 5;
+	const days = Math.floor((Date.now() - time) / (24 * 60 * 60 * 1000));
+	if (days <= 3) return 20;
+	if (days <= 14) return 12;
+	if (days <= 45) return 4;
+	return -12;
+}
+
+function inferSalesNewsCategory(value: string): string {
+	if (/蓄電池|系統|接続検討|容量市場|需給調整/.test(value)) return "🔋 蓄電池・系統";
+	if (/補助金|助成|制度|税制|公募/.test(value)) return "💰 補助金・制度";
+	if (/不動産|用地|土地|地権者|農地/.test(value)) return "🏗️ 不動産・用地";
+	if (/市場|政策|法改正|省令|経産省|電力取引/.test(value)) return "📊 市場・政策";
+	if (/太陽光|再生可能エネルギー|再エネ|PPA|発電所|脱炭素/.test(value)) {
+		return "⚡ 電力・再エネ";
+	}
+	return "🌐 その他";
+}
+
+function buildSalesNewsOneLine(item: SalesNewsItem, category: string): string {
+	const summary = item.summary || item.title;
+	const hint = salesNewsTalkHint(category);
+	return `営業メモ: ${summary.slice(0, 120)} / 使い方: ${hint}`;
+}
+
+function salesNewsTalkHint(category: string): string {
+	if (category.includes("蓄電池")) {
+		return "蓄電池案件で、系統・収益性・運用リスクを確認する入口に使う。";
+	}
+	if (category.includes("補助金")) {
+		return "補助金ありきではなく、制度変更に耐える事業設計の話題に使う。";
+	}
+	if (category.includes("不動産")) {
+		return "用地オーナーや仲介先に、土地の活用余地を聞く入口に使う。";
+	}
+	if (category.includes("市場")) {
+		return "電力市場の変化を踏まえ、今の収益前提が古くないか確認する。";
+	}
+	return "初回の話題作りと、顧客の温度感確認に使う。";
+}
+
+async function salesNewsAlreadyExists(
+	notion: NotionClient,
+	item: ScoredSalesNewsItem,
+): Promise<boolean> {
+	try {
+		const byUrl = await notion.dataSources.query({
+			data_source_id: NEWS_DATA_SOURCE_ID,
+			page_size: 1,
+			filter: { property: "記事URL", url: { equals: item.url } },
+		});
+		if (byUrl.results.length > 0) return true;
+	} catch (error) {
+		console.log("news url lookup skipped", String(error));
+	}
+	try {
+		const titlePrefix = item.title.slice(0, 40);
+		if (!titlePrefix) return false;
+		const byTitle = await notion.dataSources.query({
+			data_source_id: NEWS_DATA_SOURCE_ID,
+			page_size: 5,
+			filter: { property: "タイトル", title: { contains: titlePrefix } },
+		});
+		const normalized = normalizeLookupText(item.title);
+		return byTitle.results.some((page) => {
+			const existingTitle = text(page.properties?.["タイトル"]);
+			return normalizeLookupText(existingTitle) === normalized;
+		});
+	} catch (error) {
+		console.log("news title lookup skipped", String(error));
+		return false;
+	}
+}
+
+async function createSalesNewsPage(
+	notion: NotionClient,
+	item: ScoredSalesNewsItem,
+	autoGenerateTalk: boolean,
+): Promise<Page> {
+	const created = await notion.pages.create({
+		parent: { data_source_id: NEWS_DATA_SOURCE_ID },
+		properties: {
+			タイトル: title(item.title),
+		},
+	});
+	const fullPage = await notion.pages.retrieve({ page_id: created.id });
+	const patches: Record<string, SafePatch> = {
+		記事URL: { kind: "text", value: item.url },
+		投稿日: { kind: "date", value: item.publishedDate || todayDateJST() },
+		ひとこと: { kind: "text", value: item.oneLine },
+		カテゴリー: { kind: "select", value: item.category },
+		重要度: { kind: "select", value: item.importance },
+		トーク作成: { kind: "checkbox", value: item.shouldCreateTalk },
+		トーク化ステータス: { kind: "select", value: "未" },
+	};
+	if (autoGenerateTalk) {
+		patches["営業トーク（生成）"] = {
+			kind: "text",
+			value: buildSalesTalkSeedFromNews(item),
+		};
+	}
+	await safeUpdateExistingProperties(notion, fullPage, patches);
+	return notion.pages.retrieve({ page_id: created.id });
+}
+
+function buildSalesTalkSeedFromNews(item: ScoredSalesNewsItem): string {
+	const hint = salesNewsTalkHint(item.category);
+	return [
+		`元ニュース: ${item.title}`,
+		`カテゴリ: ${item.category}`,
+		`記事URL: ${item.url}`,
+		`要点: ${item.summary || item.oneLine}`,
+		"",
+		"営業トーク案1: 最近このテーマが動いています。蓄電池や太陽光の判断は、制度・系統・収益前提が少し変わるだけで結論が変わります。御社の今の前提は、最新状況で一度見直せていますか。",
+		`営業トーク案2: ${hint} 今すぐ売り込むというより、まずは今の課題と判断材料が古くなっていないかを一緒に確認したいです。`,
+		"想定反論: まだ急いでいない。 / 切り返し: 急いで契約する必要はありません。ただ、先に条件だけ見ておくと、制度や系統の変化が出た時に判断が早くなります。",
+		"次アクション: 関連する案件・用地・企業の状況を聞き、必要なら商談準備ブリーフや提案材料につなげる。",
+	].join("\n").slice(0, 1800);
+}
+
+// ── 営業トーク自動生成エージェント：管理DB仕上げ ───────────────────────────────
+
+async function processSalesTalkFinalize(
+	input: SalesTalkFinalizeInput,
+	notion: NotionClient,
+): Promise<SalesTalkFinalizeResult> {
+	const newsPage = await notion.pages.retrieve({ page_id: input.newsPageId });
+	const news = readSalesTalkNews(newsPage);
+
+	if (news.generatedTalk.replace(/\s/g, "").length < 120) {
+		return {
+			newsPageId: input.newsPageId,
+			action: "needs-review",
+			updated: 0,
+			created: 0,
+			message:
+				"ニュース側の営業トーク生成文が不足しているため、営業トーク管理DBへの仕上げは行いませんでした。",
+		};
+	}
+
+	let aiResponse: SalesTalkFinalizeAIResponse;
+	try {
+		aiResponse = await callOpenAISalesTalkFinalize(news);
+	} catch (error) {
+		return {
+			newsPageId: input.newsPageId,
+			action: "error",
+			updated: 0,
+			created: 0,
+			message: `営業トーク仕上げAIの生成に失敗しました: ${String(error).slice(0, 300)}`,
+		};
+	}
+
+	const drafts = normalizeSalesTalkDrafts(aiResponse.talks);
+	if (aiResponse.status !== "作成候補あり" || drafts.length === 0) {
+		return {
+			newsPageId: input.newsPageId,
+			action: "needs-review",
+			updated: 0,
+			created: 0,
+			message:
+				aiResponse.memo ||
+				"営業トーク管理DBへ展開できる明確なトーク候補がないため停止しました。",
+		};
+	}
+
+	const existingTalks = await findSalesTalkPagesByNews(notion, news.page.id);
+	const planned = matchSalesTalkDrafts(news, drafts, existingTalks);
+	const updateCount = planned.filter((item) => item.page).length;
+	const createCount = planned.length - updateCount;
+
+	if (input.dryRun) {
+		return {
+			newsPageId: input.newsPageId,
+			action: "dry-run",
+			updated: updateCount,
+			created: createCount,
+			message: [
+				`dry-run: 営業トーク候補 ${planned.length} 件。`,
+				`既存更新予定 ${updateCount} 件、新規作成予定 ${createCount} 件。`,
+				`候補: ${planned.map((item) => item.draft.title).join(" / ")}`,
+			].join(""),
+		};
+	}
+
+	let updated = 0;
+	let created = 0;
+	const touchedUrls: string[] = [];
+	for (const item of planned) {
+		if (item.page) {
+			await updateSalesTalkPageFromDraft(notion, news, item.page, item.draft);
+			updated += 1;
+			if (item.page.page.url) touchedUrls.push(item.page.page.url);
+			continue;
+		}
+		const createdPage = await createSalesTalkPageFromDraft(notion, news, item.draft);
+		created += 1;
+		if (createdPage.url) touchedUrls.push(createdPage.url);
+	}
+
+	await safeUpdateExistingProperties(notion, news.page, {
+		トーク化ステータス: { kind: "select", value: "作成済" },
+		トーク化日: { kind: "date", value: todayDateJST() },
+		営業トーク管理DB: { kind: "text", value: touchedUrls[0] ?? "" },
+	});
+
+	return {
+		newsPageId: input.newsPageId,
+		action: "finalized",
+		updated,
+		created,
+		message: `営業トーク管理DBを仕上げました。更新 ${updated} 件、新規作成 ${created} 件。ニュース側生成文は正本として残しています。`,
+	};
+}
+
+function readSalesTalkNews(page: Page): SalesTalkNewsInfo {
+	const properties = page.properties ?? {};
+	return {
+		page,
+		title: text(properties["タイトル"]) || text(properties["Name"]) || page.id,
+		category: text(properties["カテゴリー"]),
+		importance: text(properties["重要度"]),
+		oneLine: text(properties["ひとこと"]),
+		articleUrl: text(properties["記事URL"]),
+		generatedTalk: text(properties["営業トーク（生成）"]),
+	};
+}
+
+async function callOpenAISalesTalkFinalize(
+	news: SalesTalkNewsInfo,
+): Promise<SalesTalkFinalizeAIResponse> {
+	const apiKey = process.env.OPENAI_API_KEY;
+	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
+	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+	const systemPrompt = [
+		"あなたは和上ホールディングスの営業トーク整形AIです。",
+		"業界ニュースDBに既に生成された営業トーク本文を読み、営業マンがそのまま使える営業トーク管理DB用の3ネタに分割します。",
+		"",
+		"重要ルール:",
+		"- 新しい外部事実を足さない。入力文にある内容を整形する",
+		"- 最大3件。入力に3ネタある場合は3件に分ける",
+		"- 各トークは、つかみ、セリフ本文、刺さる相手、想定反論と切り返し、次アクションを必ず分ける",
+		"- セリフ本文は営業マンが口に出せる短い話し言葉にする",
+		"- 用途は 話題作り / 初回つかみ / 反論返し / クロージング前 / 関係構築 から選ぶ",
+		"- 品質が低い、または情報不足なら status は 要修正 にする",
+		"- チームトラッカー、商談管理DB、企業DBは更新しない。ここでは営業トーク管理DB用の構造化だけを行う",
+		"",
+		"必ずJSONのみを返してください。",
+	].join("\n");
+
+	const payload = [
+		"=== ニュース ===",
+		`タイトル: ${news.title}`,
+		`カテゴリー: ${news.category || "未設定"}`,
+		`重要度: ${news.importance || "未設定"}`,
+		`ひとこと: ${news.oneLine || "未入力"}`,
+		`記事URL: ${news.articleUrl || "未入力"}`,
+		"",
+		"=== 営業トーク生成文 ===",
+		news.generatedTalk,
+	].join("\n").slice(0, 12000);
+
+	const response = await fetch("https://api.openai.com/v1/chat/completions", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify({
+			model,
+			temperature: 0,
+			response_format: SALES_TALK_FINALIZE_RESPONSE_FORMAT,
+			messages: [
+				{ role: "system", content: systemPrompt },
+				{ role: "user", content: payload },
+			],
+		}),
+	});
+
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
+	}
+	const json = (await response.json()) as {
+		choices?: Array<{ message?: { content?: string } }>;
+	};
+	const raw = json.choices?.[0]?.message?.content;
+	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
+	return parseSalesTalkFinalizeAIResponse(raw);
+}
+
+function parseSalesTalkFinalizeAIResponse(raw: string): SalesTalkFinalizeAIResponse {
+	try {
+		const parsed = JSON.parse(raw) as Partial<SalesTalkFinalizeAIResponse>;
+		const status =
+			parsed.status === "作成候補あり" ||
+			parsed.status === "要確認" ||
+			parsed.status === "対象外"
+				? parsed.status
+				: "要確認";
+		return {
+			status,
+			memo: typeof parsed.memo === "string" ? parsed.memo : "",
+			talks: Array.isArray(parsed.talks)
+				? parsed.talks
+						.map(normalizeSalesTalkDraft)
+						.filter((talk): talk is SalesTalkDraft => Boolean(talk))
+				: [],
+		};
+	} catch (error) {
+		console.log("parseSalesTalkFinalizeAIResponse failed", String(error));
+		return {
+			status: "要確認",
+			memo: `JSONパース失敗: ${raw.slice(0, 200)}`,
+			talks: [],
+		};
+	}
+}
+
+function normalizeSalesTalkDrafts(talks: SalesTalkDraft[]): SalesTalkDraft[] {
+	const seen = new Set<string>();
+	const result: SalesTalkDraft[] = [];
+	for (const raw of talks) {
+		const talk = normalizeSalesTalkDraft(raw);
+		if (!talk) continue;
+		const key = normalizeSalesTalkTitle(talk.title || talk.hook);
+		if (!key || seen.has(key)) continue;
+		seen.add(key);
+		result.push(talk);
+	}
+	return result.slice(0, 3);
+}
+
+function normalizeSalesTalkDraft(raw: Partial<SalesTalkDraft>): SalesTalkDraft | null {
+	const titleText = typeof raw.title === "string" ? raw.title.trim() : "";
+	const hook = typeof raw.hook === "string" ? raw.hook.trim() : "";
+	const script = typeof raw.script === "string" ? raw.script.trim() : "";
+	const target = typeof raw.target === "string" ? raw.target.trim() : "";
+	const objectionHandling =
+		typeof raw.objectionHandling === "string" ? raw.objectionHandling.trim() : "";
+	const nextAction =
+		typeof raw.nextAction === "string" ? raw.nextAction.trim() : "";
+	if ((titleText + hook + script).replace(/\s/g, "").length < 40) return null;
+	const usage = Array.isArray(raw.usage)
+		? raw.usage.filter((item) =>
+				[
+					"話題作り",
+					"初回つかみ",
+					"反論返し",
+					"クロージング前",
+					"関係構築",
+				].includes(item),
+			)
+		: [];
+	const importance =
+		raw.importance === "🔴 必ず使う" ||
+		raw.importance === "🟡 余裕あれば" ||
+		raw.importance === "⚪ ストック"
+			? raw.importance
+			: "🟡 余裕あれば";
+	const status = raw.status === "使える" ? "使える" : "要修正";
+	return {
+		title: (titleText || hook || "営業トーク候補").slice(0, 120),
+		hook: (hook || titleText).slice(0, 240),
+		script: (script || hook || titleText).slice(0, 1400),
+		target: (target || "刺さる相手要確認").slice(0, 800),
+		objectionHandling: (objectionHandling || "想定反論・切り返し要確認").slice(0, 1000),
+		nextAction: (nextAction || "次アクション要確認").slice(0, 800),
+		usage: usage.length > 0 ? usage.slice(0, 3) : ["話題作り"],
+		importance,
+		status,
+		memo:
+			typeof raw.memo === "string" && raw.memo.trim()
+				? raw.memo.trim().slice(0, 800)
+				: "ニュース側生成文を営業トーク管理DB向けに整形。",
+	};
+}
+
+async function findSalesTalkPagesByNews(
+	notion: NotionClient,
+	newsPageId: string,
+): Promise<SalesTalkPageInfo[]> {
+	try {
+		const response = await notion.dataSources.query({
+			data_source_id: SALES_TALK_DATA_SOURCE_ID,
+			page_size: 20,
+			filter: {
+				property: "元ニュース",
+				relation: { contains: newsPageId },
+			},
+		});
+		return response.results.map(readSalesTalkPage);
+	} catch (error) {
+		console.log("sales talk lookup skipped", String(error));
+		return [];
+	}
+}
+
+function readSalesTalkPage(page: Page): SalesTalkPageInfo {
+	const properties = page.properties ?? {};
+	return {
+		page,
+		title: text(properties["トーク名"]),
+		hook: text(properties["つかみ（1行）"]),
+		script: text(properties["セリフ（トーク本文）"]),
+		target: text(properties["刺さる相手"]),
+		objectionHandling: text(properties["想定反論→切り返し"]),
+		nextAction: text(properties["次アクション（提案/質問）"]),
+	};
+}
+
+function matchSalesTalkDrafts(
+	news: SalesTalkNewsInfo,
+	drafts: SalesTalkDraft[],
+	existingTalks: SalesTalkPageInfo[],
+): Array<{ draft: SalesTalkDraft; page?: SalesTalkPageInfo }> {
+	const used = new Set<string>();
+	return drafts.map((draft, index) => {
+		const draftKey = normalizeSalesTalkTitle(draft.title);
+		const direct = existingTalks.find((talk) => {
+			if (used.has(talk.page.id)) return false;
+			const titleKey = normalizeSalesTalkTitle(talk.title);
+			const hookKey = normalizeSalesTalkTitle(talk.hook);
+			return (
+				(titleKey && (titleKey === draftKey || titleKey.includes(draftKey))) ||
+				(hookKey && (hookKey === draftKey || draftKey.includes(hookKey)))
+			);
+		});
+		if (direct) {
+			used.add(direct.page.id);
+			return { draft, page: direct };
+		}
+		if (index === 0) {
+			const placeholder = existingTalks.find((talk) => {
+				if (used.has(talk.page.id)) return false;
+				return isPlaceholderSalesTalkPage(news, talk);
+			});
+			if (placeholder) {
+				used.add(placeholder.page.id);
+				return { draft, page: placeholder };
+			}
+		}
+		return { draft };
+	});
+}
+
+function isPlaceholderSalesTalkPage(
+	news: SalesTalkNewsInfo,
+	talk: SalesTalkPageInfo,
+): boolean {
+	const titleKey = normalizeSalesTalkTitle(talk.title);
+	const newsKey = normalizeSalesTalkTitle(news.title);
+	const hasDetails = [talk.script, talk.target, talk.objectionHandling, talk.nextAction].some(
+		(value) => value.replace(/\s/g, "").length > 0,
+	);
+	return !hasDetails && (!titleKey || titleKey === newsKey || newsKey.includes(titleKey));
+}
+
+async function createSalesTalkPageFromDraft(
+	notion: NotionClient,
+	news: SalesTalkNewsInfo,
+	draft: SalesTalkDraft,
+): Promise<Page> {
+	const created = await notion.pages.create({
+		parent: { data_source_id: SALES_TALK_DATA_SOURCE_ID },
+		properties: {
+			トーク名: title(draft.title),
+		},
+	});
+	const fullPage = await notion.pages.retrieve({ page_id: created.id });
+	await updateSalesTalkPageFromDraft(notion, news, readSalesTalkPage(fullPage), draft);
+	return notion.pages.retrieve({ page_id: created.id });
+}
+
+async function updateSalesTalkPageFromDraft(
+	notion: NotionClient,
+	news: SalesTalkNewsInfo,
+	talk: SalesTalkPageInfo,
+	draft: SalesTalkDraft,
+): Promise<void> {
+	const properties = talk.page.properties ?? {};
+	const patches: Record<string, SafePatch> = {};
+	addSelectPatchIfBlankOrValues(patches, properties, "カテゴリ", news.category || "🔋 蓄電池・系統", []);
+	addSelectPatchIfBlankOrValues(patches, properties, "ステータス", draft.status, ["下書き"]);
+	addSelectPatchIfBlankOrValues(patches, properties, "実戦ログ由来", "記事起点", []);
+	addSelectPatchIfBlankOrValues(patches, properties, "実戦反映ステータス", "未使用", []);
+	addMultiSelectPatchIfBlank(patches, properties, "用途", draft.usage);
+	addSelectPatchIfBlankOrValues(patches, properties, "重要度", draft.importance, []);
+	addDatePatchIfBlank(patches, properties, "作成日", todayDateJST());
+	const currentNewsIds = relationIdsFromProperty(properties["元ニュース"]);
+	if (!currentNewsIds.includes(news.page.id)) {
+		patches["元ニュース"] = {
+			kind: "relation",
+			ids: [...currentNewsIds, news.page.id],
+		};
+	}
+	addPatchIfBlankOrPlaceholder(patches, properties, "トーク名", draft.title, [
+		news.title,
+	]);
+	addPatchIfBlankOrPlaceholder(patches, properties, "トーク名（自動）", draft.title, [
+		news.title,
+	]);
+	addPatchIfBlankOrPlaceholder(patches, properties, "つかみ（1行）", draft.hook, [
+		news.title,
+	]);
+	addPatchIfBlank(patches, properties, "セリフ（トーク本文）", draft.script);
+	addPatchIfBlank(patches, properties, "刺さる相手", draft.target);
+	addPatchIfBlank(patches, properties, "想定反論→切り返し", draft.objectionHandling);
+	addPatchIfBlank(patches, properties, "次アクション（提案/質問）", draft.nextAction);
+	addPatchIfBlank(
+		patches,
+		properties,
+		"改善メモ",
+		[
+			"Worker仕上げ済み。",
+			`元ニュース: ${news.title}`,
+			`整形メモ: ${draft.memo}`,
+			"ニュース側の営業トーク（生成）を正本として、管理DBの実戦項目へ分割転記。",
+		].join("\n"),
+	);
+	await safeUpdateExistingProperties(notion, talk.page, patches);
+}
+
+function addPatchIfBlankOrPlaceholder(
+	patches: Record<string, SafePatch>,
+	properties: Record<string, unknown>,
+	name: string,
+	value: string,
+	placeholders: string[],
+): void {
+	if (!value) return;
+	const current = text(properties[name]);
+	if (!current || isPlaceholderTalkValue(current, placeholders)) {
+		patches[name] = { kind: "text", value };
+	}
+}
+
+function addSelectPatchIfBlankOrValues(
+	patches: Record<string, SafePatch>,
+	properties: Record<string, unknown>,
+	name: string,
+	value: string,
+	replaceableValues: string[],
+): void {
+	if (!value) return;
+	const current = text(properties[name]);
+	if (!current || replaceableValues.includes(current)) {
+		patches[name] = { kind: "select", value };
+	}
+}
+
+function addMultiSelectPatchIfBlank(
+	patches: Record<string, SafePatch>,
+	properties: Record<string, unknown>,
+	name: string,
+	values: string[],
+): void {
+	if (values.length === 0) return;
+	if (!text(properties[name])) {
+		patches[name] = { kind: "multi_select", values };
+	}
+}
+
+function addDatePatchIfBlank(
+	patches: Record<string, SafePatch>,
+	properties: Record<string, unknown>,
+	name: string,
+	value: string,
+): void {
+	if (!value) return;
+	if (!dateStartFromProperty(properties[name])) {
+		patches[name] = { kind: "date", value };
+	}
+}
+
+function isPlaceholderTalkValue(value: string, placeholders: string[]): boolean {
+	const current = normalizeSalesTalkTitle(value);
+	if (!current) return true;
+	return placeholders
+		.map(normalizeSalesTalkTitle)
+		.filter(Boolean)
+		.some((placeholder) => current === placeholder || placeholder.includes(current));
+}
+
+function normalizeSalesTalkTitle(value: string): string {
+	return value
+		.toLowerCase()
+		.replace(/【[^】]*】/g, "")
+		.replace(/ネタ\s*\d+/g, "")
+		.replace(/[「」『』（）()［］\[\]〈〉<>]/g, "")
+		.replace(/[\s　・･\-ー＿_.,，。:：/／|｜]/g, "")
+		.trim();
+}
+
+function todayDateJST(): string {
+	return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function taskTitlesSimilar(a: string, b: string): boolean {
+	const left = normalizeTaskTitle(a);
+	const right = normalizeTaskTitle(b);
+	if (!left || !right) return false;
+	if (left === right || left.includes(right) || right.includes(left)) return true;
+	const leftTokens = significantTaskTokens(left);
+	const rightTokens = significantTaskTokens(right);
+	const overlap = leftTokens.filter((token) => rightTokens.includes(token));
+	return overlap.length >= Math.min(2, leftTokens.length, rightTokens.length);
+}
+
+function normalizeTaskTitle(value: string): string {
+	return value
+		.toLowerCase()
+		.replace(/【[^】]*】/g, "")
+		.replace(/[「」『』（）()［］\[\]〈〉<>]/g, "")
+		.replace(/を?(する|行う|実施する|確認する|作成する|送る|打診する)$/g, "")
+		.replace(/[\s　・･\-ー＿_.,，。:：/／|｜]/g, "")
+		.trim();
+}
+
+function significantTaskTokens(value: string): string[] {
+	const tokens = [
+		"決裁者",
+		"同席",
+		"打診",
+		"提案資料",
+		"見積",
+		"返金条件",
+		"フォローメール",
+		"日程",
+		"候補",
+		"確認",
+		"作成",
+		"送付",
+		"資料",
+		"条件",
+		"次回",
+	];
+	return tokens.filter((token) => value.includes(token));
+}
+
+function isISODateOnly(value: string): boolean {
+	return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function extractDealPageIdFromWebhook(body: Record<string, unknown>): string | undefined {
+	return firstString(
+		body.dealPageId,
+		body.deal_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "dealPageId"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+function extractNewsPageIdFromWebhook(body: Record<string, unknown>): string | undefined {
+	return firstString(
+		body.newsPageId,
+		body.news_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "newsPageId"]),
+		readNestedString(body, ["data", "news_page_id"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		pageIdFromUrl(readNestedString(body, ["data", "URL"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+function extractInquiryPageIdFromWebhook(body: Record<string, unknown>): string | undefined {
+	return firstString(
+		body.inquiryPageId,
+		body.inquiry_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "inquiryPageId"]),
+		readNestedString(body, ["data", "inquiry_page_id"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		pageIdFromUrl(readNestedString(body, ["data", "URL"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+function extractDailyReportReceiptPageIdFromWebhook(
+	body: Record<string, unknown>,
+): string | undefined {
+	return firstString(
+		body.receiptPageId,
+		body.receipt_page_id,
+		body.dailyReportReceiptPageId,
+		body.daily_report_receipt_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "receiptPageId"]),
+		readNestedString(body, ["data", "receipt_page_id"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		pageIdFromUrl(readNestedString(body, ["data", "URL"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+function extractDailyReportPageIdFromWebhook(
+	body: Record<string, unknown>,
+): string | undefined {
+	return firstString(
+		body.dailyReportPageId,
+		body.daily_report_page_id,
+		body.reportPageId,
+		body.report_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "dailyReportPageId"]),
+		readNestedString(body, ["data", "daily_report_page_id"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		pageIdFromUrl(readNestedString(body, ["data", "URL"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+function extractMeetingPageIdFromWebhook(body: Record<string, unknown>): string | undefined {
+	return firstString(
+		body.meetingPageId,
+		body.meeting_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "meetingPageId"]),
+		readNestedString(body, ["data", "meeting_page_id"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		pageIdFromUrl(readNestedString(body, ["data", "URL"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+function extractManagerReviewPageIdFromWebhook(
+	body: Record<string, unknown>,
+): string | undefined {
+	return firstString(
+		body.managerReviewPageId,
+		body.manager_review_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "managerReviewPageId"]),
+		readNestedString(body, ["data", "manager_review_page_id"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		pageIdFromUrl(readNestedString(body, ["data", "URL"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+function extractSalesPerformancePageIdFromWebhook(
+	body: Record<string, unknown>,
+): string | undefined {
+	return firstString(
+		body.salesPerformancePageId,
+		body.sales_performance_page_id,
+		body.performancePageId,
+		body.performance_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "salesPerformancePageId"]),
+		readNestedString(body, ["data", "sales_performance_page_id"]),
+		readNestedString(body, ["data", "performancePageId"]),
+		readNestedString(body, ["data", "performance_page_id"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		pageIdFromUrl(readNestedString(body, ["data", "URL"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+function extractResidentDocumentPageIdFromWebhook(
+	body: Record<string, unknown>,
+): string | undefined {
+	return firstString(
+		body.residentPageId,
+		body.resident_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "residentPageId"]),
+		readNestedString(body, ["data", "resident_page_id"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		pageIdFromUrl(readNestedString(body, ["data", "URL"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+function extractProposalSimulationPageIdFromWebhook(
+	body: Record<string, unknown>,
+): string | undefined {
+	return firstString(
+		body.proposalPageId,
+		body.proposal_page_id,
+		body.simulationPageId,
+		body.simulation_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "proposalPageId"]),
+		readNestedString(body, ["data", "proposal_page_id"]),
+		readNestedString(body, ["data", "simulationPageId"]),
+		readNestedString(body, ["data", "simulation_page_id"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		pageIdFromUrl(readNestedString(body, ["data", "URL"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+// ── 土地評価 ──────────────────────────────────────────────────────────────────
+
+function readLand(page: Page): LandInfo {
+	const properties = page.properties ?? {};
+	const address =
+		text(properties["所在地"]) ||
+		text(properties["住所"]) ||
+		text(properties["土地所在地"]);
+	const areaTsubo =
+		numberValue(properties["面積（坪）"]) ??
+		numberValue(properties["面積"]) ??
+		numberFromText(text(properties["面積（坪）"]) || text(properties["面積"]));
+	const powerArea =
+		text(properties["電力会社エリア"]) || inferPowerAreaFromAddress(address);
+
+	return {
+		page,
+		name:
+			text(properties["土地名称"]) ||
+			text(properties["名前"]) ||
+			text(properties["Name"]) ||
+			"土地候補",
+		address,
+		areaTsubo,
+		powerArea,
+		landUse: text(properties["用途地域"]),
+		road:
+			text(properties["接道"]) ||
+			text(properties["接道状況"]) ||
+			text(properties["AI接道評価"]),
+		farmland:
+			text(properties["農転/登記/近隣確認"]) ||
+			text(properties["農地判定"]) ||
+			text(properties["登記確認"]),
+		substationDistance:
+			text(properties["変電所距離"]) ||
+			text(properties["系統距離"]) ||
+			text(properties["最寄り変電所距離"]),
+	};
+}
+
+function shouldProcessLand(land: LandInfo): boolean {
+	return Boolean(land.address && land.areaTsubo && land.areaTsubo > 0);
+}
+
+function buildLandEvaluation(land: LandInfo): LandEvaluation {
+	const missing: string[] = [];
+	if (!land.address) missing.push("所在地");
+	if (!land.areaTsubo || land.areaTsubo <= 0) missing.push("面積（坪）");
+
+	const area = land.areaTsubo ?? 0;
+	let score = 42;
+	if (land.address) score += 10;
+	if (area >= 5000) score += 22;
+	else if (area >= 2400) score += 18;
+	else if (area >= 1500) score += 14;
+	else if (area >= 600) score += 9;
+	else if (area >= 300) score += 4;
+	else if (area > 0) score -= 6;
+	if (land.powerArea) score += 6;
+	if (land.landUse) score += 4;
+	if (land.road) score += 5;
+	if (land.farmland) score += 4;
+	if (land.substationDistance) score += 7;
+	if (missing.length > 0) score = Math.min(score, 45);
+
+	score = Math.max(0, Math.min(100, score));
+
+	const overallGrade = score >= 80 ? "A" : score >= 65 ? "B" : "C";
+	const bucket =
+		missing.length > 0
+			? "要確認"
+			: score >= 80
+				? "案件化候補"
+				: score >= 65
+					? "優先確認"
+					: score >= 50
+						? "追加確認"
+						: "見送り候補";
+	const actionBucket = chooseLandActionBucket(land, score, missing.length > 0);
+	const caseStatus =
+		missing.length > 0 || score < 50 ? "未案件化" : "案件化保留";
+	const projectType =
+		area >= 1500
+			? "高圧系統用"
+			: area >= 300
+				? "低圧バルク"
+				: "未判定";
+	const powerArea = land.powerArea || inferPowerAreaFromAddress(land.address) || "未確認";
+	const areaLabel = area > 0 ? `${Math.round(area).toLocaleString("ja-JP")}坪` : "面積未確認";
+	const landRating = score >= 80 ? "◎" : score >= 65 ? "○" : score >= 50 ? "△" : "×";
+	const powerRating =
+		missing.length > 0
+			? "×"
+			: land.substationDistance
+				? score >= 65
+					? "○"
+					: "△"
+				: area >= 1500
+					? "△"
+					: "×";
+	const roadRating = chooseRoadRating(land.road);
+	const subsidyRating = "要確認";
+	const demandRating = area >= 1500 ? "あり" : area >= 300 ? "不明" : "なし";
+	const reviewMemo =
+		missing.length > 0
+			? `${missing.join("、")}が不足。評価前に入力を確認してください。`
+			: "AI/Workerによる第一評価。系統、接道、農転、登記は人間確認が前提。";
+
+	return {
+		overallGrade,
+		score,
+		bucket,
+		actionBucket,
+		caseStatus,
+		projectType,
+		powerArea,
+		landRating,
+		powerRating,
+		roadRating,
+		subsidyRating,
+		demandRating,
+		landEvaluation: [
+			`${land.name}は、${areaLabel}・所在地「${land.address || "未確認"}」を起点にした土地評価です。`,
+			missing.length > 0
+				? `要確認: ${reviewMemo}`
+				: `推測ですが、面積規模からは「${projectType}」として一次確認する価値があります。`,
+			`総合評価は${overallGrade}、AI総合スコアは${score}点です。`,
+		].join("\n"),
+		powerEvaluation:
+			powerArea === "未確認"
+				? "電力会社エリアは未確認です。所在地確定後に、変電所距離・系統空き・事前相談要否を確認してください。"
+				: `推測ですが、所在地から${powerArea}の可能性があります。変電所距離、系統空き、接続検討、事前相談の有無は確定情報で確認してください。`,
+		roadEvaluation:
+			land.road ||
+			"未確認。接道幅員、道路種別、進入経路、大型車搬入可否を現地資料または道路台帳で確認してください。",
+		subsidyEvaluation:
+			"未確認。補助金・制度適合は年度、用途、設備種別、自治体条件により変わるため、公式情報で確認してください。",
+		demandEvaluation:
+			area >= 1500
+				? "推測ですが、蓄電池・高圧/特高系の需要仮説を置けます。需要地距離と系統側の受け皿を優先確認してください。"
+				: "推測ですが、低圧集約、売却候補、近隣案件との組み合わせで価値を確認します。単独案件化は追加確認が必要です。",
+		nextAction:
+			missing.length > 0
+				? `まず${missing.join("、")}を入力し、再度「土地評価を開始」してください。`
+				: score >= 65
+					? "変電所距離、系統空き、接道、農転/登記、近隣住宅距離を確認し、案件化可否を人間が判断してください。"
+					: "不足条件を整理し、接道・用途地域・農転/登記・需要地距離を確認してから再評価してください。",
+		reviewMemo,
+	};
+}
+
+function chooseLandActionBucket(
+	land: LandInfo,
+	score: number,
+	needsReview: boolean,
+): string {
+	if (needsReview) return "継続監視";
+	if (!land.road) return "接道確認";
+	if ((land.areaTsubo ?? 0) >= 1500 && !land.substationDistance) return "系統保留";
+	if ((land.areaTsubo ?? 0) >= 300 && (land.areaTsubo ?? 0) < 1500) return "低圧集約";
+	if (score >= 80) return "即アタック";
+	if (score >= 65) return "現地確認";
+	return "継続監視";
+}
+
+function chooseRoadRating(road: string): string {
+	if (!road) return "要確認";
+	if (/不可|なし|無し|狭い|2m未満|未接道/.test(road)) return "不可";
+	if (/可|あり|有り|4m|幅員|接道/.test(road)) return "可";
+	return "要確認";
+}
+
+async function markLandProcessing(
+	notion: NotionClient,
+	land: LandInfo,
+): Promise<void> {
+	await safeUpdateExistingProperties(notion, land.page, {
+		処理ステータス: { kind: "select", value: "解析開始" },
+		案件化状態: { kind: "select", value: "未案件化" },
+		AIアクションバケット: { kind: "select", value: "継続監視" },
+		一次AI受付メモ: {
+			kind: "text",
+			value: "Notion Workerが土地詳細評価を開始。",
+		},
+		Webhook引き継ぎステータス: { kind: "select", value: "処理中" },
+		Webhook引き継ぎメモ: {
+			kind: "text",
+			value: "Notion Workerが土地詳細評価を開始。",
+		},
+	});
+}
+
+async function markLandNeedsReview(
+	notion: NotionClient,
+	land: LandInfo,
+	evaluation: LandEvaluation,
+): Promise<void> {
+	await safeUpdateExistingProperties(notion, land.page, {
+		処理ステータス: { kind: "select", value: "要確認" },
+		案件化状態: { kind: "select", value: "未案件化" },
+		AIアクションバケット: { kind: "select", value: "継続監視" },
+		土地評価: { kind: "select", value: evaluation.landRating },
+		"電力評価（仮説）": { kind: "select", value: evaluation.powerRating },
+		AI案件種別: { kind: "select", value: evaluation.projectType },
+		AI接道評価: { kind: "select", value: evaluation.roadRating },
+		AI補助金評価: { kind: "select", value: evaluation.subsidyRating },
+		需要評価: { kind: "select", value: evaluation.demandRating },
+		案件化メモ: { kind: "text", value: evaluation.landEvaluation },
+		次アクション: { kind: "text", value: evaluation.nextAction },
+		一次AI受付メモ: { kind: "text", value: evaluation.reviewMemo },
+		設計上の弱点: { kind: "text", value: evaluation.reviewMemo },
+		Webhook引き継ぎステータス: { kind: "select", value: "要確認で停止" },
+		Webhook引き継ぎメモ: { kind: "text", value: evaluation.reviewMemo },
+	});
+}
+
+async function markLandFailure(
+	notion: NotionClient,
+	land: LandInfo,
+	message: string,
+): Promise<void> {
+	await safeUpdateExistingProperties(notion, land.page, {
+		処理ステータス: { kind: "select", value: "要確認" },
+		案件化状態: { kind: "select", value: "未案件化" },
+		AIアクションバケット: { kind: "select", value: "継続監視" },
+		一次AI受付メモ: { kind: "text", value: `土地Worker処理失敗: ${message}` },
+		案件化メモ: { kind: "text", value: `土地Worker処理失敗: ${message}` },
+		設計上の弱点: { kind: "text", value: `土地Worker処理失敗: ${message}` },
+		Webhook引き継ぎステータス: { kind: "select", value: "引き継ぎ失敗" },
+		Webhook引き継ぎメモ: { kind: "text", value: `土地Worker処理失敗: ${message}` },
+	});
+}
+
+async function writeLandEvaluation(
+	notion: NotionClient,
+	land: LandInfo,
+	evaluation: LandEvaluation,
+): Promise<void> {
+	await safeUpdateExistingProperties(notion, land.page, {
+		処理ステータス: { kind: "select", value: "完了" },
+		案件化状態: { kind: "select", value: evaluation.caseStatus },
+		AIアクションバケット: { kind: "select", value: evaluation.actionBucket },
+		総合評価: { kind: "select", value: evaluation.overallGrade },
+		AI総合スコア: { kind: "number", value: evaluation.score },
+		電力会社エリア: { kind: "select", value: evaluation.powerArea },
+		AI案件種別: { kind: "select", value: evaluation.projectType },
+		土地評価: { kind: "select", value: evaluation.landRating },
+		"電力評価（仮説）": { kind: "select", value: evaluation.powerRating },
+		電力評価: { kind: "select", value: evaluation.powerRating },
+		AI接道評価: { kind: "select", value: evaluation.roadRating },
+		AI補助金評価: { kind: "select", value: evaluation.subsidyRating },
+		需要評価: { kind: "select", value: evaluation.demandRating },
+		案件化メモ: {
+			kind: "text",
+			value: [
+				evaluation.landEvaluation,
+				evaluation.powerEvaluation,
+				`接道: ${evaluation.roadEvaluation}`,
+				`補助金: ${evaluation.subsidyEvaluation}`,
+				`需要: ${evaluation.demandEvaluation}`,
+			].join("\n"),
+		},
+		一次AI受付メモ: { kind: "text", value: evaluation.reviewMemo },
+		次アクション: { kind: "text", value: evaluation.nextAction },
+		AI更新日時: { kind: "date", value: new Date().toISOString() },
+		Webhook引き継ぎステータス: { kind: "select", value: "引き継ぎ済" },
+		Webhook引き継ぎメモ: {
+			kind: "text",
+			value: "Notion Workerが土地詳細評価を返却。案件化判断は人間確認前提。",
+		},
+		設計上の弱点: { kind: "text", value: evaluation.reviewMemo },
+	});
+}
+
+async function createLandEvaluationLearningLog(
+	notion: NotionClient,
+	land: LandInfo,
+	evaluation: LandEvaluation,
+): Promise<void> {
+	const distanceKm = numberFromText(land.substationDistance);
+	const titleText = `土地評価｜${land.name}｜${evaluation.overallGrade}｜${evaluation.score}点`;
+	const reason = [
+		`土地名: ${land.name}`,
+		`所在地: ${land.address || "未確認"}`,
+		land.areaTsubo ? `面積: ${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪` : "",
+		land.substationDistance ? `変電所距離: ${land.substationDistance}` : "変電所距離: 未確認",
+		`AIアクション: ${evaluation.actionBucket}`,
+		`案件化状態予測: ${evaluation.caseStatus}`,
+		evaluation.landEvaluation,
+		evaluation.powerEvaluation,
+	].filter(Boolean).join("\n");
+
+	const properties: Record<string, unknown> = {
+		判定名: title(titleText),
+		判定種別: select("土地評価"),
+		対象領域: select("土地"),
+		判定日時: { date: { start: new Date().toISOString() } },
+		"AI/Worker名": richText("processLandEvaluation"),
+		判定バージョン: richText("land-evaluation-v1"),
+		判定スコア: { number: evaluation.score },
+		判定ラベル: richText(`${evaluation.overallGrade} / ${evaluation.bucket}`),
+		判定根拠: richText(reason),
+		次アクション: richText(evaluation.nextAction),
+		実結果: select("未確認"),
+		"予測との差": select("未確認"),
+		学習反映状態: select("未確認"),
+		土地AI総合評価: richText(evaluation.overallGrade),
+		関連土地: relationIds([land.page.id]),
+	};
+	if (distanceKm !== null) properties.変電所距離km = { number: distanceKm };
+	if (land.areaTsubo !== null) properties["土地面積（坪）"] = { number: land.areaTsubo };
+
+	await notion.pages.create({
+		parent: { data_source_id: AI_LEARNING_LOG_DATA_SOURCE_ID },
+		properties,
+	});
+}
+
+async function resolveMeetingPrepReport(
+	notion: NotionClient,
+	company: CompanyInfo,
+	reportPageId?: string,
+): Promise<Page | null> {
+	if (reportPageId) {
+		return notion.pages.retrieve({ page_id: reportPageId });
+	}
+	const response = await notion.dataSources.query({
+		data_source_id: MEETING_PREP_REPORT_DATA_SOURCE_ID,
+		page_size: 10,
+		filter: {
+			property: "対象企業",
+			relation: { contains: company.page.id },
+		},
+		sorts: [{ timestamp: "created_time", direction: "descending" }],
+	});
+	return response.results.find((page) => isBlankMeetingPrepReport(page)) ?? null;
+}
+
+async function createMeetingPrepReportPage(
+	notion: NotionClient,
+	company: CompanyInfo,
+	memo: string,
+): Promise<Page> {
+	return notion.pages.create({
+		parent: { data_source_id: MEETING_PREP_REPORT_DATA_SOURCE_ID },
+		properties: {
+			"企業名（商談日）": title(company.name || "商談準備レポート"),
+			対象企業: relation(company.page.id),
+			売買区分: select(company.dealType || "未設定"),
+			ステータス: select("準備中"),
+			注意点・リスク: richText(memo),
+		},
+	});
+}
+
+async function addMeetingPrepRelationToCompany(
+	notion: NotionClient,
+	companyId: string,
+	reportId: string,
+): Promise<void> {
+	const company = await notion.pages.retrieve({ page_id: companyId });
+	const current = relationIdsFromProperty(
+		company.properties?.["関連商談準備レポート"],
+	);
+	if (current.includes(reportId)) return;
+	await notion.pages.update({
+		page_id: companyId,
+		properties: {
+			関連商談準備レポート: relationIds([...current, reportId]),
+		},
+	});
+}
+
+function isBlankMeetingPrepReport(page: Page): boolean {
+	const properties = page.properties ?? {};
+	return [
+		"企業プロフィール",
+		"3C分析",
+		"商談仮説",
+		"ヒアリングリスト",
+		"注意点・リスク",
+	].every((name) => !text(properties[name]));
+}
+
+function readCompany(page: Page): CompanyInfo {
+	const properties = page.properties ?? {};
+	return {
+		page,
+		name: text(properties["企業名"]),
+		dealType: text(properties["売買区分"]),
+		website:
+			text(properties["ウェブサイトURL"]) ||
+			text(properties["URL"]) ||
+			text(properties["HP"]) ||
+			text(properties["Webサイト"]),
+		email:
+			text(properties["メールアドレス"]) ||
+			text(properties["問い合わせ担当者メールアドレス"]),
+		phone:
+			text(properties["電話番号"]) ||
+			text(properties["問い合わせ担当者電話番号"]),
+		contactName: text(properties["問い合わせ担当者名"]),
+		address: text(properties["住所"]),
+		summary: text(properties["企業サマリー"]),
+		inquirySummary: text(properties["問い合わせ要約"]),
+		currentIssue: text(properties["現在課題仮説"]),
+		futureIssue: text(properties["将来課題仮説"]),
+		salesAngle: text(properties["営業切り口"]),
+		fit: text(properties["和上解決策適合"]),
+		customerMarket3c: text(properties["3C：顧客・市場分析"]),
+		competitor3c: text(properties["3C：競合分析"]),
+		wajoRelation3c: text(properties["3C：自社との関係性"]),
+		source: text(properties["根拠ソース"]),
+		aiMemo: text(properties["企業AI受付メモ"]),
+	};
+}
+
+function companyToCardInfo(company: CompanyInfo): CardInfo {
+	const domain = extractDomain(company.email) || extractDomain(company.website);
+	const phone = digits(company.phone);
+	const key = [
+		`corp:${normalizeCompanyName(company.name)}`,
+		`domain:${domain}`,
+		`phone:${phone}`,
+	].join("|");
+	return {
+		page: company.page,
+		name: company.contactName,
+		companyName: company.name,
+		email: company.email,
+		domain,
+		phone,
+		address: company.address,
+		role: "",
+		key,
+	};
+}
+
+function mergeCompanyResearch(
+	company: CompanyInfo,
+	research: Research,
+): Research {
+	return {
+		summary: company.summary || research.summary,
+		currentIssue: company.currentIssue || research.currentIssue,
+		futureIssue: company.futureIssue || research.futureIssue,
+		salesAngle: company.salesAngle || research.salesAngle,
+		fit: company.fit || research.fit,
+		customerMarket3c: company.customerMarket3c || research.customerMarket3c,
+		competitor3c: company.competitor3c || research.competitor3c,
+		wajoRelation3c: company.wajoRelation3c || research.wajoRelation3c,
+		source: company.source || research.source,
+	};
+}
+
+function withCompanyResearch(company: CompanyInfo, research: Research): CompanyInfo {
+	return {
+		...company,
+		summary: research.summary,
+		currentIssue: research.currentIssue,
+		futureIssue: research.futureIssue,
+		salesAngle: research.salesAngle,
+		fit: research.fit,
+		customerMarket3c: research.customerMarket3c,
+		competitor3c: research.competitor3c,
+		wajoRelation3c: research.wajoRelation3c,
+		source: research.source,
+	};
+}
+
+async function buildMeetingPrepReportWithAI(
+	company: CompanyInfo,
+): Promise<MeetingPrepReport> {
+	const fallback = buildMeetingPrepReport(company);
+	const apiKey = process.env.OPENAI_API_KEY;
+	if (!apiKey) return fallback;
+	try {
+		return await callOpenAIMeetingPrepReport(company, fallback);
+	} catch (error) {
+		console.log("meeting prep AI fallback used", String(error));
+		return fallback;
+	}
+}
+
+async function callOpenAIMeetingPrepReport(
+	company: CompanyInfo,
+	fallback: MeetingPrepReport,
+): Promise<MeetingPrepReport> {
+	const apiKey = process.env.OPENAI_API_KEY;
+	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
+	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+	const systemPrompt = [
+		"あなたは和上ホールディングスの商談準備ブリーフAIです。",
+		"営業マンが商談前にそのまま使える、企業別で具体的な準備レポートを作ります。",
+		"",
+		"重要:",
+		"- 汎用テンプレートにしない",
+		"- 「再エネ活用、蓄電池導入、発電所売買、脱炭素対応、電力コスト対策を検討する法人または投資家層」のような汎用文をそのまま使わない",
+		"- 「競合は蓄電池開発会社、EPC、アグリゲーター」のような業界一般論だけで終わらせない",
+		"- 会社情報にない事実は断定しない",
+		"- 推測は必ず「推測ですが」と明記する",
+		"- 営業マンが最初の5分で使える入口トークと質問に落とす",
+		"- 商談ステータス、タスク、評価、成約判断は更新しない",
+		"",
+		"出力フィールド:",
+		"- profile: 企業概要、事業、接点、根拠ソースを短く整理",
+		"- threeC: Customer / Competitor / Company の3見出しで、企業別に書く",
+		"- hypothesis: 初回ゴール、入口トーク、商談仮説、次アクション仮説",
+		"- questions: 商談で聞く質問を箇条書き",
+		"- risks: 注意点、断定禁止、確認漏れリスク",
+		"- body: 上記を統合した本文",
+		"",
+		"必ずJSONのみを返してください。",
+	].join("\n");
+
+	const userPrompt = [
+		`企業名: ${company.name || "未設定"}`,
+		`売買区分: ${company.dealType || "未設定"}`,
+		`窓口: ${company.contactName || "未設定"}`,
+		`Web/ドメイン: ${company.website || company.email || "未設定"}`,
+		`住所: ${company.address || "未設定"}`,
+		`企業概要: ${company.summary || "未設定"}`,
+		`問い合わせ要約: ${company.inquirySummary || "未設定"}`,
+		`現在課題仮説: ${company.currentIssue || "未設定"}`,
+		`将来課題仮説: ${company.futureIssue || "未設定"}`,
+		`営業切り口: ${company.salesAngle || "未設定"}`,
+		`和上解決策適合: ${company.fit || "未設定"}`,
+		`3C顧客市場: ${company.customerMarket3c || "未設定"}`,
+		`3C競合: ${company.competitor3c || "未設定"}`,
+		`3C和上接点: ${company.wajoRelation3c || "未設定"}`,
+		`根拠ソース: ${company.source || "未設定"}`,
+		"",
+		"=== 既存レポート草案（汎用表現があれば悪い例として扱い、企業別に書き直す） ===",
+		JSON.stringify(fallback),
+	].join("\n");
+
+	const response = await fetch("https://api.openai.com/v1/chat/completions", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify({
+			model,
+			response_format: MEETING_PREP_RESPONSE_FORMAT,
+			messages: [
+				{ role: "system", content: systemPrompt },
+				{ role: "user", content: userPrompt.slice(0, 12000) },
+			],
+		}),
+	});
+
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
+	}
+
+	const json = (await response.json()) as {
+		choices?: Array<{ message?: { content?: string } }>;
+	};
+	const raw = json.choices?.[0]?.message?.content;
+	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
+	return normalizeMeetingPrepAIResponse(raw, fallback);
+}
+
+function normalizeMeetingPrepAIResponse(
+	raw: string,
+	fallback: MeetingPrepReport,
+): MeetingPrepReport {
+	try {
+		const parsed = JSON.parse(raw) as Partial<MeetingPrepAIResponse>;
+		return {
+			profile: typeof parsed.profile === "string" && parsed.profile ? parsed.profile : fallback.profile,
+			threeC: typeof parsed.threeC === "string" && parsed.threeC ? parsed.threeC : fallback.threeC,
+			hypothesis:
+				typeof parsed.hypothesis === "string" && parsed.hypothesis
+					? parsed.hypothesis
+					: fallback.hypothesis,
+			questions:
+				typeof parsed.questions === "string" && parsed.questions
+					? parsed.questions
+					: fallback.questions,
+			risks: typeof parsed.risks === "string" && parsed.risks ? parsed.risks : fallback.risks,
+			body: typeof parsed.body === "string" && parsed.body ? parsed.body : fallback.body,
+		};
+	} catch (error) {
+		console.log("normalizeMeetingPrepAIResponse failed", String(error));
+		return fallback;
+	}
+}
+
+function isCompanyResearchComplete(research: Research): boolean {
+	return [
+		research.summary,
+		research.currentIssue,
+		research.futureIssue,
+		research.salesAngle,
+		research.fit,
+		research.customerMarket3c,
+		research.competitor3c,
+		research.wajoRelation3c,
+		research.source,
+	].every((value) => value.trim().length > 0);
+}
+
+function appendShortMemo(current: string, note: string): string {
+	if (!current) return note;
+	if (current.includes(note)) return current;
+	return `${current}\n${note}`.slice(0, 1800);
+}
+
+function extractDomain(value: string): string {
+	if (!value) return "";
+	const emailDomain = value.includes("@") ? value.split("@").pop() : "";
+	if (emailDomain) return emailDomain.toLowerCase().trim();
+	try {
+		const url = value.startsWith("http") ? value : `https://${value}`;
+		return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+	} catch {
+		return value.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]?.toLowerCase() ?? "";
+	}
+}
+
+function buildMeetingPrepReport(company: CompanyInfo): MeetingPrepReport {
+	const name = company.name || "対象企業";
+	const dealType = company.dealType || "未設定";
+	const sourceNote =
+		company.source ||
+		"企業マスター登録情報をもとに作成。公開情報が不足する箇所は仮説として扱う。";
+	const profile = [
+		`対象企業: ${name}`,
+		`売買区分: ${dealType}`,
+		company.website ? `Web: ${company.website}` : "",
+		company.contactName ? `窓口: ${company.contactName}` : "",
+		company.email ? `メール: ${company.email}` : "",
+		company.phone ? `電話: ${company.phone}` : "",
+		`企業概要: ${
+			company.summary ||
+			"企業マスター上の企業概要が未入力のため、初回商談では事業内容と再エネ/蓄電池との接点を最初に確認する。"
+		}`,
+		company.inquirySummary ? `問い合わせ要約: ${company.inquirySummary}` : "",
+		`根拠: ${sourceNote}`,
+	].filter(Boolean).join("\n");
+
+	const customerMarket =
+		company.customerMarket3c ||
+		`推測ですが、${name}は再生可能エネルギー、発電所売買、系統用蓄電池、電力コスト、脱炭素対応のいずれかに関心を持つ法人/投資家層として整理します。初回で関心領域と意思決定者を確認します。`;
+	const competitor =
+		company.competitor3c ||
+		"推測ですが、比較対象は発電所仲介会社、EPC、蓄電池開発会社、アグリゲーター、金融機関系提案、既存取引先の施工/運用会社です。価格だけでなく、案件品質・系統・許認可・運用体制で比較されます。";
+	const wajo =
+		company.wajoRelation3c ||
+		company.fit ||
+		"和上ホールディングスは、太陽光発電所仲介、系統用蓄電池、EPC/O&M、事業性判断、現場知見をまとめて提示できる点で接点を作れます。";
+	const threeC = [
+		"【Customer / 顧客・市場】",
+		customerMarket,
+		"",
+		"【Competitor / 競合】",
+		competitor,
+		"",
+		"【Company / 和上との接点】",
+		wajo,
+	].join("\n");
+
+	const hypothesis = [
+		`初回ゴール: ${name}が「買いたい/売りたい/相談したい」のどこにいるかを10分以内に確定する。`,
+		`入口トーク: ${
+			company.salesAngle ||
+			"再エネ・蓄電池・発電所売買のどこに関心があるかを確認し、具体案件の有無、予算感、時期、意思決定者を押さえる。"
+		}`,
+		`現在課題: ${
+			company.currentIssue ||
+			"推測ですが、情報不足、案件の見極め、採算性、系統/許認可、社内決裁のいずれかで迷いがある可能性があります。"
+		}`,
+		`将来課題: ${
+			company.futureIssue ||
+			"推測ですが、電力価格変動、設備投資判断、脱炭素要請、運用リスク、出口戦略が次の論点になります。"
+		}`,
+		`次アクション仮説: 商談後は、案件条件・予算・時期・決裁者・希望資料を整理し、関連案件または企業評価に接続する。`,
+	].join("\n");
+
+	const questions = buildHearingQuestions(company);
+	const risks = [
+		"公開情報が不足している場合、企業規模・事業内容・意思決定体制を断定しない。",
+		"利回り、補助金、系統接続、許認可、工期、買取価格は初回商談で確約しない。",
+		"購入相談の場合は、希望エリア・予算・利回り・与信・決裁者・購入期限を確認する。",
+		"売却相談の場合は、所有者、権利関係、設備容量、FIT/FIP、接続状況、O&M、売却希望額を確認する。",
+		"既存企業情報と今回の問い合わせ内容がズレる場合は、企業マスターを上書きせず、商談メモ側に差分として残す。",
+	].join("\n");
+
+	const body = [
+		"## 商談前準備サマリー",
+		profile,
+		"",
+		"## 3C分析",
+		threeC,
+		"",
+		"## 商談仮説",
+		hypothesis,
+		"",
+		"## ヒアリングリスト",
+		questions,
+		"",
+		"## 注意点・リスク",
+		risks,
+	].join("\n");
+
+	return { profile, threeC, hypothesis, questions, risks, body };
+}
+
+function assessMeetingPrepQuality(
+	company: CompanyInfo,
+	prep: MeetingPrepReport,
+): MeetingPrepQuality {
+	const notes: string[] = [];
+	const source = company.source.trim();
+
+	if (!company.name.trim()) notes.push("対象企業名が未確定");
+	if (!company.summary.trim()) notes.push("企業概要が不足");
+	if (!company.salesAngle.trim()) notes.push("営業切り口が不足");
+	if (!company.dealType.trim() || ["未設定", "不明"].includes(company.dealType)) {
+		notes.push("売買区分が未確定");
+	}
+	if (
+		!prep.threeC.trim() ||
+		!/(Customer|顧客|市場)/i.test(prep.threeC) ||
+		!/(Competitor|競合)/i.test(prep.threeC) ||
+		!/(Company|和上|自社)/i.test(prep.threeC)
+	) {
+		notes.push("3C三項目が不足");
+	}
+	if (isGenericMeetingPrep3c(prep.threeC)) {
+		notes.push("3Cが汎用テンプレート寄り");
+	}
+	if (!source || isWeakMeetingPrepSource(source)) {
+		notes.push("根拠ソースが弱い");
+	}
+	if (
+		[prep.profile, prep.threeC, prep.hypothesis, prep.questions, prep.risks].some(
+			(value) => value.replace(/\s/g, "").length < 80,
+		)
+	) {
+		notes.push("商談で使う本文量が不足");
+	}
+
+	return { ready: notes.length === 0, notes };
+}
+
+function isWeakMeetingPrepSource(source: string): boolean {
+	return /仮説生成|公開情報不足|追加調査前|企業マスター登録情報をもとに作成|名刺情報 \+ Notion Worker/.test(
+		source,
+	);
+}
+
+function isGenericMeetingPrep3c(value: string): boolean {
+	return /再エネ活用、蓄電池導入、発電所売買、脱炭素対応、電力コスト対策|競合は蓄電池開発会社、EPC、アグリゲーター|太陽光・蓄電池案件の具体情報、施工\/運用知見/.test(
+		value,
+	);
+}
+
+function withMeetingPrepQualityMemo(
+	risks: string,
+	quality: MeetingPrepQuality,
+): string {
+	const memo = quality.ready
+		? "品質チェック: 企業別情報、3C、根拠ソース、商談仮説、ヒアリング項目が揃っているため、準備完了扱い。"
+		: `品質チェック: ${quality.notes.join(" / ")}。このレポートは商談準備の下書きとして扱い、人間確認後に準備完了へ進める。`;
+	return `${risks}\n${memo}`;
+}
+
+function buildHearingQuestions(company: CompanyInfo): string {
+	const base = [
+		"今回の相談目的は、購入・売却・情報収集・比較検討のどれですか。",
+		"希望時期、予算感、社内決裁者、決裁までの流れはどのようになっていますか。",
+		"すでに検討中の案件、保有設備、土地、紹介元、比較先はありますか。",
+		"商談後に必要な資料は、案件一覧、概算収支、会社概要、事例、現地情報のどれですか。",
+	];
+	const buying = [
+		"購入希望の場合、希望エリア、低圧/高圧/蓄電池、利回り目線、投資期間、融資利用の有無はどうですか。",
+		"案件選定で一番重視するのは、価格、利回り、系統、施工品質、運用体制、出口戦略のどれですか。",
+	];
+	const selling = [
+		"売却希望の場合、所有者、設備容量、売却希望額、売却希望時期、O&M状況、権利関係は確認済みですか。",
+		"売却理由は、資金化、事業整理、相続/承継、運用負荷、別投資への移行のどれに近いですか。",
+	];
+	const extra =
+		company.dealType.includes("売")
+			? selling
+			: company.dealType.includes("購") || company.dealType.includes("買")
+				? buying
+				: [...buying.slice(0, 1), ...selling.slice(0, 1)];
+	return [...base, ...extra].map((item) => `・${item}`).join("\n");
+}
+
+async function appendMeetingPrepReportBody(
+	notion: NotionClient,
+	reportId: string,
+	company: CompanyInfo,
+	prep: MeetingPrepReport,
+): Promise<void> {
+	if (!notion.blocks?.children?.append) return;
+	await notion.blocks.children.append({
+		block_id: reportId,
+		children: [
+			headingBlock("商談前準備サマリー", 2),
+			paragraphBlock(prep.profile),
+			headingBlock("3C分析", 2),
+			paragraphBlock(prep.threeC),
+			headingBlock("商談仮説", 2),
+			paragraphBlock(prep.hypothesis),
+			headingBlock("ヒアリングリスト", 2),
+			paragraphBlock(prep.questions),
+			headingBlock("注意点・リスク", 2),
+			paragraphBlock(prep.risks),
+		],
+	});
+}
+
+function headingBlock(content: string, level: 1 | 2 | 3): Record<string, unknown> {
+	const type = `heading_${level}`;
+	return {
+		object: "block",
+		type,
+		[type]: { rich_text: [{ type: "text", text: { content } }] },
+	};
+}
+
+function paragraphBlock(content: string): Record<string, unknown> {
+	return {
+		object: "block",
+		type: "paragraph",
+		paragraph: {
+			rich_text: [{ type: "text", text: { content: content.slice(0, 1900) } }],
+		},
+	};
+}
+
+async function findPendingCards(
+	notion: NotionClient,
+	limit: number,
+): Promise<Page[]> {
+	const response = await notion.dataSources.query({
+		data_source_id: BUSINESS_CARD_DATA_SOURCE_ID,
+		page_size: limit,
+		filter: {
+			or: [
+				{
+					property: "企業連携ステータス",
+					select: { equals: "未処理" },
+				},
+				{
+					property: "名刺AI処理状態",
+					select: { equals: "未処理" },
+				},
+			],
+		},
+	});
+	return response.results;
+}
+
+function readInquiryEmailIntakeInputFromWebhook(
+	body: Record<string, unknown>,
+): InquiryEmailIntakeInput {
+	return {
+		subject: extractWebhookBodyText(body, [
+			"件名",
+			"メール件名",
+			"subject",
+			"Subject",
+			"mailSubject",
+		]),
+		from: extractWebhookBodyText(body, [
+			"送信者（メール）",
+			"送信者",
+			"from",
+			"From",
+			"fromEmail",
+			"sender",
+		]),
+		to: extractWebhookBodyText(body, ["宛先（To）", "宛先", "to", "To"]),
+		body: extractWebhookBodyText(body, [
+			"本文",
+			"メール本文",
+			"body",
+			"text",
+			"plainText",
+			"content",
+		]),
+		receivedAt: extractWebhookBodyText(body, [
+			"受信日時",
+			"受信日",
+			"receivedAt",
+			"received_at",
+			"date",
+			"Date",
+			"internalDate",
+		]),
+		gmailMessageId: extractWebhookBodyText(body, [
+			"GmailメールID",
+			"メールID",
+			"gmailMessageId",
+			"gmail_message_id",
+			"gmailId",
+			"mailId",
+		]),
+		messageId: extractWebhookBodyText(body, [
+			"Message-ID",
+			"messageId",
+			"message_id",
+			"rfcMessageId",
+			"rfc_message_id",
+		]),
+		threadId: extractWebhookBodyText(body, [
+			"Thread-ID",
+			"threadId",
+			"thread_id",
+			"GmailスレッドID",
+			"スレッドID",
+		]),
+		labels: bodyString(
+			body.labels ??
+				body.labelIds ??
+				body["Gmailラベル"] ??
+				(body.data as Record<string, unknown> | undefined)?.labels,
+		),
+		sourceUrl: extractWebhookBodyText(body, [
+			"原文リンク",
+			"Gmail URL",
+			"gmailUrl",
+			"sourceUrl",
+			"url",
+			"URL",
+		]),
+		dryRun: booleanFromWebhookBody(body, "dryRun", false),
+		linkCompany: booleanFromWebhookBody(body, "linkCompany", true),
+	};
+}
+
+function readCustomerContactLogInputFromWebhook(
+	body: Record<string, unknown>,
+): CustomerContactLogInput {
+	return {
+		sourcePageId: extractSourcePageIdFromWebhook(body) ?? "",
+		sourceType: extractWebhookBodyText(body, [
+			"フェーズ区分",
+			"sourceType",
+			"source_type",
+			"phase",
+			"種別",
+		]),
+		activityType: extractWebhookBodyText(body, [
+			"活動種別",
+			"activityType",
+			"activity_type",
+			"contactType",
+			"contact_type",
+		]),
+		activityContent: extractWebhookBodyText(body, [
+			"活動内容",
+			"activityContent",
+			"activity_content",
+			"content",
+			"内容",
+		]),
+		nextAction: extractWebhookBodyText(body, [
+			"次回アクション",
+			"nextAction",
+			"next_action",
+			"next",
+		]),
+		occurredAt: extractWebhookBodyText(body, [
+			"接点日時",
+			"活動日時",
+			"occurredAt",
+			"occurred_at",
+			"date",
+		]),
+		dryRun: booleanFromWebhookBody(body, "dryRun", false),
+	};
+}
+
+function extractSourcePageIdFromWebhook(body: Record<string, unknown>): string | undefined {
+	return firstString(
+		body.sourcePageId,
+		body.source_page_id,
+		body.inquiryPageId,
+		body.inquiry_page_id,
+		body.projectPageId,
+		body.project_page_id,
+		body.dealPageId,
+		body.deal_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "sourcePageId"]),
+		readNestedString(body, ["data", "source_page_id"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		pageIdFromUrl(readNestedString(body, ["data", "URL"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+function readInquiryEmailInfo(input: InquiryEmailIntakeInput): InquiryEmailInfo {
+	const source = input.body ?? "";
+	const fromRaw = input.from ?? "";
+	const fromEmail = extractEmailAddress(fromRaw);
+	const explicitEmail = extractInquiryLineValue(source, [
+		"メールアドレス",
+		"Email",
+		"mail",
+		"連絡先メール",
+	]);
+	const contactEmail = extractEmailAddress(explicitEmail) || fromEmail;
+	const subject = (input.subject ?? "").trim();
+	const receivedAt = normalizeEmailReceivedAt(input.receivedAt ?? "");
+	const contactName = extractInquiryLineValue(source, [
+		"お名前",
+		"名前",
+		"氏名",
+		"ご担当者名",
+		"担当者名",
+	]).slice(0, 120);
+	const companyName =
+		extractInquiryLineValue(source, ["会社名", "法人名", "企業名", "貴社名"]).slice(
+			0,
+			120,
+		) || inferCompanyNameFromInquiryText(`${subject}\n${source}`);
+	const phone = digits(
+		extractInquiryLineValue(source, [
+			"電話番号",
+			"TEL",
+			"Tel",
+			"携帯番号",
+			"連絡先電話番号",
+		]),
+	);
+	const labels = normalizeLabelText(input.labels ?? "");
+	const inquiryType = inferInquiryTypeFromEmail({ subject, body: source, companyName });
+	const dealType = inferDealTypeFromEmail(`${subject}\n${source}`);
+	const categoryCode = inferInquiryCategoryCode({
+		subject,
+		body: source,
+		labels,
+		inquiryType,
+		dealType,
+	});
+	const titleInput = {
+		subject,
+		body: source,
+		labels,
+		companyName,
+		contactName,
+		inquiryType,
+		dealType,
+		categoryCode,
+	};
+	const displayTitle = buildInquiryDisplayTitle(titleInput);
+	const attentionReasons = buildInquiryAttentionReasons(titleInput);
+	const attentionMemo = buildInquiryAttentionMemo(titleInput);
+	const gmailMessageId = (input.gmailMessageId ?? "").trim();
+	const messageId = normalizeRfcMessageId(input.messageId ?? "");
+	const threadId = (input.threadId ?? "").trim();
+	const duplicateKeys = buildInquiryEmailDuplicateKeys({
+		subject,
+		contactEmail,
+		receivedAt,
+		gmailMessageId,
+		messageId,
+		threadId,
+	});
+	const primaryKey =
+		duplicateKeys[0] ??
+		buildInquiryDuplicateKey(companyName, contactEmail, phone) ??
+		`mail-fallback:${normalizeLookupText(subject).slice(0, 60)}`;
+	return {
+		subject,
+		displayTitle,
+		attentionMemo,
+		attentionReasons,
+		categoryCode,
+		fromRaw,
+		fromEmail,
+		contactEmail,
+		to: (input.to ?? "").trim(),
+		body: source.trim(),
+		receivedAt,
+		gmailMessageId,
+		messageId,
+		threadId,
+		labels,
+		sourceUrl: (input.sourceUrl ?? "").trim(),
+		contactName,
+		companyName,
+		phone,
+		inquiryType,
+		dealType,
+		duplicateKeys,
+		primaryKey,
+	};
+}
+
+function extractInquiryLineValue(body: string, labels: string[]): string {
+	for (const label of labels) {
+		const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		const match = body.match(new RegExp(`${escaped}\\s*[:：]\\s*([^\\n\\r]+)`, "i"));
+		if (match?.[1]?.trim()) return cleanNewsText(match[1]).slice(0, 500);
+	}
+	return "";
+}
+
+function extractEmailAddress(value: string): string {
+	const match = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+	return match?.[0]?.trim().toLowerCase() ?? "";
+}
+
+function normalizeEmailReceivedAt(value: string): string {
+	const parsed = value ? new Date(value) : new Date();
+	if (Number.isNaN(parsed.getTime())) return new Date().toISOString();
+	return parsed.toISOString();
+}
+
+function normalizeRfcMessageId(value: string): string {
+	return value.trim().replace(/^<|>$/g, "");
+}
+
+function normalizeLabelText(value: string): string {
+	return uniqueStrings(
+		value
+			.split(/[\n,、]/)
+			.map((label) => label.trim())
+			.filter(Boolean),
+	).join(", ");
+}
+
+function buildInquiryEmailDuplicateKeys(input: {
+	subject: string;
+	contactEmail: string;
+	receivedAt: string;
+	gmailMessageId: string;
+	messageId: string;
+	threadId: string;
+}): string[] {
+	const keys: string[] = [];
+	if (input.gmailMessageId) keys.push(`gmail:${input.gmailMessageId}`);
+	if (input.messageId) keys.push(`message-id:${input.messageId}`);
+	if (input.threadId && input.contactEmail) {
+		keys.push(`thread:${input.threadId}|email:${input.contactEmail}`);
+	}
+	const legacyDate = normalizeLegacyMailDate(input.receivedAt);
+	if (input.contactEmail && input.subject && legacyDate) {
+		keys.push(`${input.contactEmail}|${input.subject}|${legacyDate}`);
+		keys.push(`${input.contactEmail}｜${input.subject}｜${legacyDate}`);
+	}
+	return uniqueStrings(keys);
+}
+
+function normalizeLegacyMailDate(value: string): string {
+	const parsed = value ? new Date(value) : null;
+	if (!parsed || Number.isNaN(parsed.getTime())) return value;
+	return parsed.toISOString().replace(".000Z", "Z");
+}
+
+function inferInquiryTypeFromEmail(input: {
+	subject: string;
+	body: string;
+	companyName: string;
+}): string {
+	const body = `${input.subject}\n${input.body}`;
+	if (input.companyName || /法人|会社|株式会社|合同会社|有限会社|御社|貴社/.test(body)) {
+		return "法人";
+	}
+	if (/個人|売却査定|太陽光発電所|とくとくファーム|買いたい/.test(body)) {
+		return "個人投資家";
+	}
+	return "不明";
+}
+
+function inferDealTypeFromEmail(value: string): string {
+	if (/売却|査定|買取|資産価値|見積もり依頼/.test(value)) return "売却相談";
+	if (/購入|買いたい|販売|詳細希望|資料請求|権利付き/.test(value)) return "購入相談";
+	if (/相談|問い合わせ|お問合せ|資料/.test(value)) return "その他相談";
+	return "不明";
+}
+
+function inferInquiryCategoryCode(input: {
+	subject: string;
+	body: string;
+	labels?: string;
+	inquiryType?: string;
+	dealType?: string;
+}): string {
+	const value = `${input.subject}\n${input.body}\n${input.labels ?? ""}`;
+	if (/蓄電池|蓄電所|系統用|BESS|ESS/i.test(value)) return "⑤ 蓄電池";
+	if (/特高|高圧|[5-9]\d\s*kW|[1-9]\d{2,}\s*kW|MW|メガソーラー/i.test(value)) {
+		return "④ 高圧";
+	}
+	if (/低圧|49\.?5\s*kW|50\s*kW未満|小規模太陽光/i.test(value)) return "③ 低圧";
+	if (input.dealType === "売却相談" || /売却|査定|買取|資産価値/.test(value)) {
+		return "① 売却査定";
+	}
+	if (input.dealType === "購入相談" || /購入|買いたい|買付|販売案件|資料請求/.test(value)) {
+		return "② 購入相談";
+	}
+	if (input.inquiryType === "法人") return "⑥ 法人相談";
+	return "⑦ その他";
+}
+
+function buildInquiryDisplayTitle(input: {
+	subject: string;
+	body: string;
+	labels?: string;
+	companyName?: string;
+	contactName?: string;
+	inquiryType?: string;
+	dealType?: string;
+	categoryCode?: string;
+}): string {
+	const subject = stripInquiryReceptionPrefix(input.subject);
+	const categoryCode =
+		input.categoryCode ??
+		inferInquiryCategoryCode({
+			subject,
+			body: input.body,
+			labels: input.labels,
+			inquiryType: input.inquiryType,
+			dealType: input.dealType,
+		});
+	const compact = buildCompactInquiryTitleParts({ ...input, subject, categoryCode });
+	const titleText = [
+		compact.dealCode,
+		compact.party,
+		compact.assetLabel,
+		compact.scaleLabel,
+		compact.needsAttention ? "⚠" : "",
+	]
+		.filter(Boolean)
+		.join("｜");
+	return compactOneLine(titleText || compact.assetLabel || "その他", 80);
+}
+
+function buildNumberedInquiryDisplayTitle(
+	receptionNumber: string,
+	displayTitle: string,
+): string {
+	const cleanTitle = stripInquiryReceptionPrefix(displayTitle).trim();
+	if (!receptionNumber) return compactOneLine(cleanTitle, 100);
+	return compactOneLine(`${receptionNumber}｜${cleanTitle || "⑦ その他"}`, 100);
+}
+
+function extractInquiryReceptionNumber(value: string): string {
+	const match = value.match(/問-\d{6}-\d{3,}/);
+	return match?.[0] ?? "";
+}
+
+function extractInquiryReceptionParts(value: string): { dateStamp: string; sequence: number } | null {
+	const match = value.match(/問-(\d{6})-(\d{3,})/);
+	if (!match?.[1] || !match[2]) return null;
+	return { dateStamp: match[1], sequence: Number.parseInt(match[2], 10) };
+}
+
+function stripInquiryReceptionPrefix(value: string): string {
+	return value.replace(/^問-\d{6}-\d{3,}\s*[｜|]\s*/u, "").trim();
+}
+
+function inquiryReceptionDateStamp(value: string): string {
+	const parsed = value ? new Date(value) : new Date();
+	const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+	const tokyo = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+	const year = String(tokyo.getUTCFullYear()).slice(-2);
+	const month = String(tokyo.getUTCMonth() + 1).padStart(2, "0");
+	const day = String(tokyo.getUTCDate()).padStart(2, "0");
+	return `${year}${month}${day}`;
+}
+
+function buildInquiryReceptionNumber(dateStamp: string, sequence: number): string {
+	return `問-${dateStamp}-${String(sequence).padStart(3, "0")}`;
+}
+
+async function nextInquiryReceptionNumber(
+	notion: NotionClient,
+	receivedAt: string,
+): Promise<string> {
+	const dateStamp = inquiryReceptionDateStamp(receivedAt);
+	const prefix = `問-${dateStamp}-`;
+	let maxSequence = 0;
+	let startCursor: string | undefined;
+	try {
+		do {
+			const existing = await notion.dataSources.query({
+				data_source_id: INQUIRY_DATA_SOURCE_ID,
+				filter: {
+					property: "受付番号",
+					rich_text: { starts_with: prefix },
+				},
+				page_size: 100,
+				...(startCursor ? { start_cursor: startCursor } : {}),
+			});
+			for (const page of (existing.results ?? []) as Page[]) {
+				const properties = page.properties ?? {};
+				const parts = extractInquiryReceptionParts(
+					text(properties["受付番号"]) || text(properties["件名"]),
+				);
+				if (parts?.dateStamp === dateStamp) {
+					maxSequence = Math.max(maxSequence, parts.sequence);
+				}
+			}
+			startCursor =
+				existing.has_more && typeof existing.next_cursor === "string"
+					? existing.next_cursor
+					: undefined;
+		} while (startCursor);
+	} catch (error) {
+		console.log("受付番号の既存検索をスキップしました", String(error));
+	}
+	return buildInquiryReceptionNumber(dateStamp, maxSequence + 1);
+}
+
+function cleanInquiryTitleToken(value: string): string {
+	return value
+		.replace(/^(企業名|会社名|法人名|氏名|お名前)\s*[:：]\s*/g, "")
+		.replace(/企業名不明|会社名不明|法人名不明|氏名不明|不明企業|未設定/g, "")
+		.replace(/株式会社\s*$/g, "")
+		.replace(/\s+/g, " ")
+		.trim()
+		.slice(0, 32);
+}
+
+function buildCompactInquiryTitleParts(input: {
+	subject: string;
+	body: string;
+	labels?: string;
+	companyName?: string;
+	contactName?: string;
+	inquiryType?: string;
+	dealType?: string;
+	categoryCode?: string;
+}): {
+	dealCode: string;
+	party: string;
+	assetLabel: string;
+	scaleLabel: string;
+	needsAttention: boolean;
+	attentionReasons: string[];
+} {
+	const value = inquiryTitleSearchText(input);
+	const dealCode = compactInquiryDealCode(input.dealType ?? "", value);
+	const party = compactInquiryParty(input);
+	const assetLabel = compactInquiryAssetLabel(input.categoryCode ?? "", value);
+	const scaleLabel = compactSolarScaleLabel(input.categoryCode ?? "", value);
+	const attentionReasons = buildInquiryAttentionReasons(input);
+	return {
+		dealCode,
+		party,
+		assetLabel,
+		scaleLabel,
+		needsAttention: attentionReasons.length > 0,
+		attentionReasons,
+	};
+}
+
+function compactInquiryDealCode(dealType: string, value: string): string {
+	if (/売買両方|売り買い|売却.*購入|購入.*売却/.test(`${dealType}\n${value}`)) return "売買";
+	if (/売却|査定|売りたい|売主|買取/.test(`${dealType}\n${value}`)) return "売";
+	if (/購入|買いたい|買主|販売案件|資料請求/.test(`${dealType}\n${value}`)) return "買";
+	if (/相談|問い合わせ|お問合せ|資料/.test(`${dealType}\n${value}`)) return "相談";
+	return "";
+}
+
+function compactInquiryParty(input: {
+	companyName?: string;
+	contactName?: string;
+	inquiryType?: string;
+}): string {
+	const contact = cleanInquiryTitleToken(input.contactName ?? "");
+	const company = cleanInquiryTitleToken(input.companyName ?? "");
+	if (contact && company) return compactOneLine(`${contact}/${company}`, 28);
+	if (contact) return compactOneLine(contact, 28);
+	if (company) return compactOneLine(company, 28);
+	if (input.inquiryType === "法人") return "法人";
+	if (input.inquiryType === "個人投資家") return "個人";
+	return "";
+}
+
+function compactInquiryAssetLabel(categoryCode: string, value: string): string {
+	if (/蓄電池|蓄電所|系統用|BESS|ESS/i.test(`${categoryCode}\n${value}`)) return "蓄電池";
+	if (/土地|用地|地権者/.test(value)) return "土地";
+	if (/FIP展|FIP.*展開|FIP/.test(value)) return "FIP展";
+	if (/施工|工事|建設/.test(value)) return "施工";
+	if (/材料|部材|商材|パネル|PCS|パワコン/.test(value) && !isSolarInquiry(categoryCode, value)) {
+		return "材料";
+	}
+	if (/メンテ|O&M|保守|管理/.test(value)) return "メンテ";
+	if (/顧問|アドバイザー|コンサル/.test(value)) return "顧問希望";
+	if (isSolarInquiry(categoryCode, value)) return "太陽光";
+	return categoryCode.replace(/^[①②③④⑤⑥⑦]\s*/u, "") || "その他";
+}
+
+function compactSolarScaleLabel(categoryCode: string, value: string): string {
+	if (!isSolarInquiry(categoryCode, value)) return "";
+	const low = /低圧|49\.?5\s*kW|50\s*kW未満|小規模太陽光|③\s*低圧/i.test(
+		`${categoryCode}\n${value}`,
+	);
+	const high = /特高|高圧|[5-9]\d\s*kW|[1-9]\d{2,}\s*kW|MW|メガソーラー|④\s*高圧/i.test(
+		`${categoryCode}\n${value}`,
+	);
+	const bulk = isBulkSolarInquiry(value);
+	if (low && bulk) return "低バ";
+	if (high && bulk) return "高バ";
+	if (low) return "低";
+	if (high) return "高";
+	if (bulk) return "バ";
+	return "";
+}
+
+function buildInquiryAttentionMemo(input: {
+	subject: string;
+	body: string;
+	labels?: string;
+	companyName?: string;
+	contactName?: string;
+	inquiryType?: string;
+	dealType?: string;
+	categoryCode?: string;
+}): string {
+	const reasons = buildInquiryAttentionReasons(input);
+	if (reasons.length === 0) return "";
+	return [
+		"太陽光案件のため中身確認が必要です。",
+		`確認理由: ${reasons.join(" / ")}`,
+	].join("\n");
+}
+
+function buildInquiryAttentionReasons(input: {
+	subject: string;
+	body: string;
+	labels?: string;
+	companyName?: string;
+	contactName?: string;
+	inquiryType?: string;
+	dealType?: string;
+	categoryCode?: string;
+}): string[] {
+	const value = inquiryTitleSearchText(input);
+	const categoryCode =
+		input.categoryCode ??
+		inferInquiryCategoryCode({
+			subject: input.subject,
+			body: input.body,
+			labels: input.labels,
+			inquiryType: input.inquiryType,
+			dealType: input.dealType,
+		});
+	if (!isSolarInquiry(categoryCode, value)) return [];
+	const dealCode = compactInquiryDealCode(input.dealType ?? "", value);
+	if (dealCode !== "売" && dealCode !== "売買") return [];
+
+	const reasons: string[] = [];
+	if (!hasSolarLocation(value)) reasons.push("所在地未確認");
+	if (!hasSolarPrice(value)) reasons.push("販売価格未確認");
+	if (!hasSolarTariff(value)) reasons.push("FIT/FIP・売電単価未確認");
+	if (hasExplicitMissingPhoto(value)) {
+		reasons.push("現場写真未添付");
+	} else if (!hasSolarPhotoMention(value)) {
+		reasons.push("現場写真未確認");
+	}
+	if (isBulkSolarInquiry(value)) reasons.push("バルク候補");
+	return uniqueStrings(reasons);
+}
+
+function inquiryTitleSearchText(input: {
+	subject: string;
+	body: string;
+	labels?: string;
+	companyName?: string;
+	contactName?: string;
+	inquiryType?: string;
+	dealType?: string;
+	categoryCode?: string;
+}): string {
+	return [
+		input.subject,
+		input.body,
+		input.labels ?? "",
+		input.companyName ?? "",
+		input.contactName ?? "",
+		input.inquiryType ?? "",
+		input.dealType ?? "",
+		input.categoryCode ?? "",
+	].join("\n");
+}
+
+function isSolarInquiry(categoryCode: string, value: string): boolean {
+	return /太陽光|発電所|売電|低圧|高圧|特高|FIT|FIP|パネル|パワコン|PCS|ソーラー|③\s*低圧|④\s*高圧/i.test(
+		`${categoryCode}\n${value}`,
+	);
+}
+
+function isBulkSolarInquiry(value: string): boolean {
+	return /バルク|複数|多数|まとめ|一括|集約|複数区画|複数案件|[2-9]\s*(件|基|区画|発電所|サイト)|[二三四五六七八九十]+件/.test(
+		value,
+	);
+}
+
+function hasSolarLocation(value: string): boolean {
+	return /所在地|住所|場所|都道府県|北海道|東京都|大阪府|京都府|.{1,4}県|市|区|町|村/.test(
+		value,
+	);
+}
+
+function hasSolarPrice(value: string): boolean {
+	return /販売価格|仕入れ価格|希望売却価格|売却希望価格|希望価格|価格\s*[:：]\s*[0-9]|[0-9０-９,，.]+\s*(万円|円)/.test(
+		value,
+	);
+}
+
+function hasSolarTariff(value: string): boolean {
+	return /FIT|FIP|売電単価|売電価格|固定買取|円\s*\/\s*kWh|円\s*\/\s*kw|kWh単価/i.test(
+		value,
+	);
+}
+
+function hasExplicitMissingPhoto(value: string): boolean {
+	return /現場写真|発電所写真|現地写真|外観写真|設備写真|写真/.test(value) && /未添付|添付なし|なし|無し|未提出|未入力/.test(value);
+}
+
+function hasSolarPhotoMention(value: string): boolean {
+	return /現場写真|発電所写真|現地写真|外観写真|設備写真|写真/.test(value);
+}
+
+function simplifyInquiryDealType(value: string): string {
+	if (/売却/.test(value)) return "売却";
+	if (/購入/.test(value)) return "購入";
+	if (/その他/.test(value)) return "相談";
+	return "";
+}
+
+function inferInquiryAssetHint(value: string, categoryCode: string): string {
+	if (/高圧|低圧|蓄電池/.test(categoryCode)) return "";
+	if (/太陽光発電所|発電所|売電/.test(value)) return "太陽光発電所";
+	if (/土地|用地|地権者/.test(value)) return "土地";
+	if (/工事|施工|建設/.test(value)) return "工事";
+	if (/卸|部材|パネル|PCS|パワコン/.test(value)) return "商材";
+	return "";
+}
+
+async function findExistingInquiryByEmail(
+	notion: NotionClient,
+	emailInfo: InquiryEmailInfo,
+): Promise<Page[]> {
+	const pages: Page[] = [];
+	for (const key of emailInfo.duplicateKeys) {
+		pages.push(
+			...(await safeInquiryQuery(notion, {
+				property: "重複チェックキー",
+				rich_text: { equals: key },
+			})),
+		);
+		pages.push(
+			...(await safeInquiryQuery(notion, {
+				property: "メールID（ユニークキー）",
+				rich_text: { equals: key },
+			})),
+		);
+	}
+	if (emailInfo.messageId) {
+		pages.push(
+			...(await safeInquiryQuery(notion, {
+				property: "Message-ID",
+				rich_text: { equals: emailInfo.messageId },
+			})),
+		);
+	}
+	if (emailInfo.threadId) {
+		pages.push(
+			...(await safeInquiryQuery(notion, {
+				property: "Thread-ID",
+				rich_text: { equals: emailInfo.threadId },
+			})),
+		);
+	}
+	return uniquePages(pages);
+}
+
+async function createInquiryFromEmail(
+	notion: NotionClient,
+	emailInfo: InquiryEmailInfo,
+): Promise<Page> {
+	const receptionNumber = await nextInquiryReceptionNumber(notion, emailInfo.receivedAt);
+	const displayTitle = buildNumberedInquiryDisplayTitle(
+		receptionNumber,
+		emailInfo.displayTitle || emailInfo.subject || "新規お問い合わせ",
+	);
+	const numberedEmailInfo = {
+		...emailInfo,
+		displayTitle,
+		receptionNumber,
+	};
+	const properties: Record<string, unknown> = {
+		件名: title(displayTitle),
+		受付番号: richText(receptionNumber),
+		元メール件名: richText(emailInfo.subject),
+		問い合わせ分類コード: select(emailInfo.categoryCode),
+		ステータス: select("未対応"),
+		本文: richText(emailInfo.body),
+		要約: richText(buildInquiryEmailSummary(numberedEmailInfo)),
+		初回トーク方針: richText(buildInquiryEmailFirstTalk(numberedEmailInfo)),
+		問い合わせ種別: select(emailInfo.inquiryType),
+		売買区分: select(emailInfo.dealType),
+		重複チェックキー: richText(emailInfo.primaryKey),
+		"メールID（ユニークキー）": richText(emailInfo.primaryKey),
+		"Message-ID": richText(emailInfo.messageId),
+		"Thread-ID": richText(emailInfo.threadId),
+		Gmailラベル: richText(emailInfo.labels),
+		"送信者（メール）": richText(emailInfo.fromRaw || emailInfo.fromEmail),
+		"宛先（To）": richText(emailInfo.to),
+		企業連携ステータス: select("未処理"),
+		企業登録可否: select("要確認"),
+		重複判定ステータス: select("正常"),
+		企業連携メモ: richText("メール入口Workerが新規作成。企業連携はWorker側で後続処理。"),
+	};
+	if (emailInfo.receivedAt) {
+		properties["受信日時"] = { date: { start: emailInfo.receivedAt } };
+	}
+	if (emailInfo.sourceUrl && /^https?:\/\//.test(emailInfo.sourceUrl)) {
+		properties["原文リンク"] = { url: emailInfo.sourceUrl.slice(0, 1900) };
+	}
+	if (emailInfo.contactEmail) {
+		properties["メールアドレス"] = email(emailInfo.contactEmail);
+	}
+	if (emailInfo.contactName) {
+		properties["お名前"] = richText(emailInfo.contactName);
+	}
+	if (emailInfo.companyName) {
+		properties["会社名"] = richText(emailInfo.companyName);
+	}
+	if (emailInfo.phone) {
+		properties["電話番号"] = phoneNumber(emailInfo.phone);
+	}
+	const created = await notion.pages.create({
+		parent: { data_source_id: INQUIRY_DATA_SOURCE_ID },
+		properties,
+		children: [
+			{
+				object: "block",
+				type: "callout",
+				callout: {
+					rich_text: [{ type: "text", text: { content: "— 問い合わせ画面 —" } }],
+					icon: { emoji: "🔵" },
+					color: "blue_background",
+				},
+			},
+		],
+	});
+	const createdPage = await notion.pages.retrieve({ page_id: created.id });
+	if (emailInfo.attentionMemo) {
+		await safeUpdateExistingProperties(notion, createdPage, {
+			確認待ち内容: { kind: "text", value: emailInfo.attentionMemo },
+		});
+		return notion.pages.retrieve({ page_id: created.id });
+	}
+	return createdPage;
+}
+
+function buildInquiryEmailSummary(emailInfo: InquiryEmailInfo): string {
+	const subject = emailInfo.subject || "件名未設定";
+	const company = emailInfo.companyName ? `会社: ${emailInfo.companyName}` : "";
+	const contact = emailInfo.contactName ? `担当/氏名: ${emailInfo.contactName}` : "";
+	const mail = emailInfo.contactEmail ? `メール: ${emailInfo.contactEmail}` : "";
+	return [
+		`表示名: ${emailInfo.displayTitle || subject}`,
+		emailInfo.receptionNumber ? `受付番号: ${emailInfo.receptionNumber}` : "",
+		subject !== emailInfo.displayTitle ? `元件名: ${subject}` : "",
+		company,
+		contact,
+		mail,
+		`分類: ${emailInfo.categoryCode}`,
+		`種別: ${emailInfo.inquiryType} / ${emailInfo.dealType}`,
+		emailInfo.attentionReasons.length > 0
+			? `確認理由: ${emailInfo.attentionReasons.join(" / ")}`
+			: "",
+	].filter(Boolean).join("\n").slice(0, 900);
+}
+
+function buildInquiryEmailFirstTalk(emailInfo: InquiryEmailInfo): string {
+	if (emailInfo.dealType === "売却相談") {
+		return "まず所在地、設備容量、FIT/FIP単価、残存期間、希望売却価格、必要資料の有無を確認する。価格だけでなく、手残り額・売却スピード・買主確度・途中減額リスクも比較軸として握る。";
+	}
+	if (emailInfo.dealType === "購入相談") {
+		return "まず希望エリア、予算、容量・案件規模、購入時期、融資利用の有無、求めている権利や土地条件を確認する。紹介可否だけでなく、条件に合う案件の探し方も案内する。";
+	}
+	if (emailInfo.inquiryType === "法人") {
+		return "まず会社として何を相談したいか、対象案件、希望時期、意思決定者、予算感を短く確認する。必要に応じて企業評価フローと商談準備へつなげる。";
+	}
+	return "まず問い合わせの目的、希望条件、連絡可能時間、次に知りたい情報を確認する。担当者や期限が曖昧な場合は要確認として扱う。";
+}
+
+async function cleanInquiryTitles(
+	input: { limit?: number; dryRun?: boolean },
+	notion: NotionClient,
+): Promise<BulkCleanupResult> {
+	const limit = normalizeBulkLimit(input.limit);
+	const existing = await notion.dataSources.query({
+		data_source_id: INQUIRY_DATA_SOURCE_ID,
+		page_size: limit,
+	});
+	const pages = (existing.results ?? []) as Page[];
+	let updated = 0;
+	const samples: string[] = [];
+
+	for (const page of pages) {
+		const properties = page.properties ?? {};
+		const currentTitle = text(properties["件名"]);
+		const rawSubject = text(properties["元メール件名"]) || currentTitle;
+		const receptionNumber =
+			text(properties["受付番号"]) || extractInquiryReceptionNumber(currentTitle);
+		const categoryCode = inferInquiryCategoryCode({
+			subject: rawSubject,
+			body: text(properties["本文"]) || text(properties["要約"]),
+			labels: text(properties["Gmailラベル"]),
+			inquiryType: text(properties["問い合わせ種別"]),
+			dealType: text(properties["売買区分"]),
+		});
+		const titleInput = {
+			subject: rawSubject,
+			body: text(properties["本文"]) || text(properties["要約"]),
+			labels: text(properties["Gmailラベル"]),
+			companyName: text(properties["会社名"]) || text(properties["企業名"]),
+			contactName: text(properties["お名前"]) || text(properties["氏名"]),
+			inquiryType: text(properties["問い合わせ種別"]),
+			dealType: text(properties["売買区分"]),
+			categoryCode,
+		};
+		const displayTitle = buildInquiryDisplayTitle(titleInput);
+		const attentionMemo = buildInquiryAttentionMemo(titleInput);
+		const currentAttentionMemo = text(properties["確認待ち内容"]);
+		const shouldUpdateAttentionMemo =
+			Boolean(attentionMemo) &&
+			(!currentAttentionMemo ||
+				currentAttentionMemo.startsWith("太陽光案件のため中身確認が必要です。"));
+		const displayTitleWithNumber = buildNumberedInquiryDisplayTitle(
+			receptionNumber,
+			displayTitle,
+		);
+		if (!displayTitleWithNumber) continue;
+		const needsUpdate =
+			currentTitle !== displayTitleWithNumber ||
+			text(properties["問い合わせ分類コード"]) !== categoryCode ||
+			(receptionNumber && text(properties["受付番号"]) !== receptionNumber) ||
+			!text(properties["元メール件名"]) ||
+			shouldUpdateAttentionMemo;
+		if (!needsUpdate) continue;
+		updated += 1;
+		if (samples.length < 5) samples.push(`${currentTitle} -> ${displayTitleWithNumber}`);
+		if (input.dryRun) continue;
+		const patches: Record<string, SafePatch> = {
+			件名: { kind: "text", value: displayTitleWithNumber },
+			受付番号: { kind: "text", value: receptionNumber },
+			元メール件名: { kind: "text", value: rawSubject },
+			問い合わせ分類コード: { kind: "select", value: categoryCode },
+		};
+		if (shouldUpdateAttentionMemo) {
+			patches["確認待ち内容"] = { kind: "text", value: attentionMemo };
+		}
+		await safeUpdateExistingProperties(notion, page, patches);
+	}
+
+	return {
+		action: input.dryRun ? "dry-run" : updated > 0 ? "cleaned" : "skipped",
+		checked: pages.length,
+		updated,
+		message:
+			updated > 0
+				? `問い合わせ ${pages.length} 件を確認し、${updated} 件の表示名を整えました。例: ${samples.join(" / ")}`
+				: `問い合わせ ${pages.length} 件を確認しました。更新対象はありません。`,
+	};
+}
+
+async function assignInquiryReceptionNumbers(
+	input: { limit?: number; dryRun?: boolean },
+	notion: NotionClient,
+): Promise<BulkCleanupResult> {
+	const limit = normalizeBulkLimit(input.limit);
+	const existing = await notion.dataSources.query({
+		data_source_id: INQUIRY_DATA_SOURCE_ID,
+		page_size: limit,
+		sorts: [
+			{ property: "受信日時", direction: "ascending" },
+			{ timestamp: "created_time", direction: "ascending" },
+		],
+	});
+	const pages = ((existing.results ?? []) as Page[]).sort(compareInquiryPagesForReception);
+	const maxByDate = new Map<string, number>();
+
+	for (const page of pages) {
+		const properties = page.properties ?? {};
+		const existingNumber =
+			text(properties["受付番号"]) || extractInquiryReceptionNumber(text(properties["件名"]));
+		const parts = extractInquiryReceptionParts(existingNumber);
+		if (!parts) continue;
+		maxByDate.set(parts.dateStamp, Math.max(maxByDate.get(parts.dateStamp) ?? 0, parts.sequence));
+	}
+
+	let updated = 0;
+	const samples: string[] = [];
+	for (const page of pages) {
+		const properties = page.properties ?? {};
+		const currentTitle = text(properties["件名"]);
+		const rawSubject = text(properties["元メール件名"]) || stripInquiryReceptionPrefix(currentTitle);
+		const receivedAt =
+			dateStartFromProperty(properties["受信日時"]) ||
+			(typeof (page as Record<string, unknown>).created_time === "string"
+				? ((page as Record<string, unknown>).created_time as string)
+				: "");
+		const dateStamp = inquiryReceptionDateStamp(receivedAt);
+		const existingNumber =
+			text(properties["受付番号"]) || extractInquiryReceptionNumber(currentTitle);
+		let receptionNumber = existingNumber;
+		if (!receptionNumber) {
+			const nextSequence = (maxByDate.get(dateStamp) ?? 0) + 1;
+			maxByDate.set(dateStamp, nextSequence);
+			receptionNumber = buildInquiryReceptionNumber(dateStamp, nextSequence);
+		}
+		const categoryCode = inferInquiryCategoryCode({
+			subject: rawSubject,
+			body: text(properties["本文"]) || text(properties["要約"]),
+			labels: text(properties["Gmailラベル"]),
+			inquiryType: text(properties["問い合わせ種別"]),
+			dealType: text(properties["売買区分"]),
+		});
+		const titleInput = {
+			subject: rawSubject,
+			body: text(properties["本文"]) || text(properties["要約"]),
+			labels: text(properties["Gmailラベル"]),
+			companyName: text(properties["会社名"]) || text(properties["企業名"]),
+			contactName: text(properties["お名前"]) || text(properties["氏名"]),
+			inquiryType: text(properties["問い合わせ種別"]),
+			dealType: text(properties["売買区分"]),
+			categoryCode,
+		};
+		const baseTitle = buildInquiryDisplayTitle(titleInput);
+		const attentionMemo = buildInquiryAttentionMemo(titleInput);
+		const currentAttentionMemo = text(properties["確認待ち内容"]);
+		const shouldUpdateAttentionMemo =
+			Boolean(attentionMemo) &&
+			(!currentAttentionMemo ||
+				currentAttentionMemo.startsWith("太陽光案件のため中身確認が必要です。"));
+		const displayTitle = buildNumberedInquiryDisplayTitle(receptionNumber, baseTitle);
+		const needsUpdate =
+			currentTitle !== displayTitle ||
+			text(properties["受付番号"]) !== receptionNumber ||
+			text(properties["問い合わせ分類コード"]) !== categoryCode ||
+			!text(properties["元メール件名"]) ||
+			shouldUpdateAttentionMemo;
+		if (!needsUpdate) continue;
+		updated += 1;
+		if (samples.length < 5) samples.push(`${currentTitle} -> ${displayTitle}`);
+		if (input.dryRun) continue;
+		const patches: Record<string, SafePatch> = {
+			件名: { kind: "text", value: displayTitle },
+			受付番号: { kind: "text", value: receptionNumber },
+			元メール件名: { kind: "text", value: rawSubject },
+			問い合わせ分類コード: { kind: "select", value: categoryCode },
+		};
+		if (shouldUpdateAttentionMemo) {
+			patches["確認待ち内容"] = { kind: "text", value: attentionMemo };
+		}
+		await safeUpdateExistingProperties(notion, page, patches);
+	}
+
+	return {
+		action: input.dryRun ? "dry-run" : updated > 0 ? "numbered" : "skipped",
+		checked: pages.length,
+		updated,
+		message:
+			updated > 0
+				? `問い合わせ ${pages.length} 件を確認し、${updated} 件へ受付番号を付与/整形しました。例: ${samples.join(" / ")}`
+				: `問い合わせ ${pages.length} 件を確認しました。受付番号の更新対象はありません。`,
+	};
+}
+
+function compareInquiryPagesForReception(a: Page, b: Page): number {
+	const aDate =
+		dateStartFromProperty(a.properties?.["受信日時"]) ||
+		(((a as Record<string, unknown>).created_time as string | undefined) ?? "");
+	const bDate =
+		dateStartFromProperty(b.properties?.["受信日時"]) ||
+		(((b as Record<string, unknown>).created_time as string | undefined) ?? "");
+	if (aDate !== bDate) return aDate.localeCompare(bDate);
+	return a.id.localeCompare(b.id);
+}
+
+function readInquiry(page: Page): InquiryInfo {
+	const properties = page.properties ?? {};
+	const emailValue =
+		text(properties["メールアドレス"]) || text(properties["送信者（メール）"]);
+	const phoneValue = digits(text(properties["電話番号"]));
+	const companyName =
+		text(properties["会社名"]) ||
+		text(properties["企業名"]) ||
+		inferCompanyNameFromInquiryText(
+			[
+				text(properties["件名"]),
+				text(properties["本文"]),
+				text(properties["要約"]),
+			].join("\n"),
+		);
+	const domain = extractDomain(emailValue);
+	const duplicateKey =
+		text(properties["重複チェックキー"]) ||
+		buildInquiryDuplicateKey(companyName, emailValue, phoneValue);
+
+	return {
+		page,
+		title: text(properties["件名"]),
+		companyName,
+		contactName: text(properties["お名前"]) || text(properties["氏名"]),
+		email: emailValue,
+		domain,
+		phone: phoneValue,
+		body: text(properties["本文"]),
+		summary: text(properties["要約"]),
+		firstTalk: text(properties["初回トーク方針"]),
+		dealType: text(properties["売買区分"]) || "不明",
+		inquiryType: text(properties["問い合わせ種別"]) || "不明",
+		companyLinkStatus: text(properties["企業連携ステータス"]),
+		duplicateKey,
+		mailUniqueKey: text(properties["メールID（ユニークキー）"]),
+		messageId: text(properties["Message-ID"]),
+		threadId: text(properties["Thread-ID"]),
+		relatedCompanyIds: relationIdsFromProperty(properties["関連企業"]),
+	};
+}
+
+function inquiryToCardInfo(inquiry: InquiryInfo): CardInfo {
+	const key = [
+		`corp:${normalizeCompanyName(inquiry.companyName)}`,
+		`domain:${inquiry.domain}`,
+		`phone:${inquiry.phone}`,
+	].join("|");
+	return {
+		page: inquiry.page,
+		name: inquiry.contactName,
+		companyName: inquiry.companyName,
+		email: inquiry.email,
+		domain: inquiry.domain,
+		phone: inquiry.phone,
+		address: "",
+		role: "",
+		key,
+	};
+}
+
+function shouldProcessInquiry(inquiry: InquiryInfo): boolean {
+	if (inquiry.inquiryType === "個人投資家" && !inquiry.companyName) return false;
+	const body = `${inquiry.title}\n${inquiry.body}\n${inquiry.summary}`;
+	return Boolean(
+		inquiry.companyName ||
+			inquiry.email ||
+			inquiry.phone ||
+			/法人|会社|株式会社|合同会社|有限会社|御社|貴社/i.test(body),
+	);
+}
+
+function inferCompanyNameFromInquiryText(value: string): string {
+	const match = value.match(
+		/(?:会社名|法人名|企業名|貴社名)[:：]\s*([^\n\r]+)/,
+	);
+	return match?.[1]?.trim().slice(0, 120) ?? "";
+}
+
+function buildInquiryDuplicateKey(
+	companyName: string,
+	emailValue: string,
+	phoneValue: string,
+): string {
+	return [
+		`corp:${normalizeCompanyName(companyName)}`,
+		`email:${emailValue.toLowerCase()}`,
+		`phone:${phoneValue}`,
+	]
+		.filter((part) => !part.endsWith(":"))
+		.join("|");
+}
+
+async function findDuplicateInquiries(
+	notion: NotionClient,
+	inquiry: InquiryInfo,
+): Promise<Page[]> {
+	const results: Page[] = [];
+	const seen = new Set<string>();
+	const push = (pages: Page[]) => {
+		for (const page of pages) {
+			if (page.id === inquiry.page.id || seen.has(page.id)) continue;
+			seen.add(page.id);
+			results.push(page);
+		}
+	};
+
+	if (inquiry.duplicateKey) {
+		push(
+			await safeInquiryQuery(notion, {
+				property: "重複チェックキー",
+				rich_text: { equals: inquiry.duplicateKey },
+			}),
+		);
+	}
+	if (inquiry.mailUniqueKey) {
+		push(
+			await safeInquiryQuery(notion, {
+				property: "メールID（ユニークキー）",
+				rich_text: { equals: inquiry.mailUniqueKey },
+			}),
+		);
+	}
+	if (inquiry.messageId) {
+		push(
+			await safeInquiryQuery(notion, {
+				property: "Message-ID",
+				rich_text: { equals: inquiry.messageId },
+			}),
+		);
+	}
+	return results;
+}
+
+async function safeInquiryQuery(
+	notion: NotionClient,
+	filter: Record<string, unknown>,
+): Promise<Page[]> {
+	try {
+		const response = await notion.dataSources.query({
+			data_source_id: INQUIRY_DATA_SOURCE_ID,
+			page_size: 10,
+			filter,
+		});
+		return response.results;
+	} catch (error) {
+		console.log("inquiry query skipped", { filter, error: String(error) });
+		return [];
+	}
+}
+
+async function createCompanyFromInquiry(
+	notion: NotionClient,
+	inquiry: InquiryInfo,
+	weakCandidate?: Candidate,
+): Promise<Page> {
+	const properties: Record<string, unknown> = {
+		企業名: title(inquiry.companyName),
+		企業登録ソース: select("問い合わせ"),
+		企業重複チェックキー: richText(inquiryToCardInfo(inquiry).key),
+		企業AI受付メモ: richText(
+			`問い合わせ起点でWorkerが作成。元問い合わせ: ${inquiry.title || inquiry.page.id}`,
+		),
+		企業調査ステータス: select("解析開始"),
+		問い合わせ要約: richText(inquiry.summary || inquiry.body || inquiry.title),
+		売買区分: select(inquiry.dealType || "不明"),
+		重複整理ステータス: select(weakCandidate ? "重複候補" : "正本候補"),
+		関連問い合わせ: relation(inquiry.page.id),
+	};
+
+	if (inquiry.contactName) properties["問い合わせ担当者名"] = richText(inquiry.contactName);
+	if (inquiry.email) {
+		properties["メールアドレス"] = email(inquiry.email);
+		properties["問い合わせ担当者メールアドレス"] = email(inquiry.email);
+	}
+	if (inquiry.phone) {
+		properties["電話番号"] = phoneNumber(inquiry.phone);
+		properties["問い合わせ担当者電話番号"] = phoneNumber(inquiry.phone);
+	}
+	if (weakCandidate) {
+		properties["正本企業"] = relation(weakCandidate.page.id);
+		properties["重複整理メモ"] = richText(
+			`近似候補あり: ${weakCandidate.name}。強い一致ではないため新規作成し、後続で整理対象にしました。`,
+		);
+	}
+
+	return notion.pages.create({
+		parent: { data_source_id: COMPANY_DATA_SOURCE_ID },
+		properties,
+	});
+}
+
+async function updateExistingCompanyFromInquiry(
+	notion: NotionClient,
+	companyPage: Page,
+	inquiry: InquiryInfo,
+): Promise<void> {
+	const company = readCompany(companyPage);
+	const patches: Record<string, SafePatch> = {
+		企業AI受付メモ: {
+			kind: "text",
+			value: appendShortMemo(
+				company.aiMemo,
+				`問い合わせ ${inquiry.title || inquiry.page.id} を既存企業へ紐づけ。`,
+			),
+		},
+		関連問い合わせ: {
+			kind: "relation",
+			ids: uniqueIds([
+				...relationIdsFromProperty(companyPage.properties?.["関連問い合わせ"]),
+				inquiry.page.id,
+			]),
+		},
+	};
+	if (!company.inquirySummary && (inquiry.summary || inquiry.body)) {
+		patches["問い合わせ要約"] = {
+			kind: "text",
+			value: inquiry.summary || inquiry.body,
+		};
+	}
+	if (!company.contactName && inquiry.contactName) {
+		patches["問い合わせ担当者名"] = { kind: "text", value: inquiry.contactName };
+	}
+	if (!company.email && inquiry.email) {
+		patches["メールアドレス"] = { kind: "text", value: inquiry.email };
+		patches["問い合わせ担当者メールアドレス"] = {
+			kind: "text",
+			value: inquiry.email,
+		};
+	}
+	if (!company.phone && inquiry.phone) {
+		patches["電話番号"] = { kind: "text", value: inquiry.phone };
+		patches["問い合わせ担当者電話番号"] = {
+			kind: "text",
+			value: inquiry.phone,
+		};
+	}
+	if (!company.dealType || company.dealType === "不明") {
+		patches["売買区分"] = { kind: "select", value: inquiry.dealType || "不明" };
+	}
+	await safeUpdateExistingProperties(notion, companyPage, patches);
+}
+
+async function markInquiryLinkedToCompany(
+	notion: NotionClient,
+	inquiry: InquiryInfo,
+	companyId: string,
+	status: "既存企業に紐づけ済" | "新規作成済",
+	memo: string,
+): Promise<void> {
+	await safeUpdateExistingProperties(notion, inquiry.page, {
+		関連企業: { kind: "relation", ids: [companyId] },
+		企業重複チェックキー: {
+			kind: "text",
+			value: inquiryToCardInfo(inquiry).key,
+		},
+		重複チェックキー: { kind: "text", value: inquiry.duplicateKey },
+		企業連携ステータス: { kind: "select", value: status },
+		企業登録可否: {
+			kind: "select",
+			value: status === "新規作成済" ? "登録可" : "既存確認",
+		},
+		企業連携メモ: { kind: "text", value: memo },
+		重複判定ステータス: { kind: "select", value: "正常" },
+	});
+}
+
+async function markInquiryTargetOut(
+	notion: NotionClient,
+	inquiry: InquiryInfo,
+	memo: string,
+): Promise<void> {
+	await safeUpdateExistingProperties(notion, inquiry.page, {
+		企業連携ステータス: { kind: "select", value: "対象外" },
+		企業登録可否: { kind: "select", value: "個人のため保留" },
+		企業連携メモ: { kind: "text", value: memo },
+	});
+}
+
+async function markInquiryNeedsReview(
+	notion: NotionClient,
+	inquiry: InquiryInfo,
+	memo: string,
+): Promise<void> {
+	await safeUpdateExistingProperties(notion, inquiry.page, {
+		企業連携ステータス: { kind: "select", value: "重複疑い" },
+		企業登録可否: { kind: "select", value: "要確認" },
+		企業連携メモ: { kind: "text", value: memo },
+		重複判定ステータス: { kind: "select", value: "重複疑い" },
+	});
+}
+
+async function markInquiryDuplicateHold(
+	notion: NotionClient,
+	inquiry: InquiryInfo,
+	duplicates: Page[],
+	memo: string,
+): Promise<void> {
+	await safeUpdateExistingProperties(notion, inquiry.page, {
+		企業連携ステータス: { kind: "select", value: "重複疑い" },
+		企業登録可否: { kind: "select", value: "要確認" },
+		企業連携メモ: {
+			kind: "text",
+			value: `${memo} 重複候補: ${duplicates
+				.slice(0, 3)
+				.map((page) => text(page.properties?.["件名"]) || page.id)
+				.join(", ")}`,
+		},
+		重複判定ステータス: { kind: "select", value: "重複疑い" },
+	});
+}
+
+async function markInquiryCandidateHold(
+	notion: NotionClient,
+	inquiry: InquiryInfo,
+	candidates: Candidate[],
+): Promise<void> {
+	await safeUpdateExistingProperties(notion, inquiry.page, {
+		企業連携ステータス: { kind: "select", value: "重複疑い" },
+		企業登録可否: { kind: "select", value: "要確認" },
+		企業連携メモ: {
+			kind: "text",
+			value: `強い企業候補が複数あるため停止: ${candidates
+				.slice(0, 3)
+				.map((candidate) => `${candidate.name}(${candidate.reasons.join("/")})`)
+				.join(", ")}`,
+		},
+		重複判定ステータス: { kind: "select", value: "重複疑い" },
+	});
+}
+
+async function addInquiryRelationToCompany(
+	notion: NotionClient,
+	companyId: string,
+	inquiryId: string,
+): Promise<void> {
+	const company = await notion.pages.retrieve({ page_id: companyId });
+	const current = relationIdsFromProperty(company.properties?.["関連問い合わせ"]);
+	if (current.includes(inquiryId)) return;
+	await safeUpdateExistingProperties(notion, company, {
+		関連問い合わせ: {
+			kind: "relation",
+			ids: uniqueIds([...current, inquiryId]),
+		},
+	});
+}
+
+async function findCompanyCandidates(
+	notion: NotionClient,
+	card: CardInfo,
+): Promise<Candidate[]> {
+	const queryResults: Page[] = [];
+	const seen = new Set<string>();
+	const push = (pages: Page[]) => {
+		for (const page of pages) {
+			if (seen.has(page.id)) continue;
+			seen.add(page.id);
+			queryResults.push(page);
+		}
+	};
+
+	if (card.key) {
+		push(
+			await safeCompanyQuery(notion, {
+				property: "企業重複チェックキー",
+				rich_text: { equals: card.key },
+			}),
+		);
+	}
+	if (card.companyName) {
+		push(
+			await safeCompanyQuery(notion, {
+				property: "企業名",
+				title: { contains: card.companyName },
+			}),
+		);
+	}
+	if (card.phone) {
+		push(
+			await safeCompanyQuery(notion, {
+				property: "電話番号",
+				phone_number: { equals: card.phone },
+			}),
+		);
+		push(
+			await safeCompanyQuery(notion, {
+				property: "問い合わせ担当者電話番号",
+				phone_number: { equals: card.phone },
+			}),
+		);
+	}
+	if (card.email) {
+		push(
+			await safeCompanyQuery(notion, {
+				property: "メールアドレス",
+				email: { equals: card.email },
+			}),
+		);
+		push(
+			await safeCompanyQuery(notion, {
+				property: "問い合わせ担当者メールアドレス",
+				email: { equals: card.email },
+			}),
+		);
+	}
+
+	return queryResults
+		.map((page) => scoreCandidate(page, card))
+		.filter((candidate) => candidate.score > 0 || candidate.weak)
+		.sort((a, b) => b.score - a.score);
+}
+
+async function safeCompanyQuery(
+	notion: NotionClient,
+	filter: Record<string, unknown>,
+): Promise<Page[]> {
+	try {
+		const response = await notion.dataSources.query({
+			data_source_id: COMPANY_DATA_SOURCE_ID,
+			page_size: 10,
+			filter,
+		});
+		return response.results;
+	} catch (error) {
+		console.log("company query skipped", { filter, error: String(error) });
+		return [];
+	}
+}
+
+function scoreCandidate(page: Page, card: CardInfo): Candidate {
+	const properties = page.properties ?? {};
+	const name = text(properties["企業名"]);
+	const key = text(properties["企業重複チェックキー"]);
+	const email =
+		text(properties["メールアドレス"]) ||
+		text(properties["問い合わせ担当者メールアドレス"]);
+	const phone = digits(
+		text(properties["電話番号"]) ||
+			text(properties["問い合わせ担当者電話番号"]),
+	);
+	const normalizedCandidate = normalizeCompanyName(name);
+	const normalizedCard = normalizeCompanyName(card.companyName);
+	const reasons: string[] = [];
+	let score = 0;
+
+	if (card.key && key && key === card.key) {
+		score += 100;
+		reasons.push("企業重複チェックキー一致");
+	}
+	if (normalizedCandidate && normalizedCandidate === normalizedCard) {
+		score += 90;
+		reasons.push("正規化会社名一致");
+	}
+	if (card.domain && email.toLowerCase().endsWith(`@${card.domain}`)) {
+		score += 85;
+		reasons.push("メールドメイン一致");
+	}
+	if (card.phone && phone && phone === card.phone) {
+		score += 85;
+		reasons.push("電話番号一致");
+	}
+
+	const weak =
+		score === 0 &&
+		Boolean(normalizedCandidate) &&
+		Boolean(normalizedCard) &&
+		(normalizedCandidate.includes(normalizedCard) ||
+			normalizedCard.includes(normalizedCandidate));
+
+	if (weak) reasons.push("会社名の近似候補");
+
+	return { page, name, key, email, phone, score, reasons, weak };
+}
+
+async function createCompany(
+	notion: NotionClient,
+	card: CardInfo,
+	weakCandidate?: Candidate,
+): Promise<Page> {
+	const properties: Record<string, unknown> = {
+		企業名: title(card.companyName),
+		企業登録ソース: select("名刺"),
+		企業重複チェックキー: richText(card.key),
+		企業AI受付メモ: richText(
+			`名刺起点でWorkerが作成。元名刺: ${card.name || card.page.id}`,
+		),
+		企業調査ステータス: select("解析開始"),
+		名刺起点Webhookメモ: richText(
+			"Notion Workerが名刺起点で企業を作成し、外部調査と3C返却を実行。",
+		),
+		重複整理ステータス: select(weakCandidate ? "重複候補" : "正本候補"),
+		関連名刺: relation(card.page.id),
+	};
+
+	if (card.email) {
+		properties["メールアドレス"] = email(card.email);
+		properties["問い合わせ担当者メールアドレス"] = email(card.email);
+	}
+	if (card.phone) {
+		properties["電話番号"] = phoneNumber(card.phone);
+		properties["問い合わせ担当者電話番号"] = phoneNumber(card.phone);
+	}
+	if (card.address) properties["住所"] = richText(card.address);
+	if (card.name) properties["問い合わせ担当者名"] = richText(card.name);
+	if (weakCandidate) {
+		properties["正本企業"] = relation(weakCandidate.page.id);
+		properties["重複整理メモ"] = richText(
+			`近似候補あり: ${weakCandidate.name}。強い一致ではないため新規作成し、後続で整理対象にしました。`,
+		);
+	}
+
+	return notion.pages.create({
+		parent: { data_source_id: COMPANY_DATA_SOURCE_ID },
+		properties,
+	});
+}
+
+async function enrichCompany(
+	notion: NotionClient,
+	company: Page,
+	card: CardInfo,
+	isDuplicateCandidate: boolean,
+): Promise<void> {
+	const research = await researchCompany(card);
+	await notion.pages.update({
+		page_id: company.id,
+		properties: {
+			企業調査ステータス: select("完了"),
+			企業サマリー: richText(research.summary),
+			現在課題仮説: richText(research.currentIssue),
+			将来課題仮説: richText(research.futureIssue),
+			営業切り口: richText(research.salesAngle),
+			和上解決策適合: richText(research.fit),
+			"3C：顧客・市場分析": richText(research.customerMarket3c),
+			"3C：競合分析": richText(research.competitor3c),
+			"3C：自社との関係性": richText(research.wajoRelation3c),
+			根拠ソース: richText(research.source),
+			名刺起点Webhookメモ: richText(
+				isDuplicateCandidate
+					? "Notion Workerが近似候補ありとして企業調査・3Cを返却。重複整理対象。"
+					: "Notion Workerが名刺起点で企業調査・3Cを返却。",
+			),
+		},
+	});
+}
+
+async function linkCardToCompany(
+	notion: NotionClient,
+	card: CardInfo,
+	companyId: string,
+	status: "既存企業に紐づけ済" | "新規企業作成",
+	memo: string,
+): Promise<void> {
+	await notion.pages.update({
+		page_id: card.page.id,
+		properties: {
+			関連企業: relation(companyId),
+			企業重複チェックキー: richText(card.key),
+			企業連携ステータス: select(status),
+			企業連携メモ: richText(memo),
+			Webhook引き継ぎステータス: select("引き継ぎ済"),
+			Webhook引き継ぎメモ: richText("Notion Workerが企業調査と3C返却まで完了。"),
+			名刺AI処理状態: select(status),
+			名刺AI処理メモ: richText("Notion Workerで処理済み。"),
+		},
+	});
+	await addCardRelationToCompany(notion, companyId, card.page.id);
+}
+
+async function addCardRelationToCompany(
+	notion: NotionClient,
+	companyId: string,
+	cardId: string,
+): Promise<void> {
+	const company = await notion.pages.retrieve({ page_id: companyId });
+	const current = relationIdsFromProperty(company.properties?.["関連名刺"]);
+	if (current.includes(cardId)) return;
+	await notion.pages.update({
+		page_id: companyId,
+		properties: {
+			関連名刺: relationIds([...current, cardId]),
+		},
+	});
+}
+
+async function markCardProcessing(
+	notion: NotionClient,
+	card: CardInfo,
+): Promise<void> {
+	await notion.pages.update({
+		page_id: card.page.id,
+		properties: {
+			企業連携ステータス: select("処理中"),
+			Webhook引き継ぎステータス: select("待機"),
+			名刺AI処理状態: select("処理中"),
+			企業連携メモ: richText("Notion Workerが処理開始。"),
+		},
+	});
+}
+
+async function markCardDuplicateHold(
+	notion: NotionClient,
+	card: CardInfo,
+	candidates: Candidate[],
+): Promise<void> {
+	await notion.pages.update({
+		page_id: card.page.id,
+		properties: {
+			企業連携ステータス: select("重複疑い"),
+			Webhook引き継ぎステータス: select("要確認で停止"),
+			名刺AI処理状態: select("重複疑い"),
+			企業連携メモ: richText(
+				`強い候補が複数あるため停止: ${candidates
+					.slice(0, 3)
+					.map((candidate) => `${candidate.name}(${candidate.reasons.join("/")})`)
+					.join(", ")}`,
+			),
+			設計上の弱点: richText("強い候補が複数あるため、人間確認が必要。"),
+		},
+	});
+}
+
+async function markCardNeedsReview(
+	notion: NotionClient,
+	card: CardInfo,
+	message: string,
+): Promise<void> {
+	await notion.pages.update({
+		page_id: card.page.id,
+		properties: {
+			企業連携ステータス: select("要確認"),
+			Webhook引き継ぎステータス: select("要確認で停止"),
+			名刺AI処理状態: select("要確認"),
+			企業連携メモ: richText(message),
+			設計上の弱点: richText(message),
+		},
+	});
+}
+
+async function markCardFailure(
+	notion: NotionClient,
+	card: CardInfo,
+	message: string,
+): Promise<void> {
+	await notion.pages.update({
+		page_id: card.page.id,
+		properties: {
+			企業連携ステータス: select("連携失敗"),
+			Webhook引き継ぎステータス: select("引き継ぎ失敗"),
+			企業連携メモ: richText(`Worker処理失敗: ${message}`),
+			設計上の弱点: richText(`Worker処理失敗: ${message}`),
+		},
+	});
+}
+
+async function researchCompany(card: CardInfo): Promise<Research> {
+	const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+	if (apiKey) {
+		const fromGemini = await researchCompanyWithGemini(card, apiKey);
+		if (fromGemini) return fromGemini;
+	}
+	return fallbackResearch(card);
+}
+
+async function researchCompanyWithGemini(
+	card: CardInfo,
+	apiKey: string,
+): Promise<Research | null> {
+	const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+	const prompt = [
+		"和上ホールディングスの営業準備として企業情報を整理してください。",
+		"個人情報は使わず、会社名・ドメイン・住所だけを参考にしてください。",
+		"公開情報が不足する場合は、推測ですが、と明記した仮説にしてください。",
+		"JSONだけを返してください。",
+		`会社名: ${card.companyName}`,
+		`ドメイン: ${card.domain || "不明"}`,
+		`住所: ${card.address || "不明"}`,
+		"JSON keys: summary,currentIssue,futureIssue,salesAngle,fit,customerMarket3c,competitor3c,wajoRelation3c,source",
+	].join("\n");
+
+	try {
+		const response = await fetch(
+			`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+			{
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					contents: [{ parts: [{ text: prompt }] }],
+					generationConfig: {
+						responseMimeType: "application/json",
+					},
+				}),
+			},
+		);
+		if (!response.ok) {
+			console.log("Gemini research skipped", await response.text());
+			return null;
+		}
+		const json = (await response.json()) as {
+			candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+		};
+		const raw = json.candidates?.[0]?.content?.parts?.[0]?.text;
+		if (!raw) return null;
+		return normalizeResearch(JSON.parse(raw) as Partial<Research>, card);
+	} catch (error) {
+		console.log("Gemini research failed", String(error));
+		return null;
+	}
+}
+
+function fallbackResearch(card: CardInfo): Research {
+	const company = card.companyName || "対象企業";
+	return {
+		summary: `${company}は、名刺情報を起点に登録された企業です。公開情報の追加調査前のため、現時点では名刺上の会社名、ドメイン、住所をもとに営業準備の仮説を作成しています。`,
+		currentIssue: `推測ですが、${company}は再生可能エネルギー、系統用蓄電池、電力コスト、脱炭素、投資判断のいずれかに関心を持つ可能性があります。`,
+		futureIssue:
+			"推測ですが、今後は電力価格変動、系統制約、設備投資判断、脱炭素対応、BCP対応が課題になる可能性があります。",
+		salesAngle:
+			"初回は、再エネ/蓄電池への関心、投資対象、保有設備、電力コスト、相談したい案件の有無を短く確認します。",
+		fit:
+			"和上ホールディングスは、太陽光発電所仲介、系統用蓄電池、EPC/O&M、投資判断材料の整理で接点を作れます。",
+		customerMarket3c:
+			"推測ですが、顧客・市場は、再エネ活用、蓄電池導入、発電所売買、脱炭素対応、電力コスト対策を検討する法人または投資家層です。",
+		competitor3c:
+			"推測ですが、競合は蓄電池開発会社、EPC、アグリゲーター、太陽光施工会社、投資案件紹介会社、金融機関系の提案です。",
+		wajoRelation3c:
+			"和上ホールディングスは、太陽光・蓄電池案件の具体情報、施工/運用知見、発電所売買、投資判断の前提整理で価値を出せます。",
+		source:
+			"名刺情報 + Notion Worker仮説生成。公開情報不足のため、推測を含む箇所は推測ですがと明記。",
+	};
+}
+
+function normalizeResearch(input: Partial<Research>, card: CardInfo): Research {
+	const fallback = fallbackResearch(card);
+	return {
+		summary: input.summary || fallback.summary,
+		currentIssue: input.currentIssue || fallback.currentIssue,
+		futureIssue: input.futureIssue || fallback.futureIssue,
+		salesAngle: input.salesAngle || fallback.salesAngle,
+		fit: input.fit || fallback.fit,
+		customerMarket3c: input.customerMarket3c || fallback.customerMarket3c,
+		competitor3c: input.competitor3c || fallback.competitor3c,
+		wajoRelation3c: input.wajoRelation3c || fallback.wajoRelation3c,
+		source: input.source || fallback.source,
+	};
+}
+
+function readCard(page: Page): CardInfo {
+	const properties = page.properties ?? {};
+	const name = text(properties["氏名"]);
+	const companyName = text(properties["会社名"]);
+	const emailValue = text(properties["メール"]);
+	const phoneValue = digits(text(properties["電話"]));
+	const domain = emailValue.includes("@")
+		? emailValue.split("@").pop()?.toLowerCase() || ""
+		: "";
+	const key = [
+		`corp:${normalizeCompanyName(companyName)}`,
+		`domain:${domain}`,
+		`phone:${phoneValue}`,
+	].join("|");
+
+	return {
+		page,
+		name,
+		companyName,
+		email: emailValue,
+		domain,
+		phone: phoneValue,
+		address: text(properties["住所"]),
+		role: text(properties["役職"]),
+		key,
+	};
+}
+
+function shouldProcess(card: CardInfo): boolean {
+	const properties = card.page.properties ?? {};
+	const hasImage = Array.isArray((properties["名刺画像"] as { files?: unknown[] })?.files)
+		? ((properties["名刺画像"] as { files: unknown[] }).files.length ?? 0) > 0
+		: false;
+	return Boolean(card.companyName || card.email || card.phone || hasImage);
+}
+
+async function safeUpdateExistingProperties(
+	notion: NotionClient,
+	page: Page,
+	patches: Record<string, SafePatch>,
+): Promise<void> {
+	const properties = buildExistingPropertyPatch(page, patches);
+	if (Object.keys(properties).length === 0) return;
+	try {
+		await notion.pages.update({ page_id: page.id, properties });
+		return;
+	} catch (error) {
+		console.log("bulk page update skipped; retrying property by property", String(error));
+	}
+	for (const [name, value] of Object.entries(properties)) {
+		try {
+			await notion.pages.update({
+				page_id: page.id,
+				properties: { [name]: value },
+			});
+		} catch (error) {
+			console.log("property update skipped", { pageId: page.id, name, error: String(error) });
+		}
+	}
+}
+
+function buildExistingPropertyPatch(
+	page: Page,
+	patches: Record<string, SafePatch>,
+): Record<string, unknown> {
+	const pageProperties = page.properties ?? {};
+	const result: Record<string, unknown> = {};
+	for (const [name, patch] of Object.entries(patches)) {
+		const property = pageProperties[name];
+		const value = propertyValueForExistingType(property, patch);
+		if (!value) continue;
+		result[name] = value;
+	}
+	return result;
+}
+
+function propertyValueForExistingType(
+	property: unknown,
+	patch: SafePatch,
+): Record<string, unknown> | undefined {
+	if (!property || typeof property !== "object") return undefined;
+	const type = (property as Record<string, unknown>).type;
+	if (patch.kind === "clear") {
+		if (type === "rich_text") return { rich_text: [] };
+		if (type === "select") return { select: null };
+		if (type === "status") return { status: null };
+		if (type === "number") return { number: null };
+		if (type === "date") return { date: null };
+		if (type === "checkbox") return { checkbox: false };
+		if (type === "multi_select") return { multi_select: [] };
+		if (type === "people") return { people: [] };
+		if (type === "relation") return { relation: [] };
+		if (type === "url") return { url: null };
+		return undefined;
+	}
+	if (patch.kind === "text") {
+		if (type === "rich_text") return richText(patch.value);
+		if (type === "title") return title(patch.value);
+		if (type === "url") return { url: patch.value.slice(0, 1900) };
+		return undefined;
+	}
+	if (patch.kind === "select") {
+		if (type === "select") return select(patch.value);
+		if (type === "status") return { status: { name: patch.value } };
+		if (type === "rich_text") return richText(patch.value);
+		if (type === "title") return title(patch.value);
+		return undefined;
+	}
+	if (patch.kind === "number") {
+		if (type === "number") return { number: patch.value };
+		if (type === "rich_text") return richText(String(patch.value));
+		return undefined;
+	}
+	if (patch.kind === "date") {
+		if (type === "date") return { date: { start: patch.value } };
+		if (type === "rich_text") return richText(patch.value);
+		return undefined;
+	}
+	if (patch.kind === "checkbox") {
+		if (type === "checkbox") return { checkbox: patch.value };
+		if (type === "rich_text") return richText(patch.value ? "true" : "false");
+		return undefined;
+	}
+	if (patch.kind === "multi_select") {
+		const values = patch.values.filter(Boolean).slice(0, 5);
+		if (values.length === 0) return undefined;
+		if (type === "multi_select") {
+			return { multi_select: values.map((name) => ({ name })) };
+		}
+		if (type === "select") return select(values[0] ?? "");
+		if (type === "rich_text") return richText(values.join(", "));
+		return undefined;
+	}
+	if (patch.kind === "people") {
+		if (type === "people") {
+			return { people: patch.ids.map((id) => ({ object: "user", id })) };
+		}
+		return undefined;
+	}
+	if (patch.kind === "relation") {
+		if (type === "relation") return relationIds(patch.ids);
+		return undefined;
+	}
+	return undefined;
+}
+
+function numberValue(property: unknown): number | null {
+	if (!property || typeof property !== "object") return null;
+	const prop = property as Record<string, unknown>;
+	if (prop.type === "number" && typeof prop.number === "number") {
+		return prop.number;
+	}
+	if (prop.type === "rollup" && prop.rollup && typeof prop.rollup === "object") {
+		const rollup = prop.rollup as Record<string, unknown>;
+		if (typeof rollup.number === "number") return rollup.number;
+	}
+	if (prop.type === "formula" && prop.formula && typeof prop.formula === "object") {
+		const formula = prop.formula as Record<string, unknown>;
+		if (typeof formula.number === "number") return formula.number;
+	}
+	return null;
+}
+
+function numberFromText(value: string): number | null {
+	const normalized = value.replace(/,/g, "");
+	const match = normalized.match(/\d+(?:\.\d+)?/);
+	return match ? Number(match[0]) : null;
+}
+
+function inferPowerAreaFromAddress(address: string): string {
+	if (!address) return "";
+	if (/大阪|京都|兵庫|奈良|滋賀|和歌山/.test(address)) return "関西電力";
+	if (/東京|神奈川|埼玉|千葉|茨城|栃木|群馬|山梨|静岡県富士川以東/.test(address)) {
+		return "東京電力";
+	}
+	if (/愛知|岐阜|三重|長野|静岡/.test(address)) return "中部電力";
+	if (/福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島/.test(address)) return "九州電力";
+	if (/北海道/.test(address)) return "北海道電力";
+	if (/青森|岩手|宮城|秋田|山形|福島|新潟/.test(address)) return "東北電力";
+	if (/富山|石川|福井/.test(address)) return "北陸電力";
+	if (/鳥取|島根|岡山|広島|山口/.test(address)) return "中国電力";
+	if (/徳島|香川|愛媛|高知/.test(address)) return "四国電力";
+	if (/沖縄/.test(address)) return "沖縄電力";
+	return "";
+}
+
+function text(property: unknown): string {
+	if (!property || typeof property !== "object") return "";
+	const prop = property as Record<string, unknown>;
+	if (prop.type === "title" && Array.isArray(prop.title)) {
+		return plain(prop.title);
+	}
+	if (prop.type === "rich_text" && Array.isArray(prop.rich_text)) {
+		return plain(prop.rich_text);
+	}
+	if (prop.type === "email" && typeof prop.email === "string") return prop.email;
+	if (prop.type === "phone_number" && typeof prop.phone_number === "string") {
+		return prop.phone_number;
+	}
+	if (prop.type === "url" && typeof prop.url === "string") return prop.url;
+	if (prop.type === "select" && prop.select && typeof prop.select === "object") {
+		const selectValue = prop.select as Record<string, unknown>;
+		return typeof selectValue.name === "string" ? selectValue.name : "";
+	}
+	if (prop.type === "status" && prop.status && typeof prop.status === "object") {
+		const statusValue = prop.status as Record<string, unknown>;
+		return typeof statusValue.name === "string" ? statusValue.name : "";
+	}
+	if (prop.type === "multi_select" && Array.isArray(prop.multi_select)) {
+		return prop.multi_select
+			.map((item) => {
+				if (!item || typeof item !== "object") return "";
+				const option = item as Record<string, unknown>;
+				return typeof option.name === "string" ? option.name : "";
+			})
+			.filter(Boolean)
+			.join(", ");
+	}
+	return "";
+}
+
+function checkboxValue(property: unknown): boolean {
+	if (!property || typeof property !== "object") return false;
+	const prop = property as Record<string, unknown>;
+	return prop.type === "checkbox" && prop.checkbox === true;
+}
+
+function plain(items: unknown[]): string {
+	return items
+		.map((item) => {
+			if (!item || typeof item !== "object") return "";
+			const rich = item as Record<string, unknown>;
+			return typeof rich.plain_text === "string" ? rich.plain_text : "";
+		})
+		.join("")
+		.trim();
+}
+
+function normalizeCompanyName(value: string): string {
+	return value
+		.toLowerCase()
+		.replace(/株式会社|有限会社|合同会社|（株）|㈱|inc\.?|co\.?\s*ltd\.?/g, "")
+		.replace(/[\s　・･\-ー＿_.,，。()（）【】\[\]]/g, "")
+		.trim();
+}
+
+function digits(value: string): string {
+	return value.replace(/\D/g, "");
+}
+
+function firstString(...values: unknown[]): string | undefined {
+	for (const value of values) {
+		if (typeof value === "string" && value.trim()) return value.trim();
+	}
+	return undefined;
+}
+
+function readNestedString(
+	value: unknown,
+	path: string[],
+): string | undefined {
+	let cursor = value;
+	for (const key of path) {
+		if (!cursor || typeof cursor !== "object") return undefined;
+		cursor = (cursor as Record<string, unknown>)[key];
+	}
+	return typeof cursor === "string" && cursor.trim() ? cursor.trim() : undefined;
+}
+
+function extractWebhookLandPageId(body: Record<string, unknown>): string | undefined {
+	return firstString(
+		body.landPageId,
+		body.land_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "landPageId"]),
+		readNestedString(body, ["data", "land_page_id"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		pageIdFromUrl(readNestedString(body, ["data", "URL"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+async function resolveLandPageIdFromWebhook(
+	body: Record<string, unknown>,
+	notion: NotionClient,
+): Promise<string | undefined> {
+	const name = extractWebhookBodyText(body, [
+		"土地名称",
+		"土地名",
+		"Name",
+		"name",
+		"title",
+	]);
+	const address = extractWebhookBodyText(body, [
+		"所在地",
+		"住所",
+		"土地所在地",
+		"address",
+	]);
+	const areaText = extractWebhookBodyText(body, [
+		"面積（坪）",
+		"面積",
+		"areaTsubo",
+		"area_tsubo",
+	]);
+	const area = numberFromText(areaText);
+
+	const candidates = uniquePages([
+		...(name ? await safeLandQuery(notion, { property: "土地名称", title: { contains: name } }) : []),
+		...(address
+			? await safeLandQuery(notion, { property: "所在地", rich_text: { contains: address } })
+			: []),
+	]);
+	if (candidates.length === 0) return undefined;
+
+	const matching = candidates.filter((page) => {
+		const land = readLand(page);
+		const nameMatches = !name || normalizeLookupText(land.name) === normalizeLookupText(name);
+		const addressMatches =
+			!address || normalizeLookupText(land.address) === normalizeLookupText(address);
+		const areaMatches =
+			area === null || land.areaTsubo === null || Math.abs(land.areaTsubo - area) < 0.01;
+		return nameMatches && addressMatches && areaMatches;
+	});
+	if (matching.length === 1) return matching[0]!.id;
+	if (candidates.length === 1) return candidates[0]!.id;
+	return undefined;
+}
+
+async function safeLandQuery(
+	notion: NotionClient,
+	filter: Record<string, unknown>,
+): Promise<Page[]> {
+	try {
+		const response = await notion.dataSources.query({
+			data_source_id: LAND_DATA_SOURCE_ID,
+			page_size: 10,
+			filter,
+		});
+		return response.results;
+	} catch (error) {
+		console.log("land lookup skipped", String(error));
+		return [];
+	}
+}
+
+function uniquePages(pages: Page[]): Page[] {
+	const seen = new Set<string>();
+	const result: Page[] = [];
+	for (const page of pages) {
+		if (seen.has(page.id)) continue;
+		seen.add(page.id);
+		result.push(page);
+	}
+	return result;
+}
+
+function uniqueStrings(values: string[]): string[] {
+	const seen = new Set<string>();
+	const result: string[] = [];
+	for (const value of values) {
+		if (!value || seen.has(value)) continue;
+		seen.add(value);
+		result.push(value);
+	}
+	return result;
+}
+
+function normalizeLookupText(value: string): string {
+	return value.replace(/[\s　・･\-ー＿_.,，。()（）【】\[\]]/g, "").toLowerCase();
+}
+
+function extractWebhookPageId(body: Record<string, unknown>): string | undefined {
+	return firstString(
+		body.companyPageId,
+		body.company_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "companyPageId"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		pageIdFromUrl(readNestedString(body, ["data", "URL"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+async function resolveCompanyPageIdFromWebhook(
+	body: Record<string, unknown>,
+	notion: NotionClient,
+): Promise<string | undefined> {
+	const direct = extractWebhookPageId(body);
+	if (direct) return direct;
+
+	const duplicateKey = extractWebhookBodyText(body, [
+		"企業重複チェックキー",
+		"companyDuplicateKey",
+		"company_duplicate_key",
+	]);
+	if (duplicateKey) {
+		const byKey = await safeCompanyQuery(notion, {
+			property: "企業重複チェックキー",
+			rich_text: { equals: duplicateKey },
+		});
+		if (byKey.length === 1) return byKey[0]!.id;
+	}
+
+	const companyName = extractWebhookBodyText(body, [
+		"企業名",
+		"会社名",
+		"companyName",
+		"company_name",
+		"name",
+	]);
+	if (!companyName) return undefined;
+	const byName = await safeCompanyQuery(notion, {
+		property: "企業名",
+		title: { contains: companyName },
+	});
+	const normalized = normalizeCompanyName(companyName);
+	const exact = byName.filter(
+		(page) => normalizeCompanyName(text(page.properties?.["企業名"])) === normalized,
+	);
+	const candidates = exact.length > 0 ? exact : byName;
+	if (candidates.length === 1) return candidates[0]!.id;
+	return undefined;
+}
+
+function extractWebhookBodyText(
+	body: Record<string, unknown>,
+	keys: string[],
+): string {
+	for (const key of keys) {
+		const value = firstString(
+			bodyString(body[key]),
+			bodyString((body.data as Record<string, unknown> | undefined)?.[key]),
+			bodyString((body.properties as Record<string, unknown> | undefined)?.[key]),
+			bodyString(
+				((body.data as Record<string, unknown> | undefined)?.properties as
+					| Record<string, unknown>
+					| undefined)?.[key],
+			),
+			bodyString(
+				((body.page as Record<string, unknown> | undefined)?.properties as
+					| Record<string, unknown>
+					| undefined)?.[key],
+			),
+		);
+		if (value) return value;
+	}
+	return "";
+}
+
+function bodyString(value: unknown): string {
+	if (typeof value === "string") return value.trim();
+	if (typeof value === "number" || typeof value === "boolean") return String(value);
+	if (Array.isArray(value)) {
+		return value.map(bodyString).filter(Boolean).join(", ");
+	}
+	if (!value || typeof value !== "object") return "";
+	const object = value as Record<string, unknown>;
+	const fromProperty = text(object);
+	if (fromProperty) return fromProperty;
+	return firstString(
+		object.plain_text,
+		object.name,
+		object.title,
+		object.url,
+		object.value,
+		object.content,
+		bodyString(object.text),
+		bodyString(object.select),
+		bodyString(object.rich_text),
+	) ?? "";
+}
+
+function numberFromWebhookBody(
+	body: Record<string, unknown>,
+	key: string,
+	fallback: number,
+): number {
+	const value = (body[key] ?? (body.data as Record<string, unknown> | undefined)?.[key]) as
+		| number
+		| string
+		| undefined;
+	if (typeof value === "number" && Number.isFinite(value)) return value;
+	if (typeof value === "string" && value.trim()) {
+		const parsed = Number(value.trim());
+		if (Number.isFinite(parsed)) return parsed;
+	}
+	return fallback;
+}
+
+function booleanFromWebhookBody(
+	body: Record<string, unknown>,
+	key: string,
+	fallback: boolean,
+): boolean {
+	const value = body[key] ?? (body.data as Record<string, unknown> | undefined)?.[key];
+	if (typeof value === "boolean") return value;
+	if (typeof value === "string") {
+		if (/^(true|1|yes|on)$/i.test(value.trim())) return true;
+		if (/^(false|0|no|off)$/i.test(value.trim())) return false;
+	}
+	return fallback;
+}
+
+function pageIdFromUrl(value: string | undefined): string | undefined {
+	if (!value) return undefined;
+	const clean = value.split(/[?#]/)[0] ?? value;
+	const compactMatches = clean.match(/[0-9a-f]{32}/gi);
+	const uuidMatches = clean.match(
+		/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+	);
+	const compact =
+		compactMatches?.at(-1) ?? uuidMatches?.at(-1)?.replace(/-/g, "");
+	if (!compact) return undefined;
+	return [
+		compact.slice(0, 8),
+		compact.slice(8, 12),
+		compact.slice(12, 16),
+		compact.slice(16, 20),
+		compact.slice(20),
+	].join("-");
+}
+
+function title(value: string): Record<string, unknown> {
+	return { title: [{ text: { content: value.slice(0, 1800) } }] };
+}
+
+function richText(value: string): Record<string, unknown> {
+	return { rich_text: [{ text: { content: value.slice(0, 1800) } }] };
+}
+
+function select(name: string): Record<string, unknown> {
+	return { select: { name } };
+}
+
+function multiSelect(names: string[]): Record<string, unknown> {
+	return { multi_select: names.map((name) => ({ name })) };
+}
+
+function relation(id: string): Record<string, unknown> {
+	return { relation: [{ id }] };
+}
+
+function relationIds(ids: string[]): Record<string, unknown> {
+	return { relation: ids.map((id) => ({ id })) };
+}
+
+function uniqueIds(ids: string[]): string[] {
+	const result: string[] = [];
+	const seen = new Set<string>();
+	for (const id of ids) {
+		if (!id || seen.has(id)) continue;
+		seen.add(id);
+		result.push(id);
+	}
+	return result;
+}
+
+function relationIdsFromProperty(property: unknown): string[] {
+	if (!property || typeof property !== "object") return [];
+	const prop = property as Record<string, unknown>;
+	if (!Array.isArray(prop.relation)) return [];
+	return prop.relation
+		.map((item) => {
+			if (!item || typeof item !== "object") return "";
+			const relationItem = item as Record<string, unknown>;
+			return typeof relationItem.id === "string" ? relationItem.id : "";
+		})
+		.filter(Boolean);
+}
+
+function personIdsFromProperty(property: unknown): string[] {
+	if (!property || typeof property !== "object") return [];
+	const prop = property as Record<string, unknown>;
+	if (!Array.isArray(prop.people)) return [];
+	return prop.people
+		.map((item) => {
+			if (!item || typeof item !== "object") return "";
+			const person = item as Record<string, unknown>;
+			return typeof person.id === "string" ? person.id : "";
+		})
+		.filter(Boolean);
+}
+
+function personLabelsFromProperty(property: unknown): string[] {
+	if (!property || typeof property !== "object") return [];
+	const prop = property as Record<string, unknown>;
+	if (!Array.isArray(prop.people)) return [];
+	return prop.people
+			.map((item) => {
+				if (!item || typeof item !== "object") return "";
+				const person = item as Record<string, unknown>;
+				return firstString(person.name, person.id) ?? "";
+			})
+			.filter(Boolean);
+}
+
+function dateStartFromProperty(property: unknown): string {
+	if (!property || typeof property !== "object") return "";
+	const prop = property as Record<string, unknown>;
+	if (prop.type !== "date" || !prop.date || typeof prop.date !== "object") return "";
+	const date = prop.date as Record<string, unknown>;
+	return typeof date.start === "string" ? date.start : "";
+}
+
+function email(value: string): Record<string, unknown> {
+	return { email: value };
+}
+
+function phoneNumber(value: string): Record<string, unknown> {
+	return { phone_number: value };
+}
+
+function verifyWebhookSecret(
+	headers: Record<string, string>,
+	body?: unknown,
+): void {
+	const expected = process.env.WAJO_WORKER_WEBHOOK_SECRET;
+	if (!expected) return;
+	const actual =
+		headers["x-wajo-worker-secret"] ||
+		headers["X-WAJO-WORKER-SECRET"] ||
+		(body && typeof body === "object"
+			? firstString(
+					(body as Record<string, unknown>).secret,
+					(body as Record<string, unknown>).wajoWorkerSecret,
+					(body as Record<string, unknown>).wajo_worker_secret,
+				)
+			: undefined);
+	if (actual !== expected) {
+		throw new WebhookVerificationError("Invalid WAJO worker webhook secret");
+	}
+}
+
+// ─── 成約報告パイプライン 実装 ──────────────────────────────────────────────
+
+interface ClosingFeedbackAIResponse {
+	勝因: string;
+	反省点: string;
+	次に活かす学び: string;
+	ナレッジ化候補: "候補" | "不要";
+	ナレッジ化メモ: string;
+}
+
+/** ノルマ申請書DBのページIDをWebhookボディから抽出 */
+function extractQuotaPageIdFromWebhook(body: Record<string, unknown>): string | undefined {
+	return firstString(
+		body.quotaPageId,
+		body.quota_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+/** 案件DBのページIDをWebhookボディから抽出 */
+function extractProjectPageIdFromWebhook(body: Record<string, unknown>): string | undefined {
+	return firstString(
+		body.projectPageId,
+		body.project_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "projectPageId"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+/** 成約報告DBのページIDをWebhookボディから抽出 */
+function extractClosingReportPageIdFromWebhook(body: Record<string, unknown>): string | undefined {
+	return firstString(
+		body.closingPageId,
+		body.closing_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "closingPageId"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+/** Webhookを起動したユーザーのIDを抽出（ボタンを押した人） */
+function extractTriggerUserIdFromWebhook(body: Record<string, unknown>): string | undefined {
+	return firstString(
+		readNestedString(body, ["user", "id"]),
+		readNestedString(body, ["triggered_by", "id"]),
+		readNestedString(body, ["triggeredBy", "id"]),
+		readNestedString(body, ["automation", "user", "id"]),
+		readNestedString(body, ["source", "user_id"]),
+		body.userId,
+		body.user_id,
+	);
+}
+
+function extractManagerActionReasonFromWebhook(body: Record<string, unknown>): string {
+	return extractWebhookBodyText(body, [
+		"理由",
+		"差し戻し理由",
+		"取り消し理由",
+		"管理メモ",
+		"メモ",
+		"reason",
+		"message",
+	]);
+}
+
+function extractLostReasonFromWebhook(body: Record<string, unknown>): string {
+	return extractWebhookBodyText(body, [
+		"失注理由",
+		"失注理由カテゴリ",
+		"lostReason",
+		"lost_reason",
+		"reason",
+		"理由",
+	]);
+}
+
+function extractLostMemoFromWebhook(body: Record<string, unknown>): string {
+	return extractWebhookBodyText(body, [
+		"失注理由メモ",
+		"失注申請メモ",
+		"lostMemo",
+		"lost_memo",
+		"memo",
+		"メモ",
+		"message",
+	]);
+}
+
+function extractNotificationEventTypeFromWebhook(body: Record<string, unknown>): string {
+	return (
+		extractWebhookBodyText(body, [
+			"通知種別",
+			"イベント",
+			"eventType",
+			"event_type",
+			"action",
+		]) || "営業通知"
+	);
+}
+
+function extractNotificationMessageFromWebhook(
+	body: Record<string, unknown>,
+	eventType: string,
+): string {
+	const explicit = extractWebhookBodyText(body, [
+		"通知文",
+		"通知メッセージ",
+		"message",
+		"text",
+		"body",
+	]);
+	if (explicit) return explicit;
+	return `📣 ${eventType} がありました。対象ページを確認してください。`;
+}
+
+function userIdsFromWebhookValue(value: unknown): string[] {
+	if (Array.isArray(value)) {
+		return value
+			.flatMap(userIdsFromWebhookValue)
+			.map((id) => id.trim())
+			.filter(Boolean);
+	}
+	if (typeof value === "string") {
+		return value
+			.split(",")
+			.map((id) => id.trim())
+			.filter(Boolean);
+	}
+	return [];
+}
+
+function extractSalesTeamUserIdsFromWebhook(body: Record<string, unknown>): string[] {
+	const data = body.data as Record<string, unknown> | undefined;
+	return uniqueStrings([
+		...userIdsFromWebhookValue(body.salesTeamUserIds),
+		...userIdsFromWebhookValue(body.sales_team_user_ids),
+		...userIdsFromWebhookValue(body.salesUsers),
+		...userIdsFromWebhookValue(data?.salesTeamUserIds),
+		...userIdsFromWebhookValue(data?.sales_team_user_ids),
+	]);
+}
+
+function salesTeamNotificationRichText(
+	message: string,
+	userIds = SALES_TEAM_USER_IDS,
+): Array<Record<string, unknown>> {
+	const mentions = userIds.slice(0, 30).flatMap((id) => [
+		{
+			type: "mention",
+			mention: { type: "user", user: { id } },
+		},
+		{ type: "text", text: { content: " " } },
+	]);
+	return [
+		...mentions,
+		{
+			type: "text",
+			text: { content: `${mentions.length ? "\n" : ""}${message.slice(0, 1800)}` },
+		},
+	];
+}
+
+async function createPageComment(
+	notion: NotionClient,
+	pageId: string,
+	message: string,
+	mentionSalesTeam = false,
+	salesTeamUserIds = SALES_TEAM_USER_IDS,
+): Promise<void> {
+	if (!notion.comments?.create) return;
+	try {
+		await notion.comments.create({
+			parent: { page_id: pageId },
+			rich_text: mentionSalesTeam
+				? salesTeamNotificationRichText(message, salesTeamUserIds)
+				: [{ type: "text", text: { content: message.slice(0, 1800) } }],
+		});
+	} catch (error) {
+		console.log("comment notification skipped", { pageId, error: String(error) });
+	}
+}
+
+async function notifySalesTeam(
+	notion: NotionClient,
+	pageId: string,
+	message: string,
+	salesTeamUserIds = SALES_TEAM_USER_IDS,
+): Promise<void> {
+	await createPageComment(notion, pageId, message, true, salesTeamUserIds);
+}
+
+async function processInquiryAssignOwner(
+	inquiryPageId: string,
+	triggerUserId: string,
+	notion: NotionClient,
+): Promise<{ action: string; message: string }> {
+	const inquiryPage = await notion.pages.retrieve({ page_id: inquiryPageId });
+	const properties = inquiryPage.properties ?? {};
+	const inquiryTitle =
+		text(properties["件名"]) ||
+		text(properties["問い合わせ名"]) ||
+		text(properties["名前"]) ||
+		"問い合わせ";
+	const assignedUserIds = personIdsFromProperty(properties["担当営業ユーザー"]);
+
+	if (assignedUserIds.includes(triggerUserId)) {
+		return {
+			action: "already-owned",
+			message: "この問い合わせは既にあなたが担当しています。重複更新は行いませんでした。",
+		};
+	}
+
+	if (assignedUserIds.length > 0) {
+		await createPageComment(
+			notion,
+			inquiryPage.id,
+			"⚠️ 担当取得は行いませんでした。\n既に担当営業ユーザーが設定されています。担当変更が必要な場合はマネージャー側で変更してください。",
+		);
+		return {
+			action: "already-assigned",
+			message: "既に担当営業ユーザーが設定されているため、上書きしませんでした。",
+		};
+	}
+
+	const today = todayDateJST();
+	await safeUpdateExistingProperties(notion, inquiryPage, {
+		担当営業ユーザー: { kind: "people", ids: [triggerUserId] },
+		ステータス: { kind: "select", value: "担当確定" },
+		進捗フェーズ: { kind: "select", value: "担当確定" },
+		担当確定日: { kind: "date", value: today },
+		担当取得日: { kind: "date", value: today },
+		担当日: { kind: "date", value: today },
+		最終アクション日: { kind: "date", value: today },
+	});
+
+	await notifySalesTeam(
+		notion,
+		inquiryPage.id,
+		`🙋 担当が決まりました: ${inquiryTitle}\n担当営業ユーザーにボタンを押したユーザーを設定しました。`,
+	);
+
+	return {
+		action: "assigned",
+		message: "担当営業ユーザーを設定しました。既に担当者がいる場合は上書きしない安全形です。",
+	};
+}
+
+async function processInquiryProjectCreation(
+	inquiryPageId: string,
+	notion: NotionClient,
+	triggerUserId?: string,
+	dryRun = false,
+): Promise<InquiryProjectCreationResult> {
+	const inquiryPage = await notion.pages.retrieve({ page_id: inquiryPageId });
+	const inquiryTitle = readGenericPageTitle(inquiryPage) || "問い合わせ";
+	const relationProjectIds = uniqueStrings([
+		...relationIdsFromProperty(inquiryPage.properties?.["紐づき案件"]),
+		...relationIdsFromProperty(inquiryPage.properties?.["関連案件"]),
+	]);
+	const existingProjects = await findProjectsByInquiry(notion, inquiryPage.id);
+	const existingProjectIds = uniqueStrings([
+		...relationProjectIds,
+		...existingProjects.map((project) => project.page.id),
+	]);
+
+	if (existingProjectIds.length > 0) {
+		if (!dryRun) {
+			await markInquiryProjectLinked(
+				notion,
+				inquiryPage,
+				existingProjectIds,
+				triggerUserId,
+				"既存の紐づき案件を検出したため、新規案件は作成していません。",
+			);
+			await createPageComment(
+				notion,
+				inquiryPage.id,
+				"⚠️ 案件化は行いませんでした。\nこの問い合わせには既に紐づき案件があります。重複案件を作らず、既存案件へのリンクだけ整理しました。",
+			);
+		}
+		return {
+			inquiryPageId,
+			action: dryRun ? "dry-run" : "skipped-existing",
+			projectId: existingProjectIds[0] ?? null,
+			created: 0,
+			message: `既存の紐づき案件 ${existingProjectIds.length} 件を検出。新規作成は行いません。`,
+		};
+	}
+
+	if (dryRun) {
+		return {
+			inquiryPageId,
+			action: "dry-run",
+			projectId: null,
+			created: 1,
+			message: `dry-run: 案件管理DBへ問い合わせ起点の案件を1件作成予定です。対象: ${inquiryTitle}`,
+		};
+	}
+
+	try {
+		const project = await createProjectFromInquiry(notion, inquiryPage, triggerUserId);
+		await markInquiryProjectLinked(
+			notion,
+			inquiryPage,
+			[project.id],
+			triggerUserId,
+			"案件管理DBへ問い合わせ起点の案件を1件作成しました。",
+		);
+		await markAiLearningLogsOutcome(notion, {
+			relationProperty: "関連問い合わせ",
+			pageId: inquiryPage.id,
+			outcome: "案件化",
+			scoreThreshold: 65,
+			note: "問い合わせ案件化Workerが案件管理DBへ新規案件を作成し、案件化予測の実結果を反映。",
+		}).catch((error) => {
+			console.log("inquiry project learning outcome skipped", String(error));
+		});
+		await notifySalesTeam(
+			notion,
+			project.id,
+			`📣 案件化しました: ${inquiryTitle}\n問い合わせから案件管理DBへ新しい案件が作成されました。`,
+		);
+		return {
+			inquiryPageId,
+			action: "created-project",
+			projectId: project.id,
+			created: 1,
+			message: "案件管理DBへ問い合わせ起点の案件を1件作成し、問い合わせ側へ紐づけ返しました。",
+		};
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		await safeUpdateExistingProperties(notion, inquiryPage, {
+			案件化状態: { kind: "select", value: "案件化保留" },
+			案件化メモ: { kind: "text", value: `問い合わせ案件化Worker処理失敗: ${message}` },
+		});
+		return {
+			inquiryPageId,
+			action: "error",
+			projectId: null,
+			created: 0,
+			message: `問い合わせ案件化に失敗しました: ${message.slice(0, 300)}`,
+		};
+	}
+}
+
+async function findProjectsByInquiry(
+	notion: NotionClient,
+	inquiryPageId: string,
+): Promise<ProjectInfo[]> {
+	try {
+		const response = await notion.dataSources.query({
+			data_source_id: PROJECT_DATA_SOURCE_ID,
+			page_size: 20,
+			filter: {
+				property: "元問い合わせ",
+				relation: { contains: inquiryPageId },
+			},
+		});
+		return (response.results ?? []).map(readProjectInfo);
+	} catch (error) {
+		console.log("inquiry project lookup skipped", String(error));
+		return [];
+	}
+}
+
+async function createProjectFromInquiry(
+	notion: NotionClient,
+	inquiryPage: Page,
+	triggerUserId?: string,
+): Promise<Page> {
+	const properties = inquiryPage.properties ?? {};
+	const inquiryTitle = readGenericPageTitle(inquiryPage) || "問い合わせ";
+	const projectName = buildInquiryProjectName(inquiryTitle);
+	const created = await notion.pages.create({
+		parent: { data_source_id: PROJECT_DATA_SOURCE_ID },
+		properties: {
+			案件名: title(projectName),
+		},
+	});
+	const projectPage = await notion.pages.retrieve({ page_id: created.id });
+	const existingAssignedUserIds = personIdsFromProperty(properties["担当営業ユーザー"]);
+	const assignedUserIds =
+		existingAssignedUserIds.length > 0
+			? uniqueStrings(existingAssignedUserIds)
+			: triggerUserId
+				? [triggerUserId]
+				: [];
+	const relatedCompanyIds = relationIdsFromProperty(properties["関連企業"]);
+	const contactLogIds = relationIdsFromProperty(properties["顧客接点ログ"]);
+	const plannedGrossProfit = numberValue(properties["予定粗利額"]);
+	const projectDealType = projectDealTypeFromInquiryDealType(text(properties["売買区分"]));
+	const inquiryAttentionMemo = text(properties["確認待ち内容"]);
+	const today = todayDateJST();
+	const memo = [
+		"お問い合わせDBからWorker案件化。",
+		`元問い合わせ: ${inquiryTitle}`,
+		"重複防止: 紐づき案件と案件管理DBの元問い合わせを確認してから作成。",
+		"次に確認すること: 対象物、売買条件、必要資料、価格、所有者/決裁者。",
+	].join("\n");
+	const patches: Record<string, SafePatch> = {
+		ステータス: { kind: "select", value: "🔴 情報収集中" },
+		獲得ソース: { kind: "select", value: "問い合わせ" },
+		仕入れ元区分: { kind: "select", value: "問い合わせ" },
+		作成日: { kind: "date", value: today },
+		最終アクション日: { kind: "date", value: today },
+		案件詳細: { kind: "text", value: memo },
+		情報ソース: { kind: "text", value: "お問い合わせDB / Worker案件化" },
+		確認待ち内容: {
+			kind: "text",
+			value: [
+				inquiryAttentionMemo,
+				"案件化後確認: 売買条件、資料、価格、所有者/決裁者、現地確認の要否を確認してください。",
+			]
+				.filter(Boolean)
+				.join("\n\n"),
+		},
+		元問い合わせ: { kind: "relation", ids: [inquiryPage.id] },
+	};
+	if (assignedUserIds.length > 0) {
+		patches["担当営業ユーザー"] = {
+			kind: "people",
+			ids: assignedUserIds.slice(0, 5),
+		};
+	}
+	if (relatedCompanyIds.length > 0) {
+		patches["関連企業"] = { kind: "relation", ids: relatedCompanyIds };
+	}
+	if (contactLogIds.length > 0) {
+		patches["顧客接点ログ"] = { kind: "relation", ids: contactLogIds };
+	}
+	if (plannedGrossProfit !== null && plannedGrossProfit > 0) {
+		patches["予定粗利額"] = { kind: "number", value: plannedGrossProfit };
+	}
+	if (projectDealType) {
+		patches["売買区分"] = { kind: "select", value: projectDealType };
+	}
+	await safeUpdateExistingProperties(notion, projectPage, patches);
+	return notion.pages.retrieve({ page_id: created.id });
+}
+
+function projectDealTypeFromInquiryDealType(inquiryDealType: string): string | null {
+	if (inquiryDealType === "売却相談") return "売却案件";
+	if (inquiryDealType === "購入相談") return "購入希望";
+	if (inquiryDealType === "売買両方") return "売買両方";
+	if (inquiryDealType === "その他相談") return "その他";
+	if (inquiryDealType === "不明") return "不明";
+	return null;
+}
+
+function buildInquiryProjectName(inquiryTitle: string): string {
+	const clean = inquiryTitle.replace(/\s+/g, " ").trim();
+	return (clean || `問い合わせ案件 ${todayDateJST()}`).slice(0, 1800);
+}
+
+async function markInquiryProjectLinked(
+	notion: NotionClient,
+	inquiryPage: Page,
+	projectIds: string[],
+	triggerUserId: string | undefined,
+	message: string,
+): Promise<void> {
+	const properties = inquiryPage.properties ?? {};
+	const currentProjectIds = uniqueStrings([
+		...relationIdsFromProperty(properties["紐づき案件"]),
+		...relationIdsFromProperty(properties["関連案件"]),
+	]);
+	const linkedProjectIds = uniqueStrings([...currentProjectIds, ...projectIds]);
+	const today = todayDateJST();
+	const patches: Record<string, SafePatch> = {
+		ステータス: { kind: "select", value: "案件化" },
+		進捗フェーズ: { kind: "select", value: "案件化" },
+		案件化状態: { kind: "select", value: "案件化済" },
+		案件化日: { kind: "date", value: today },
+		最終アクション日: { kind: "date", value: today },
+		紐づき案件: { kind: "relation", ids: linkedProjectIds },
+		関連案件: { kind: "relation", ids: linkedProjectIds },
+		案件化メモ: {
+			kind: "text",
+			value: [
+				message,
+				`関連案件数: ${linkedProjectIds.length}`,
+				"再実行時は既存関連案件を検出し、新規作成しない。",
+			].join("\n"),
+		},
+	};
+	if (triggerUserId) {
+		patches["案件化実行者"] = { kind: "people", ids: [triggerUserId] };
+	}
+	await safeUpdateExistingProperties(notion, inquiryPage, patches);
+}
+
+export { processInquiryAssignOwner as processInquiryAssignOwnerForTest };
+export { processInquiryProjectCreation as processInquiryProjectCreationForTest };
+export { processBusinessCard as processBusinessCardForTest };
+export { processInquiryCompanyLink as processInquiryCompanyLinkForTest };
+export {
+	processProjectEquipmentDetailRequest as processProjectEquipmentDetailRequestForTest,
+};
+export { processProjectProposalRequest as processProjectProposalRequestForTest };
+export {
+	processProjectResidentDocumentRequest as processProjectResidentDocumentRequestForTest,
+};
+export {
+	buildProposalSimulationPdfBytes as buildProposalSimulationPdfBytesForTest,
+	createDealFeedbackLearningLog as createDealFeedbackLearningLogForTest,
+	createMeetingFeedbackLearningLog as createMeetingFeedbackLearningLogForTest,
+	evaluateProposalSimulationDraft as evaluateProposalSimulationDraftForTest,
+	evaluateResidentDocumentDraft as evaluateResidentDocumentDraftForTest,
+};
+
+/**
+ * 成約報告メイン処理
+ * - 重複ガード（同一案件の有効な成約報告が既存なら skip）
+ * - 成約報告DB に成約レコード作成（承認ステータス → 「成約」）
+ * - 案件DB ステータス → 「🏆 成約」に更新
+ * - ボタンを押したユーザーを担当営業に自動セット
+ * - 営業部へコメント通知
+ * - AI フィードバック（勝因・反省点・学び）を非同期生成
+ */
+async function processClosingReport(
+	projectPageId: string,
+	notion: NotionClient,
+	triggerUserId?: string,
+): Promise<{ action: string; message: string; closingPageId: string | null }> {
+	// 1. 案件ページ取得
+	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
+	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
+
+	// 2. 重複チェック（同一案件に有効な成約報告が既にある場合は作成しない）
+	const existing = await notion.dataSources.query({
+		data_source_id: CLOSING_REPORT_DATA_SOURCE_ID,
+		filter: {
+			property: "関連案件",
+			relation: { contains: projectPageId },
+		},
+		page_size: 5,
+	});
+	const activeReports = ((existing.results ?? []) as Page[]).filter((p) => {
+		const s = text(p.properties?.["承認ステータス"]);
+		return s !== "取り消し" && s !== "差戻し" && s !== "差し戻し";
+	});
+	if (activeReports.length > 0) {
+		const existingId = activeReports[0]!.id;
+		const projectProperties = projectPage.properties ?? {};
+		const dealType = text(projectProperties["売買区分"]);
+		if (!closingDealTypeFromProjectDealType(dealType)) {
+			const message = [
+				`⚠️ 既存成約報告の月次反映を止めました: ${projectName}`,
+				"",
+				`この案件の成約報告は既に存在します（ID: ${existingId}）。`,
+				"ただし、案件ページの「売買区分」が未確定のため、月次成績への反映は行っていません。",
+				"「売却案件」「購入希望」「売買両方」のいずれかに設定してから、もう一度「🏆 成約を報告する」を押してください。",
+			].join("\n");
+			await createPageComment(notion, projectPage.id, message);
+			return {
+				action: "existing-needs-deal-type",
+				closingPageId: existingId,
+				message,
+			};
+		}
+		const dealSalesPersonIds = personIdsFromProperty(projectProperties["担当営業ユーザー"]);
+		const salesPersonIds = dealSalesPersonIds.length > 0
+			? dealSalesPersonIds
+			: (triggerUserId ? [triggerUserId] : []);
+		const grossProfit =
+			numberValue(projectProperties["実績粗利額"]) ??
+			numberValue(projectProperties["予定粗利額"]);
+		const sourcingPersonIds = personIdsFromProperty(projectProperties["仕入れ担当"]);
+		const commissionRate = sourcingPersonIds.length > 0 ? 0.02 : 0.04;
+		const closingSummary = grossProfit !== null && grossProfit > 0
+			? { grossProfit, commissionAmount: Math.round(grossProfit * commissionRate) }
+			: undefined;
+		let linked = false;
+		try {
+			linked = await linkClosingToMonthlyPerformanceRecord(
+				existingId,
+				salesPersonIds,
+				notion,
+				new Date(),
+				closingSummary,
+			);
+		} catch (error) {
+			console.error("existing closing monthly link repair error:", String(error));
+		}
+		return {
+			action: linked ? "already-exists-linked" : "already-exists",
+			closingPageId: existingId,
+			message: linked
+				? `この案件の成約報告は既に存在します（ID: ${existingId}）。重複作成せず、月次成績への紐付けを確認しました。`
+				: `この案件の成約報告は既に存在します（ID: ${existingId}）。重複作成を防ぎました。`,
+		};
+	}
+
+	// 3. 案件プロパティ読み取り
+	const dealType = text(projectPage.properties?.["売買区分"]);
+	const targetType = text(projectPage.properties?.["対象物種別"]);
+	const grossProfit =
+		numberValue(projectPage.properties?.["実績粗利額"]) ??
+		numberValue(projectPage.properties?.["予定粗利額"]);
+
+	if (grossProfit === null || grossProfit <= 0) {
+		const message = buildMissingGrossProfitMessage(projectName);
+		await createPageComment(notion, projectPage.id, message);
+		return {
+			action: "needs-gross-profit",
+			closingPageId: null,
+			message,
+		};
+	}
+
+	const closingDealType = closingDealTypeFromProjectDealType(dealType);
+	if (!closingDealType) {
+		const message = buildMissingDealTypeMessage(projectName);
+		await createPageComment(notion, projectPage.id, message);
+		return {
+			action: "needs-deal-type",
+			closingPageId: null,
+			message,
+		};
+	}
+
+	// 担当営業：案件側の担当を優先し、未設定時だけクリックしたユーザーを使う
+	const dealSalesPersonIds = personIdsFromProperty(projectPage.properties?.["担当営業ユーザー"]);
+	const salesPersonIds = dealSalesPersonIds.length > 0
+		? dealSalesPersonIds
+		: (triggerUserId ? [triggerUserId] : []);
+	const sourcingPersonIds = personIdsFromProperty(projectPage.properties?.["仕入れ担当"]);
+	const relatedCompanyIds = relationIdsFromProperty(projectPage.properties?.["関連企業"]);
+	const hasSeparateSourcing = sourcingPersonIds.length > 0;
+	const commissionRate = hasSeparateSourcing ? 0.02 : 0.04;
+	const commissionAmount = Math.round(grossProfit * commissionRate);
+
+	// 4. 案件ステータスは即時成約へ。後追いでマネージャーが差し戻し/取り消しを行う。
+	await safeUpdateExistingProperties(notion, projectPage, {
+		ステータス: { kind: "select", value: "🏆 成約" },
+		成約日: { kind: "date", value: todayDateJST() },
+	});
+
+	// 5. 成約報告ページ作成（承認ステータス = 「成約」）
+	const properties: Record<string, unknown> = {
+		成約名: title(`${projectName}｜成約報告`),
+		承認ステータス: select("成約"),
+		対象物種別: select(targetType || "その他"),
+		売買区分: select(closingDealType),
+		歩合対象: { checkbox: true },
+		成約日: { date: { start: todayDateJST() } },
+		関連案件: { relation: [{ id: projectPageId }] },
+		AI処理状態: select("処理中"),
+	};
+	properties["粗利額"] = { number: grossProfit };
+	// 歩合見込額をここで計算して書き込む（月次成績のrollupで集計される）
+	// 仕入れ・販売が同一人物 → 4%全額、別々 → それぞれ2%
+	properties["歩合見込額"] = { number: commissionAmount };
+	if (salesPersonIds.length > 0) {
+		properties["担当営業ユーザー"] = { people: salesPersonIds.map((id) => ({ id })) };
+	}
+	if (hasSeparateSourcing) {
+		properties["仕入れ担当"] = { people: sourcingPersonIds.map((id) => ({ id })) };
+	}
+	if (relatedCompanyIds.length > 0) {
+		properties["関連企業"] = { relation: relatedCompanyIds.map((id) => ({ id })) };
+	}
+	const relatedLandIds = uniqueStrings([
+		...relationIdsFromProperty(projectPage.properties?.["関連土地情報"]),
+		...relationIdsFromProperty(projectPage.properties?.["土地情報"]),
+		...relationIdsFromProperty(projectPage.properties?.["関連土地"]),
+	]);
+	const relatedInquiryIds = uniqueStrings([
+		...relationIdsFromProperty(projectPage.properties?.["元問い合わせ"]),
+		...relationIdsFromProperty(projectPage.properties?.["関連問い合わせ"]),
+	]);
+
+	// 6. ページコンテンツ（callout）
+	const contentBlocks: unknown[] = [];
+	if (!hasSeparateSourcing) {
+		contentBlocks.push({
+			object: "block",
+			type: "callout",
+			callout: {
+				rich_text: [{
+					type: "text",
+					text: { content: "⚠️ 仕入れ担当が未設定です。右サイドバーの「仕入れ担当」欄に担当者を入力してください。入力後、仕入れ歩合（粗利×2%）が自動計算されます。" },
+				}],
+				icon: { emoji: "⚠️" },
+				color: "yellow_background",
+			},
+		});
+	}
+	const commissionNote = hasSeparateSourcing
+		? `（販売担当 2% ＋ 仕入れ担当 2% で歩合計算されます。粗利額が入力済みの場合、歩合見込額 = 粗利額 × 2%）`
+		: `（仕入れ・販売ともに同一担当：粗利額 × 4%）`;
+	const successMessage = buildClosingSuccessMessage({
+		projectName,
+		grossProfit,
+		commissionAmount,
+		commissionNote,
+	});
+	contentBlocks.push({
+		object: "block",
+		type: "callout",
+			callout: {
+				rich_text: [{
+					type: "text",
+					text: { content: successMessage },
+				}],
+			icon: { emoji: "🏆" },
+			color: "green_background",
+		},
+	});
+
+	const created = await notion.pages.create({
+		parent: { data_source_id: CLOSING_REPORT_DATA_SOURCE_ID },
+		properties,
+		children: contentBlocks,
+	});
+
+	await markAiLearningLogsOutcome(notion, {
+		relationProperty: "関連案件",
+		pageId: projectPage.id,
+		outcome: "成約",
+		scoreThreshold: 80,
+		note: "成約報告Workerが成約報告を作成し、成約予測の実結果を反映。",
+	}).catch((error) => {
+		console.log("project closing learning outcome skipped", String(error));
+	});
+	for (const landId of relatedLandIds) {
+		await markAiLearningLogsOutcome(notion, {
+			relationProperty: "関連土地",
+			pageId: landId,
+			outcome: "成約",
+			scoreThreshold: 65,
+			note: "成約報告Workerが関連土地までさかのぼり、土地評価の実結果を成約として反映。",
+		}).catch((error) => {
+			console.log("land closing learning outcome skipped", String(error));
+		});
+	}
+	for (const inquiryId of relatedInquiryIds) {
+		await markAiLearningLogsOutcome(notion, {
+			relationProperty: "関連問い合わせ",
+			pageId: inquiryId,
+			outcome: "成約",
+			scoreThreshold: 65,
+			note: "成約報告Workerが関連問い合わせまでさかのぼり、案件化予測の最終実結果を成約として反映。",
+		}).catch((error) => {
+			console.log("inquiry closing learning outcome skipped", String(error));
+		});
+	}
+
+	// 7. 月次成績（営業マンパフォーマンスDB）に紐付け
+	let monthlyLinked = false;
+	try {
+		monthlyLinked = await linkClosingToMonthlyPerformanceRecord(
+			created.id,
+			salesPersonIds,
+			notion,
+			new Date(),
+			{ grossProfit, commissionAmount },
+		);
+	} catch (err) {
+		console.error("linkClosingToMonthlyPerformanceRecord error:", String(err));
+	}
+	if (!monthlyLinked && notion.blocks?.children?.append) {
+		await notion.blocks.children.append({
+			block_id: created.id,
+			children: [
+				{
+					object: "block",
+					type: "callout",
+					callout: {
+						rich_text: [
+							{
+								type: "text",
+								text: {
+									content:
+										"📊 月次成績への自動反映が完了していません。\n" +
+										"営業マンパフォーマンスDBに対象営業ユーザー付きの月次成績を用意するか、成約報告の担当営業ユーザーを確認してください。\n" +
+										"ノルマ申請DBは目標値の原本、月次成績は営業マンパフォーマンスDBで確認します。",
+								},
+							},
+						],
+						icon: { emoji: "📋" },
+						color: "blue_background",
+					},
+				},
+			],
+		});
+	}
+
+	// 8. 営業部への通知（非同期・ノーブロック）
+	void notifySalesTeam(
+		notion,
+		projectPage.id,
+		[
+			`🏆 成約しました: ${projectName}`,
+			`粗利: ${formatYen(grossProfit)}`,
+			`歩合見込: ${formatYen(commissionAmount)}`,
+			"成約報告が作成され、月次成績の数字に反映されました。",
+		].join("\n"),
+	).catch(() => {
+		// コメントAPIが利用できない場合はサイレントスキップ
+	});
+	void createPageComment(
+		notion,
+		created.id,
+		successMessage,
+		false,
+	).catch(() => {
+		// コメントAPIが利用できない場合はサイレントスキップ
+	});
+
+	// 9. AI フィードバックを非同期生成（メイン処理をブロックしない）
+	void generateClosingFeedback(projectPage, created.id, notion).catch((err) => {
+		console.error("generateClosingFeedback error:", String(err));
+	});
+
+	return {
+		action: "created",
+		closingPageId: created.id,
+		message: `成約報告を登録しました（ID: ${created.id}）。粗利 ${formatYen(grossProfit)}、歩合見込 ${formatYen(commissionAmount)} を月次成績へ反映し、AIフィードバックを生成中です。`,
+	};
+}
+
+function buildMissingGrossProfitMessage(projectName: string): string {
+	return [
+		`⚠️ 成約報告の準備はできています: ${projectName}`,
+		"",
+		"ただし、粗利が未入力のため成約報告の作成を止めました。",
+		"案件ページの「実績粗利額」または「予定粗利額」を入力してから、もう一度「🏆 成約を報告する」を押してください。",
+		"",
+		"この時点では案件ステータスも成約報告DBも更新していません。二重登録は発生していません。",
+	].join("\n");
+}
+
+function buildMissingDealTypeMessage(projectName: string): string {
+	return [
+		`⚠️ 売買区分を確認してください: ${projectName}`,
+		"",
+		"この案件が「売る案件」なのか「買う案件」なのか未確定のため、成約報告の作成を止めました。",
+		"案件ページの「売買区分」を「売却案件」「購入希望」「売買両方」のいずれかに設定してから、もう一度「🏆 成約を報告する」を押してください。",
+		"",
+		"この時点では案件ステータスも成約報告DBも更新していません。",
+	].join("\n");
+}
+
+function closingDealTypeFromProjectDealType(dealType: string): string | null {
+	if (dealType === "売却案件") return "売却成約";
+	if (dealType === "購入希望") return "購入成約";
+	if (dealType === "売買両方") return "売買両方";
+	return null;
+}
+
+function buildClosingSuccessMessage({
+	projectName,
+	grossProfit,
+	commissionAmount,
+	commissionNote,
+}: {
+	projectName: string;
+	grossProfit: number;
+	commissionAmount: number;
+	commissionNote: string;
+}): string {
+	return [
+		`🏆 成約速報: ${projectName}`,
+		"",
+		"成約報告を登録しました。月次成績と歩合見込へ反映します。",
+		`粗利: ${formatYen(grossProfit)}`,
+		`歩合見込: ${formatYen(commissionAmount)}`,
+		"反映先: 営業マンパフォーマンスDB｜月次成績",
+		"",
+		"マネージャーは必要に応じて差し戻し/取り消しを行えます。",
+		commissionNote,
+	].join("\n");
+}
+
+function formatYen(value: number): string {
+	return `¥${Math.round(value).toLocaleString("ja-JP")}`;
+}
+
+/**
+ * 成約報告を営業マンパフォーマンスDBの今月レコードに自動紐付け
+ * → 月次成績ビューのrollup（成約件数・実績粗利額・歩合見込額）が更新される
+ */
+async function linkClosingToMonthlyPerformanceRecord(
+	closingPageId: string,
+	salesPersonIds: string[],
+	notion: NotionClient,
+	now = new Date(),
+	closingSummary?: { grossProfit: number; commissionAmount: number },
+): Promise<boolean> {
+	if (salesPersonIds.length === 0) return false;
+
+	const { monthStart, nextMonthStart, monthLabel } = monthWindowJST(now);
+	const salesPersonId = salesPersonIds[0]!;
+	const baseFilter = [
+		{ property: "期間種別", select: { equals: "月次" } },
+		{ property: "対象営業ユーザー", people: { contains: salesPersonId } },
+	];
+	const monthTextCandidates = uniqueStrings([
+		monthLabel,
+		monthStart.slice(0, 7),
+		`${monthStart.slice(0, 4)}年${Number(monthStart.slice(5, 7))}月`,
+		`${monthStart.slice(0, 4)}年${monthStart.slice(5, 7)}月`,
+	]);
+	const queryCandidates: Array<{ label: string; filter: Record<string, unknown> }> = [
+		{
+			label: "開始日",
+			filter: {
+				and: [
+					...baseFilter,
+					{ property: "開始日", date: { on_or_after: monthStart } },
+					{ property: "開始日", date: { before: nextMonthStart } },
+				],
+			},
+		},
+		...monthTextCandidates.map((label) => ({
+			label: `対象期間:${label}`,
+			filter: {
+				and: [
+					...baseFilter,
+					{ property: "対象期間", rich_text: { contains: label } },
+				],
+			},
+		})),
+		{
+			label: "対象期間-date",
+			filter: {
+				and: [
+					...baseFilter,
+					{ property: "対象期間", date: { on_or_after: monthStart } },
+					{ property: "対象期間", date: { before: nextMonthStart } },
+				],
+			},
+		},
+	];
+
+	let performancePage: Page | undefined;
+	for (const candidate of queryCandidates) {
+		try {
+			const existing = await notion.dataSources.query({
+				data_source_id: SALES_PERFORMANCE_DATA_SOURCE_ID,
+				filter: candidate.filter,
+				page_size: 10,
+			});
+			performancePage = selectProductionMonthlyPerformancePage((existing.results ?? []) as Page[]);
+			if (performancePage) break;
+		} catch (error) {
+			console.log(`[linkClosing] 月次成績検索をスキップ: ${candidate.label}`, String(error));
+		}
+	}
+
+	if (!performancePage) {
+		performancePage = await createMonthlyPerformanceRecord(
+			closingPageId,
+			salesPersonId,
+			notion,
+			now,
+		);
+		console.log(`[linkClosing] 月次成績レコードを自動作成: ${performancePage.id}`);
+	} else {
+		console.log(`[linkClosing] 月次成績レコード発見: ${performancePage.id}`);
+	}
+
+	// 既存の関連成約に新しいページを追加
+	const existingClosingIds = relationIdsFromProperty(performancePage.properties?.["関連成約"]);
+	const wasAlreadyLinked = existingClosingIds.includes(closingPageId);
+	const newClosingIds = [...new Set([...existingClosingIds, closingPageId])];
+
+	if (!wasAlreadyLinked) {
+		await notion.pages.update({
+			page_id: performancePage.id,
+			properties: {
+				関連成約: { relation: newClosingIds.map((id) => ({ id })) },
+			},
+		});
+	}
+	if (closingSummary && notion.blocks?.children?.append) {
+		await notion.blocks.children.append({
+			block_id: closingPageId,
+			children: [
+				{
+					object: "block",
+					type: "callout",
+					callout: {
+						rich_text: [
+							{
+								type: "text",
+								text: {
+									content: buildMonthlyAchievementMessage(
+										performancePage,
+										closingSummary,
+										wasAlreadyLinked,
+									),
+								},
+							},
+						],
+						icon: { emoji: "📊" },
+						color: "blue_background",
+					},
+				},
+			],
+		});
+	}
+
+	console.log(`成約報告を月次成績（営業マンパフォーマンスDB ID: ${performancePage.id}）の「関連成約」に紐付けました`);
+	return true;
+}
+
+async function createMonthlyPerformanceRecord(
+	closingPageId: string,
+	salesPersonId: string,
+	notion: NotionClient,
+	now: Date,
+): Promise<Page> {
+	const { monthStart, nextMonthStart, monthLabel } = monthWindowJST(now);
+	const monthEnd = monthEndFromNextMonthStart(nextMonthStart);
+	const monthTitle = monthTitleFromMonthStart(monthStart);
+	return notion.pages.create({
+		parent: { data_source_id: SALES_PERFORMANCE_DATA_SOURCE_ID },
+		properties: {
+			評価名: title(`${monthTitle} 月次成績`),
+			期間種別: select("月次"),
+			対象期間: richText(monthLabel),
+			開始日: { date: { start: monthStart } },
+			終了日: { date: { start: monthEnd } },
+			対象営業ユーザー: { people: [{ id: salesPersonId }] },
+			関連成約: { relation: [{ id: closingPageId }] },
+			監査区分: select("通常監査"),
+			評価ステータス: select("集計中"),
+			AI処理状態: select("未処理"),
+		},
+	});
+}
+
+function selectProductionMonthlyPerformancePage(pages: Page[]): Page | undefined {
+	return pages.find((page) => {
+		const properties = page.properties ?? {};
+		const titleText = text(properties["評価名"]);
+		return !isAuditOrTestPerformance(properties, titleText);
+	});
+}
+
+function monthTitleFromMonthStart(monthStart: string): string {
+	const [year, month] = monthStart.split("-");
+	return `${year}年${Number(month)}月`;
+}
+
+function monthEndFromNextMonthStart(nextMonthStart: string): string {
+	const [year, month] = nextMonthStart.split("-").map((value) => Number(value));
+	return new Date(Date.UTC(year, month - 1, 0)).toISOString().slice(0, 10);
+}
+
+function buildMonthlyAchievementMessage(
+	performancePage: Page,
+	closingSummary: { grossProfit: number; commissionAmount: number },
+	wasAlreadyLinked: boolean,
+): string {
+	const properties = performancePage.properties ?? {};
+	const currentGross = numberValue(properties["実績粗利額（自動）"]) ?? 0;
+	const targetGross =
+		numberValue(properties["粗利目標"]) ??
+		numberValue(properties["粗利目標（申請DB）"]) ??
+		numberValue(properties["目標粗利額"]) ??
+		0;
+	const afterGross = wasAlreadyLinked
+		? currentGross
+		: currentGross + closingSummary.grossProfit;
+	const lines = [
+		"📊 月次成績反映メモ",
+		`今回粗利: ${formatYen(closingSummary.grossProfit)}`,
+		`歩合見込加算: ${formatYen(closingSummary.commissionAmount)}`,
+		`反映後の粗利見込み: ${formatYen(afterGross)}`,
+	];
+	if (targetGross > 0) {
+		lines.push(
+			`今月目標: ${formatYen(targetGross)}`,
+			`達成率見込み: ${formatPercent(currentGross / targetGross)} → ${formatPercent(afterGross / targetGross)}`,
+		);
+	} else {
+		lines.push("粗利目標が入ると、ここに今月の達成率見込みを表示できます。");
+	}
+	lines.push("Notionのrollup反映には少し時間差が出ることがあります。");
+	return lines.join("\n");
+}
+
+function formatPercent(value: number): string {
+	return `${Math.round(value * 100)}%`;
+}
+
+export {
+	linkClosingToMonthlyPerformanceRecord as linkClosingToMonthlyPerformanceRecordForTest,
+	linkClosingToMonthlyPerformanceRecord as linkClosingToPerformanceRecordForTest,
+	processClosingReport as processClosingReportForTest,
+};
+
+function monthWindowJST(now: Date): {
+	monthStart: string;
+	nextMonthStart: string;
+	monthLabel: string;
+} {
+	const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+	const year = jst.getUTCFullYear();
+	const month = jst.getUTCMonth() + 1;
+	const nextYear = month === 12 ? year + 1 : year;
+	const nextMonth = month === 12 ? 1 : month + 1;
+	return {
+		monthStart: `${year}-${String(month).padStart(2, "0")}-01`,
+		nextMonthStart: `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`,
+		monthLabel: `${year}/${month}`,
+	};
+}
+
+/** 成約報告の取り消し
+ * 締め前の「成約」はマネージャーが取り消せる。
+ * 締め済み/歩合確定済み、または歩合確定額が入っているものは取り消さず、調整レコードで扱う。
+ * 取り消し時は月次成績のリレーションも除去して数字を下げる。
+ */
+async function cancelClosingReport(
+	closingPageId: string,
+	notion: NotionClient,
+	reason = "",
+): Promise<{ action: string; message: string }> {
+	const closingPage = await notion.pages.retrieve({ page_id: closingPageId });
+	const currentStatus = text(closingPage.properties?.["承認ステータス"]);
+	const fixedCommission = numberValue(closingPage.properties?.["歩合確定額"]) ?? 0;
+
+	// 既に取り消し済み
+	if (currentStatus === "取り消し") {
+		return {
+			action: "already-cancelled",
+			message: "既に取り消し済みです。",
+		};
+	}
+
+	if (
+		currentStatus === "締め済み" ||
+		currentStatus === "歩合確定済み" ||
+		fixedCommission > 0
+	) {
+		return {
+			action: "blocked",
+			message:
+				"歩合確定済みまたは締め済みのため取り消しできません。必要な場合は調整レコードで処理してください。",
+		};
+	}
+
+	// 1. 成約報告を取り消し状態に変更
+	const memo = [
+		`取り消し日: ${todayDateJST()}`,
+		reason ? `理由: ${reason.slice(0, 500)}` : "",
+	].filter(Boolean).join("\n");
+	await safeUpdateExistingProperties(notion, closingPage, {
+		承認ステータス: { kind: "select", value: "取り消し" },
+		管理メモ: { kind: "text", value: memo },
+	});
+
+	// 2. 案件DBのステータスを提案中に戻す
+	const projectIds = relationIdsFromProperty(closingPage.properties?.["関連案件"]);
+	if (projectIds.length > 0) {
+		const projectPage = await notion.pages.retrieve({ page_id: projectIds[0]! });
+		await safeUpdateExistingProperties(notion, projectPage, {
+			ステータス: { kind: "select", value: "📋 提案中" },
+			成約日: { kind: "clear" },
+			管理アクション状態: { kind: "select", value: "取り消し" },
+			管理アクション日: { kind: "date", value: todayDateJST() },
+			管理アクションメモ: { kind: "text", value: memo },
+			最終アクション日: { kind: "date", value: todayDateJST() },
+		});
+		await createPageComment(
+			notion,
+			projectPage.id,
+			`🔄 成約報告が取り消されました。\n${memo}`,
+		);
+	}
+
+	// 3. 月次成績のリレーションから除去（rollupの数字を即時減算）
+	await removeLinkFromMonthlyPerformanceRecords(closingPageId, notion).catch((err) => {
+		console.error("removeLinkFromMonthlyPerformanceRecords error:", String(err));
+	});
+
+	return {
+		action: "cancelled",
+		message: "成約報告を取り消しました。案件を「📋 提案中」に戻し、成績からも除外しました。",
+	};
+}
+
+/**
+ * 営業マンパフォーマンスDBの月次成績から成約報告のリレーションを除去する
+ * 成約取り消し時に呼び出し、rollupの数字（成約件数・粗利額・歩合）を自動減算させる
+ */
+async function removeLinkFromMonthlyPerformanceRecords(
+	closingPageId: string,
+	notion: NotionClient,
+): Promise<void> {
+	const existing = await notion.dataSources.query({
+		data_source_id: SALES_PERFORMANCE_DATA_SOURCE_ID,
+		filter: {
+			property: "関連成約",
+			relation: { contains: closingPageId },
+		},
+		page_size: 5,
+	});
+
+	const pages = (existing.results ?? []) as Page[];
+	if (pages.length === 0) {
+		console.log(`月次成績に紐付けレコードが見つかりませんでした（成約ID: ${closingPageId}）`);
+		return;
+	}
+
+	for (const page of pages) {
+		const currentIds = relationIdsFromProperty(page.properties?.["関連成約"]);
+		const newIds = currentIds.filter((id) => id !== closingPageId);
+		await notion.pages.update({
+			page_id: page.id,
+			properties: {
+				関連成約: { relation: newIds.map((id) => ({ id })) },
+			},
+		});
+		console.log(`成約ID ${closingPageId} を月次成績（営業マンパフォーマンスDB ${page.id}）の関連成約から除去しました`);
+	}
+}
+
+export { cancelClosingReport as cancelClosingReportForTest };
+
+/** マネージャーによる成約報告の差し戻し */
+async function dismissClosingReport(
+	closingPageId: string,
+	notion: NotionClient,
+	reason = "",
+): Promise<{ action: string; message: string }> {
+	const closingPage = await notion.pages.retrieve({ page_id: closingPageId });
+	const memo = [
+		`差し戻し日: ${todayDateJST()}`,
+		reason ? `理由: ${reason.slice(0, 500)}` : "",
+	].filter(Boolean).join("\n");
+
+	await safeUpdateExistingProperties(notion, closingPage, {
+		承認ステータス: { kind: "select", value: "差戻し" },
+		管理メモ: { kind: "text", value: memo },
+	});
+
+	// 案件DBのステータスを提案中に戻す
+	const projectIds = relationIdsFromProperty(closingPage.properties?.["関連案件"]);
+	if (projectIds.length > 0) {
+		const projectPage = await notion.pages.retrieve({ page_id: projectIds[0]! });
+		await safeUpdateExistingProperties(notion, projectPage, {
+			ステータス: { kind: "select", value: "📋 提案中" },
+			成約日: { kind: "clear" },
+			管理アクション状態: { kind: "select", value: "差し戻し" },
+			管理アクション日: { kind: "date", value: todayDateJST() },
+			管理アクションメモ: { kind: "text", value: memo },
+			最終アクション日: { kind: "date", value: todayDateJST() },
+		});
+		await createPageComment(
+			notion,
+			projectPage.id,
+			`↩️ 成約報告が差し戻されました。\n${memo}`,
+		);
+	}
+
+	await removeLinkFromMonthlyPerformanceRecords(closingPageId, notion).catch((err) => {
+		console.error("removeLinkFromMonthlyPerformanceRecords error:", String(err));
+	});
+
+	return {
+		action: "dismissed",
+		message:
+			"成約報告を差し戻しました。案件のステータスを「📋 提案中」に戻しました。担当営業に内容の確認を促してください。",
+	};
+}
+
+async function dismissProject(
+	projectPageId: string,
+	notion: NotionClient,
+	reason = "",
+): Promise<{ action: string; message: string }> {
+	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
+	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
+	const memo = [
+		`${todayDateJST()} マネージャー差し戻し`,
+		reason ? `理由: ${reason.slice(0, 500)}` : "理由: 条件・権利関係・担当/共有範囲の再確認が必要",
+	].join("\n");
+
+	await safeUpdateExistingProperties(notion, projectPage, {
+		ステータス: { kind: "select", value: "⏳ 確認待ち" },
+		確認待ち内容: { kind: "text", value: memo },
+		管理アクション状態: { kind: "select", value: "差し戻し" },
+		管理アクション日: { kind: "date", value: todayDateJST() },
+		管理アクションメモ: { kind: "text", value: memo },
+		最終アクション日: { kind: "date", value: todayDateJST() },
+	});
+	await createPageComment(notion, projectPage.id, `↩️ 案件「${projectName}」を差し戻しました。\n${memo}`);
+
+	return {
+		action: "dismissed",
+		message: `案件「${projectName}」を確認待ちへ差し戻しました。`,
+	};
+}
+
+async function cancelProject(
+	projectPageId: string,
+	notion: NotionClient,
+	reason = "",
+): Promise<{ action: string; message: string }> {
+	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
+	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
+	const memo = [
+		`${todayDateJST()} マネージャー取り消し`,
+		reason ? `理由: ${reason.slice(0, 500)}` : "理由: 優先度低下／見送り",
+	].join("\n");
+
+	await safeUpdateExistingProperties(notion, projectPage, {
+		ステータス: { kind: "select", value: "❌ 失注" },
+		成約日: { kind: "clear" },
+		失注理由: { kind: "multi_select", values: ["優先度低下／見送り"] },
+		確認待ち内容: { kind: "text", value: memo },
+		管理アクション状態: { kind: "select", value: "取り消し" },
+		管理アクション日: { kind: "date", value: todayDateJST() },
+		管理アクションメモ: { kind: "text", value: memo },
+		最終アクション日: { kind: "date", value: todayDateJST() },
+	});
+	await createPageComment(notion, projectPage.id, `🔄 案件「${projectName}」を取り消しました。\n${memo}`);
+
+	return {
+		action: "cancelled",
+		message: `案件「${projectName}」を失注扱いで取り消しました。`,
+	};
+}
+
+type LostActionOptions = {
+	reason?: string;
+	memo?: string;
+	triggerUserId?: string;
+};
+
+function normalizeLostReasons(reason: string | undefined): string[] {
+	return uniqueStrings(
+		(reason ?? "")
+			.split(/[,\n、，]/)
+			.map((value) => value.trim())
+			.filter(Boolean),
+	);
+}
+
+function lostReasonText(reasons: string[]): string {
+	return reasons.join("、");
+}
+
+function buildLostAuditMemo({
+	actionLabel,
+	reasons,
+	memo,
+	previousPhase,
+}: {
+	actionLabel: string;
+	reasons: string[];
+	memo?: string;
+	previousPhase: string;
+}): string {
+	return [
+		`${todayDateJST()} ${actionLabel}`,
+		`失注理由: ${lostReasonText(reasons)}`,
+		previousPhase ? `失注前フェーズ: ${previousPhase}` : "",
+		memo ? `メモ: ${memo.slice(0, 500)}` : "",
+	].filter(Boolean).join("\n");
+}
+
+function projectLostPreviousPhase(projectPage: Page): string {
+	return (
+		text(projectPage.properties?.["ステータス"]) ||
+		text(projectPage.properties?.["推奨フェーズ（活動ログ）"]) ||
+		"未設定"
+	);
+}
+
+function inquiryLostPreviousPhase(inquiryPage: Page): string {
+	return (
+		text(inquiryPage.properties?.["ステータス"]) ||
+		text(inquiryPage.properties?.["問い合わせフェーズ（推奨）"]) ||
+		"未設定"
+	);
+}
+
+async function processInquiryLost(
+	inquiryPageId: string,
+	notion: NotionClient,
+	options: LostActionOptions = {},
+): Promise<{ action: string; message: string }> {
+	const inquiryPage = await notion.pages.retrieve({ page_id: inquiryPageId });
+	const inquiryTitle = readGenericPageTitle(inquiryPage) || "問い合わせ";
+	const reasons = normalizeLostReasons(options.reason);
+	if (reasons.length === 0) {
+		await createPageComment(
+			notion,
+			inquiryPage.id,
+			"⚠️ 失注理由が未入力のため、問い合わせを失注にしていません。失注理由を選んでからもう一度実行してください。",
+		);
+		return {
+			action: "needs-lost-reason",
+			message: "失注理由が未入力のため、問い合わせステータスは変更していません。",
+		};
+	}
+
+	const previousPhase = inquiryLostPreviousPhase(inquiryPage);
+	const memo = buildLostAuditMemo({
+		actionLabel: "問い合わせ失注",
+		reasons,
+		memo: options.memo,
+		previousPhase,
+	});
+	const patches: Record<string, SafePatch> = {
+		ステータス: { kind: "select", value: "失注" },
+		失注理由: { kind: "multi_select", values: reasons },
+		失注理由メモ: { kind: "text", value: options.memo || lostReasonText(reasons) },
+		失注日: { kind: "date", value: todayDateJST() },
+		失注前フェーズ: { kind: "text", value: previousPhase },
+		失注ログ: { kind: "text", value: memo },
+		最終アクション日: { kind: "date", value: todayDateJST() },
+	};
+	if (options.triggerUserId) {
+		patches["失注処理者"] = { kind: "people", ids: [options.triggerUserId] };
+	}
+	await safeUpdateExistingProperties(notion, inquiryPage, patches);
+	await notifySalesTeam(
+		notion,
+		inquiryPage.id,
+		[
+			`📉 問い合わせを失注にしました: ${inquiryTitle}`,
+			`理由: ${lostReasonText(reasons)}`,
+			options.memo ? `メモ: ${options.memo}` : "",
+			"問い合わせ段階の軽量監査ログとして記録しました。",
+		].filter(Boolean).join("\n"),
+	);
+	return {
+		action: "lost",
+		message: "問い合わせを失注にし、理由・処理者・処理日・監査ログを残しました。",
+	};
+}
+
+async function processProjectLostRequest(
+	projectPageId: string,
+	notion: NotionClient,
+	options: LostActionOptions = {},
+): Promise<{ action: string; message: string }> {
+	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
+	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
+	const reasons = normalizeLostReasons(options.reason);
+	if (reasons.length === 0) {
+		await createPageComment(
+			notion,
+			projectPage.id,
+			"⚠️ 失注理由が未入力のため、失注申請を出していません。失注理由を選んでからもう一度実行してください。",
+		);
+		return {
+			action: "needs-lost-reason",
+			message: "失注理由が未入力のため、案件ステータスは変更していません。",
+		};
+	}
+
+	const previousPhase = projectLostPreviousPhase(projectPage);
+	const memo = buildLostAuditMemo({
+		actionLabel: "案件失注申請",
+		reasons,
+		memo: options.memo,
+		previousPhase,
+	});
+	const patches: Record<string, SafePatch> = {
+		ステータス: { kind: "select", value: "失注申請中" },
+		失注理由: { kind: "multi_select", values: reasons },
+		失注理由メモ: { kind: "text", value: options.memo || lostReasonText(reasons) },
+		失注前フェーズ: { kind: "text", value: previousPhase },
+		失注申請状態: { kind: "select", value: "申請中" },
+		失注申請メモ: { kind: "text", value: memo },
+		管理アクション状態: { kind: "select", value: "失注申請中" },
+		管理アクション日: { kind: "date", value: todayDateJST() },
+		管理アクションメモ: { kind: "text", value: memo },
+		最終アクション日: { kind: "date", value: todayDateJST() },
+	};
+	if (options.triggerUserId) {
+		patches["失注処理者"] = { kind: "people", ids: [options.triggerUserId] };
+	}
+	await safeUpdateExistingProperties(notion, projectPage, patches);
+	await notifySalesTeam(
+		notion,
+		projectPage.id,
+		[
+			`📨 失注申請が出ました: ${projectName}`,
+			`理由: ${lostReasonText(reasons)}`,
+			options.memo ? `メモ: ${options.memo}` : "",
+			"この時点では正式な失注ではありません。マネージャー承認後に `❌ 失注` へ確定します。",
+		].filter(Boolean).join("\n"),
+	);
+	return {
+		action: "requested",
+		message: "案件を失注申請中にし、マネージャー承認待ちとして記録しました。",
+	};
+}
+
+async function approveProjectLostRequest(
+	projectPageId: string,
+	notion: NotionClient,
+	options: LostActionOptions = {},
+): Promise<{ action: string; message: string }> {
+	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
+	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
+	const currentStatus = text(projectPage.properties?.["失注申請状態"]);
+	if (currentStatus && currentStatus !== "申請中") {
+		return {
+			action: "blocked",
+			message: `失注申請状態が「${currentStatus}」のため、承認処理は行いませんでした。`,
+		};
+	}
+	const reasons = normalizeLostReasons(text(projectPage.properties?.["失注理由"]));
+	const previousPhase =
+		text(projectPage.properties?.["失注前フェーズ"]) || projectLostPreviousPhase(projectPage);
+	const memo = [
+		buildLostAuditMemo({
+			actionLabel: "案件失注承認",
+			reasons: reasons.length > 0 ? reasons : ["未設定"],
+			memo: options.memo,
+			previousPhase,
+		}),
+	].join("\n");
+	const patches: Record<string, SafePatch> = {
+		ステータス: { kind: "select", value: "❌ 失注" },
+		成約日: { kind: "clear" },
+		失注申請状態: { kind: "select", value: "承認済" },
+		失注日: { kind: "date", value: todayDateJST() },
+		管理アクション状態: { kind: "select", value: "失注承認" },
+		管理アクション日: { kind: "date", value: todayDateJST() },
+		管理アクションメモ: { kind: "text", value: memo },
+		最終アクション日: { kind: "date", value: todayDateJST() },
+	};
+	if (options.triggerUserId) {
+		patches["失注処理者"] = { kind: "people", ids: [options.triggerUserId] };
+	}
+	await safeUpdateExistingProperties(notion, projectPage, patches);
+	await notifySalesTeam(
+		notion,
+		projectPage.id,
+		[
+			`📉 失注が承認されました: ${projectName}`,
+			reasons.length > 0 ? `理由: ${lostReasonText(reasons)}` : "",
+			options.memo ? `マネージャーメモ: ${options.memo}` : "",
+			"ステータスを `失注申請中` から `❌ 失注` へ確定しました。",
+		].filter(Boolean).join("\n"),
+	);
+	return {
+		action: "approved",
+		message: "案件の失注申請を承認し、正式に失注へ確定しました。",
+	};
+}
+
+async function rejectProjectLostRequest(
+	projectPageId: string,
+	notion: NotionClient,
+	options: LostActionOptions = {},
+): Promise<{ action: string; message: string }> {
+	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
+	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
+	const memo = [
+		`${todayDateJST()} 案件失注申請差し戻し`,
+		options.memo ? `理由: ${options.memo.slice(0, 500)}` : "理由: マネージャー確認により再対応が必要",
+	].join("\n");
+	const patches: Record<string, SafePatch> = {
+		ステータス: { kind: "select", value: "⏳ 確認待ち" },
+		失注申請状態: { kind: "select", value: "差し戻し" },
+		失注申請メモ: { kind: "text", value: memo },
+		管理アクション状態: { kind: "select", value: "失注差し戻し" },
+		管理アクション日: { kind: "date", value: todayDateJST() },
+		管理アクションメモ: { kind: "text", value: memo },
+		最終アクション日: { kind: "date", value: todayDateJST() },
+	};
+	await safeUpdateExistingProperties(notion, projectPage, patches);
+	await notifySalesTeam(
+		notion,
+		projectPage.id,
+		[
+			`↩️ 失注申請が差し戻されました: ${projectName}`,
+			options.memo ? `マネージャーメモ: ${options.memo}` : "",
+			"案件は `⏳ 確認待ち` に戻しました。担当者は次アクションを確認してください。",
+		].filter(Boolean).join("\n"),
+	);
+	return {
+		action: "rejected",
+		message: "案件の失注申請を差し戻し、確認待ちへ戻しました。",
+	};
+}
+
+export {
+	approveProjectLostRequest as approveProjectLostRequestForTest,
+	cancelProject as cancelProjectForTest,
+	dismissProject as dismissProjectForTest,
+	processInquiryLost as processInquiryLostForTest,
+	processProjectLostRequest as processProjectLostRequestForTest,
+	rejectProjectLostRequest as rejectProjectLostRequestForTest,
+};
+
+/**
+ * 成約 AI フィードバック生成
+ * 案件ページの情報から勝因・反省点・次に活かす学びをOpenAIで生成し、成約報告DBに書き込む
+ */
+async function generateClosingFeedback(
+	projectPage: Page,
+	closingPageId: string,
+	notion: NotionClient,
+): Promise<void> {
+	const apiKey = process.env.OPENAI_API_KEY;
+	if (!apiKey) {
+		console.error("OPENAI_API_KEY が未設定のため、AIフィードバックをスキップします");
+		return;
+	}
+	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
+	const targetType = text(projectPage.properties?.["対象物種別"]) || "不明";
+	const dealType = text(projectPage.properties?.["売買区分"]) || "不明";
+	const grossProfit =
+		numberValue(projectPage.properties?.["実績粗利額"]) ??
+		numberValue(projectPage.properties?.["予定粗利額"]);
+	const projectDetail = text(projectPage.properties?.["案件詳細"]) || "";
+	const confirmedContent = text(projectPage.properties?.["確認待ち内容"]) || "";
+
+	const grossProfitText = grossProfit
+		? `${(grossProfit / 10000).toFixed(0)}万円`
+		: "未入力";
+
+	const payload = [
+		`【案件名】${projectName}`,
+		`【対象物種別】${targetType}`,
+		`【売買区分】${dealType}`,
+		`【粗利額】${grossProfitText}`,
+		projectDetail ? `【案件詳細】\n${projectDetail.slice(0, 800)}` : "",
+		confirmedContent ? `【確認待ち内容】\n${confirmedContent.slice(0, 400)}` : "",
+	].filter(Boolean).join("\n\n");
+
+	const systemPrompt = `あなたは再生可能エネルギー（太陽光発電所・系統用蓄電池・土地）の売買仲介会社の営業コーチです。
+成約した案件の情報を読んで、以下の内容を日本語で分析してください。
+
+必ずJSONのみで返答してください（前後に説明文を付けない）：
+{
+  "勝因": "成約できた主な要因（1〜3文）",
+  "反省点": "改善できた点・反省点（1〜3文）",
+  "次に活かす学び": "次の案件に活かせる具体的な学び（1〜3文）",
+  "ナレッジ化候補": "候補" または "不要",
+  "ナレッジ化メモ": "ナレッジ化すべき理由（50文字以内、不要なら空文字）"
+}
+
+ナレッジ化候補「候補」の基準：珍しいケース、大型案件（粗利1億円以上）、新しい手法、他の営業マンが学べる特別な経緯がある場合。
+情報が不足している場合は推測で簡潔に記載してください。`;
+
+	const response = await fetch("https://api.openai.com/v1/chat/completions", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify({
+			model,
+			temperature: 0,
+			messages: [
+				{ role: "system", content: systemPrompt },
+				{ role: "user", content: payload },
+			],
+		}),
+	});
+
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
+	}
+
+	const json = (await response.json()) as {
+		choices?: Array<{ message?: { content?: string } }>;
+	};
+	const raw = json.choices?.[0]?.message?.content;
+	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
+
+	let feedback: ClosingFeedbackAIResponse;
+	try {
+		const jsonStart = raw.indexOf("{");
+		const jsonEnd = raw.lastIndexOf("}");
+		const jsonStr = jsonStart >= 0 && jsonEnd > jsonStart ? raw.slice(jsonStart, jsonEnd + 1) : raw;
+		feedback = JSON.parse(jsonStr) as ClosingFeedbackAIResponse;
+	} catch {
+		console.error("AIフィードバック JSONパース失敗:", raw.slice(0, 200));
+		const closingPageForError = await notion.pages.retrieve({ page_id: closingPageId });
+		await safeUpdateExistingProperties(notion, closingPageForError, {
+			AI処理状態: { kind: "select", value: "要確認" },
+			管理メモ: { kind: "text", value: `AIフィードバック生成失敗（JSONパースエラー）` },
+		});
+		return;
+	}
+
+	const closingPage = await notion.pages.retrieve({ page_id: closingPageId });
+	const patches: Record<string, SafePatch> = {
+		勝因: { kind: "text", value: feedback.勝因 || "" },
+		反省点: { kind: "text", value: feedback.反省点 || "" },
+		次に活かす学び: { kind: "text", value: feedback.次に活かす学び || "" },
+		AI処理状態: { kind: "select", value: "処理済" },
+	};
+	if (feedback.ナレッジ化候補 === "候補") {
+		patches["ナレッジ化候補"] = { kind: "select", value: "候補" };
+		if (feedback.ナレッジ化メモ) {
+			patches["ナレッジ化メモ"] = { kind: "text", value: feedback.ナレッジ化メモ };
+		}
+	}
+	await safeUpdateExistingProperties(notion, closingPage, patches);
+}
+
+// ─── 人見さんと壁打ちをする ──────────────────────────────────────────────────
+
+interface ProjectWallHitAIResponse {
+	summary: string;
+	talkingPoints: string[];
+	risks: string[];
+	confirmationItems: string[];
+	recommendedAction: string;
+}
+
+/**
+ * 案件の壁打ちメモを AI で生成し、案件ページにコメントとして書き込む
+ * ステータス変更・成約判断・最終評価は行わない
+ */
+async function processProjectWallHit(
+	projectPageId: string,
+	notion: NotionClient,
+): Promise<{ action: string; message: string }> {
+	const apiKey = process.env.OPENAI_API_KEY;
+	if (!apiKey) {
+		console.error("OPENAI_API_KEY が未設定のため、壁打ちメモ生成をスキップします");
+		return { action: "skipped", message: "OPENAI_API_KEY が未設定のためスキップしました" };
+	}
+	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+	// 1. 案件ページ取得
+	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
+	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
+	const targetType = text(projectPage.properties?.["対象物種別"]) || "未設定";
+	const dealType = text(projectPage.properties?.["売買区分"]) || "未設定";
+	const status = text(projectPage.properties?.["ステータス"]) || "未設定";
+	const grossProfit =
+		numberValue(projectPage.properties?.["実績粗利額"]) ??
+		numberValue(projectPage.properties?.["予定粗利額"]);
+	const projectDetail = text(projectPage.properties?.["案件詳細"]) || "";
+	const confirmedContent = text(projectPage.properties?.["確認待ち内容"]) || "";
+
+	const grossProfitText = grossProfit
+		? `${(grossProfit / 10000).toFixed(0)}万円`
+		: "未入力";
+
+	// 2. ページ本文も読み込む
+	const blockText = await fetchPageBlockPlainText(notion, projectPageId);
+
+	const payload = [
+		`【案件名】${projectName}`,
+		`【対象物種別】${targetType}`,
+		`【売買区分】${dealType}`,
+		`【現在のステータス】${status}`,
+		`【粗利額（見込）】${grossProfitText}`,
+		projectDetail ? `【案件詳細】\n${projectDetail.slice(0, 600)}` : "",
+		confirmedContent ? `【確認待ち内容】\n${confirmedContent.slice(0, 400)}` : "",
+		blockText ? `【ページ本文】\n${blockText.slice(0, 1000)}` : "",
+	]
+		.filter(Boolean)
+		.join("\n\n");
+
+	const systemPrompt = `あなたは再生可能エネルギー（太陽光発電所・系統用蓄電池・土地）の売買仲介会社のマネージャーアシスタントです。
+営業担当から「人見さん（マネージャー）と壁打ちしたい」というリクエストが届きました。
+この案件情報をもとに、マネージャーとの壁打ちを有意義にするための準備メモを作成してください。
+
+必ずJSONのみで返答してください（前後に説明文を付けない）：
+{
+  "summary": "案件の現状サマリー（2〜3文）",
+  "talkingPoints": ["壁打ちで話すべきポイント1", "ポイント2", ...（3〜5項目）"],
+  "risks": ["リスク・懸念点1", "リスク2", ...（2〜4項目）"],
+  "confirmationItems": ["マネージャーに確認したいこと1", "確認事項2", ...（2〜4項目）"],
+  "recommendedAction": "推奨する次のアクション（1〜2文）"
+}
+
+重要なルール：
+- 成約判断・最終評価・ステータス変更の提案はしない
+- マネージャーへの質問を具体的かつ実務的に書く
+- 情報が不足している場合は「情報不足のため確認が必要」と明記する`;
+
+	// 3. OpenAI API 呼び出し
+	const response = await fetch("https://api.openai.com/v1/chat/completions", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify({
+			model,
+			temperature: 0,
+			messages: [
+				{ role: "system", content: systemPrompt },
+				{ role: "user", content: payload },
+			],
+		}),
+	});
+
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
+	}
+
+	const json = (await response.json()) as {
+		choices?: Array<{ message?: { content?: string } }>;
+	};
+	const raw = json.choices?.[0]?.message?.content;
+	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
+
+	// 4. JSON パース
+	let wallHit: ProjectWallHitAIResponse;
+	try {
+		const jsonStart = raw.indexOf("{");
+		const jsonEnd = raw.lastIndexOf("}");
+		const jsonStr =
+			jsonStart >= 0 && jsonEnd > jsonStart ? raw.slice(jsonStart, jsonEnd + 1) : raw;
+		wallHit = JSON.parse(jsonStr) as ProjectWallHitAIResponse;
+	} catch {
+		console.error("壁打ちメモ JSONパース失敗:", raw.slice(0, 200));
+		return { action: "error", message: "AIレスポンスのパースに失敗しました" };
+	}
+
+	// 5. 案件ページにブロックとして追記（ステータス変更・確定は一切しない）
+	const today = new Date().toLocaleDateString("ja-JP", {
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+	});
+
+	if (!notion.blocks?.children?.append) {
+		console.error("blocks.children.append が利用できないため壁打ちメモを書き込めませんでした");
+		return { action: "error", message: "blocks API が利用できません" };
+	}
+
+	const bulletItems = (items: string[]) =>
+		items.map((item) => ({
+			object: "block",
+			type: "bulleted_list_item",
+			bulleted_list_item: {
+				rich_text: [{ type: "text", text: { content: item } }],
+			},
+		}));
+
+	await notion.blocks.children.append({
+		block_id: projectPageId,
+		children: [
+			{
+				object: "block",
+				type: "callout",
+				callout: {
+					rich_text: [
+						{
+							type: "text",
+							text: { content: `🤝 壁打ちメモ（${today} AI生成）` },
+						},
+					],
+					icon: { emoji: "🤝" },
+					color: "blue_background",
+				},
+			},
+			headingBlock("📋 案件サマリー", 3),
+			paragraphBlock(wallHit.summary ?? ""),
+			headingBlock("💬 壁打ちポイント", 3),
+			...bulletItems(wallHit.talkingPoints ?? []),
+			headingBlock("⚠️ リスク・懸念点", 3),
+			...bulletItems(wallHit.risks ?? []),
+			headingBlock("❓ マネージャーへの確認事項", 3),
+			...bulletItems(wallHit.confirmationItems ?? []),
+			{
+				object: "block",
+				type: "callout",
+				callout: {
+					rich_text: [
+						{
+							type: "text",
+							text: {
+								content: `➡️ 推奨アクション\n${wallHit.recommendedAction ?? ""}`,
+							},
+						},
+					],
+					icon: { emoji: "➡️" },
+					color: "green_background",
+				},
+			},
+		],
+	});
+
+	console.log(`壁打ちメモを案件ページ「${projectName}」に書き込みました`);
+	return {
+		action: "created",
+		message: `壁打ちメモを案件ページ「${projectName}」に書き込みました。`,
+	};
+}
+
+// ─── ノルマ申請書 提出時 成約自動紐付け ─────────────────────────────────────
+
+/**
+ * ノルマ申請書の提出時に呼び出す。
+ * 申請書の対象月・担当者に一致する「関連成約に未紐付けの成約報告」を自動で拾い上げてリレーションに追加する。
+ * 申請書の承認・確定・ステータス変更は一切行わない。
+ */
+async function linkUnclaimedClosingsToQuota(
+	quotaPageId: string,
+	notion: NotionClient,
+): Promise<{ action: string; message: string; linkedCount: number }> {
+	// 1. ノルマ申請書ページを取得して期間・担当者を読む
+	const quotaPage = await notion.pages.retrieve({ page_id: quotaPageId });
+	const salesPersonIds = personIdsFromProperty(quotaPage.properties?.["対象営業ユーザー"]);
+	if (salesPersonIds.length === 0) {
+		return {
+			action: "skipped",
+			message: "対象営業ユーザーが設定されていないためスキップしました。",
+			linkedCount: 0,
+		};
+	}
+
+	// 対象月を「何月度」テキスト（例: "2026/6"）優先で取得、なければ「対象期間」日付から算出
+	let monthStart: string;
+	let nextMonthStart: string;
+	const monthLabel = text(quotaPage.properties?.["何月度"]);
+
+	if (monthLabel && /^\d{4}\/\d{1,2}$/.test(monthLabel.trim())) {
+		// 「何月度」が "2026/6" 形式で設定されている場合
+		const parts = monthLabel.trim().split("/");
+		const year = parseInt(parts[0]!, 10);
+		const month = parseInt(parts[1]!, 10);
+		monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+		const nd = new Date(year, month); // month は1始まりなのでこれで翌月になる
+		nextMonthStart = `${nd.getFullYear()}-${String(nd.getMonth() + 1).padStart(2, "0")}-01`;
+		console.log(`[linkUnclaimed] 何月度テキスト使用: ${monthLabel} → ${monthStart}〜${nextMonthStart}`);
+	} else {
+		// フォールバック: 「対象期間」日付から算出
+		const periodStart = dateStartFromProperty(quotaPage.properties?.["対象期間"]);
+		if (!periodStart) {
+			return {
+				action: "skipped",
+				message: "「何月度」または「対象期間」が設定されていないためスキップしました。",
+				linkedCount: 0,
+			};
+		}
+		const d = new Date(periodStart);
+		monthStart = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+		const nd = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+		nextMonthStart = `${nd.getFullYear()}-${String(nd.getMonth() + 1).padStart(2, "0")}-01`;
+		console.log(`[linkUnclaimed] 対象期間フォールバック使用: ${monthStart}〜${nextMonthStart}`);
+	}
+
+	const userId = salesPersonIds[0]!;
+	const dateFilter = [
+		{ property: "成約日", date: { on_or_after: monthStart } },
+		{ property: "成約日", date: { before: nextMonthStart } },
+	];
+
+	// 2. 販売担当として紐づく成約 + 仕入れ担当として紐づく成約を両方検索（OR相当の2クエリ）
+	const [salesResult, sourcingResult] = await Promise.all([
+		notion.dataSources.query({
+			data_source_id: CLOSING_REPORT_DATA_SOURCE_ID,
+			filter: { and: [{ property: "担当営業ユーザー", people: { contains: userId } }, ...dateFilter] },
+			page_size: 50,
+		}),
+		notion.dataSources.query({
+			data_source_id: CLOSING_REPORT_DATA_SOURCE_ID,
+			filter: { and: [{ property: "仕入れ担当", people: { contains: userId } }, ...dateFilter] },
+			page_size: 50,
+		}),
+	]);
+
+	// 重複除去してマージ（取り消し除外）
+	const allResults = [
+		...((salesResult.results ?? []) as Page[]),
+		...((sourcingResult.results ?? []) as Page[]),
+	];
+	const seenIds = new Set<string>();
+	const closingPages = allResults.filter((p) => {
+		if (seenIds.has(p.id)) return false;
+		seenIds.add(p.id);
+		const s = text(p.properties?.["承認ステータス"]);
+		return s !== "取り消し";
+	});
+
+	if (closingPages.length === 0) {
+		return {
+			action: "no-closings",
+			message: `${monthStart.slice(0, 7)} の成約報告が見つかりませんでした。`,
+			linkedCount: 0,
+		};
+	}
+
+	// 3. 既に紐付け済みのIDを除外して追記
+	const existingClosingIds = relationIdsFromProperty(quotaPage.properties?.["関連成約"]);
+	const existingSet = new Set(existingClosingIds);
+	const newIds = closingPages.map((p) => p.id).filter((id) => !existingSet.has(id));
+
+	if (newIds.length === 0) {
+		return {
+			action: "already-linked",
+			message: "全ての成約報告は既に紐付け済みです。",
+			linkedCount: 0,
+		};
+	}
+
+	const allIds = [...existingClosingIds, ...newIds];
+	await notion.pages.update({
+		page_id: quotaPageId,
+		properties: {
+			関連成約: { relation: allIds.map((id) => ({ id })) },
+		},
+	});
+
+	console.log(`ノルマ申請書 ${quotaPageId} に成約報告 ${newIds.length} 件を自動紐付けしました`);
+	return {
+		action: "linked",
+		message: `${newIds.length} 件の成約報告を自動で紐付けました。rollupの数字が更新されます。`,
+		linkedCount: newIds.length,
+	};
+}

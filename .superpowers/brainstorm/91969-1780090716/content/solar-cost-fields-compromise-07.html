@@ -1,0 +1,41 @@
+<h2>太陽光提案PDF: 年間維持費の落とし所</h2>
+<p class="subtitle">必須にはする。ただし入力負荷は上げすぎない設計にします。</p>
+
+<div class="mockup">
+  <div class="mockup-header">推奨案: 合計は必須、内訳は任意</div>
+  <div class="mockup-body">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div class="placeholder" style="min-height:180px;">
+        <h3>必須判定</h3>
+        <p>年間ランニングコスト（合計）</p>
+        <p>または、内訳があれば自動合算</p>
+        <p>合計も内訳も無ければ入力待ち</p>
+      </div>
+      <div class="placeholder" style="min-height:180px;">
+        <h3>任意内訳</h3>
+        <p>O&amp;M費</p>
+        <p>保険料</p>
+        <p>地代</p>
+        <p>固定資産税・管理費</p>
+      </div>
+    </div>
+    <p>PDFでは合計を大きく表示し、入力済みの内訳だけを小さく表示。空欄の内訳は出さない。</p>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="total-required-breakdown-optional" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>この落とし所で進める</h3>
+      <p>営業入力は合計1項目で済ませ、詳しい資料がある案件だけ内訳も出す。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="all-breakdown-required" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>内訳も全部必須にする</h3>
+      <p>精度は高いが、初期入力の負荷はかなり上がる。</p>
+    </div>
+  </div>
+</div>

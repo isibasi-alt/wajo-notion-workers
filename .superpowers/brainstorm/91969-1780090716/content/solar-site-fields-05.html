@@ -1,0 +1,32 @@
+<h2>太陽光提案PDF: 物件特定情報</h2>
+<p class="subtitle">FIT/FIP区分、売電単価、残存売電期間も必須で確定。次は「どの発電所か」を特定する項目です。</p>
+
+<div class="mockup">
+  <div class="mockup-header">確定した必須ブロック</div>
+  <div class="mockup-body">
+    <div class="placeholder">
+      <p>価格: 販売価格 / 仕入れ価格</p>
+      <p>収益: 年間売電収入 / ランニングコスト</p>
+      <p>設備: パネル・パワコン・枚数・DC容量・PCS容量</p>
+      <p>売電: FIT/FIP区分 / 売電単価 / 残存売電期間</p>
+      <p>運転: 連系開始日 / 稼働年数</p>
+    </div>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="basic-site" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>所在地だけ必須</h3>
+      <p>発電所名と所在地を必須化。入力は軽いが、電力会社・低圧高圧の説明は弱い。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="full-site" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>物件特定情報も一式必須</h3>
+      <p>発電所名、所在地、電力会社エリア、低圧/高圧区分を必須化。資料として締まる。</p>
+    </div>
+  </div>
+</div>

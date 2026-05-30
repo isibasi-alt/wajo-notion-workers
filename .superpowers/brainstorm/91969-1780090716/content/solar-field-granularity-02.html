@@ -1,0 +1,48 @@
+<h2>太陽光提案PDF: パネル/パワコン情報の持ち方</h2>
+<p class="subtitle">必須化は確定。次は入力欄を細かくするか、現場入力を軽くするかの選択です。</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">A. 現場入力を軽くする</div>
+    <div class="mockup-body">
+      <div class="placeholder">
+        <h3>必須入力</h3>
+        <p>パネル情報: Jinko / Tiger Neo など</p>
+        <p>パワコン情報: HUAWEI / SUN2000 など</p>
+        <p>パネル枚数: 240枚</p>
+        <p>連系開始日: 2021-06-01</p>
+      </div>
+      <p>メーカーと型式を1欄にまとめる。早いが、後から集計しづらい。</p>
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">B. 後から使いやすく分ける</div>
+    <div class="mockup-body">
+      <div class="placeholder">
+        <h3>必須入力</h3>
+        <p>パネルメーカー / パネル型式</p>
+        <p>パワコンメーカー / パワコン型式</p>
+        <p>パネル枚数</p>
+        <p>連系開始日</p>
+      </div>
+      <p>PDFもDB集計もきれい。入力欄は増えるが、テンプレート化しやすい。</p>
+    </div>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="combined" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>まとめる</h3>
+      <p>入力負荷を最小化。PDFではそのまま表示する。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="separate" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>分ける</h3>
+      <p>メーカー・型式を別項目にして、将来の検索や品質チェックに使える。</p>
+    </div>
+  </div>
+</div>

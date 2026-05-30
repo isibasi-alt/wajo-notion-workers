@@ -1,0 +1,48 @@
+{
+	"name": "wajo-notion-workers",
+	"version": "0.0.0",
+	"private": true,
+	"scripts": {
+		"build": "tsc",
+		"check": "tsc --noEmit",
+		"test:ai-learning-log-outcome": "tsx src/ai-learning-log-outcome.test.ts",
+		"test:closing-report-celebration": "tsx src/closing-report-celebration.test.ts",
+		"test:closing-report-cancel-safety": "tsx src/closing-report-cancel-safety.test.ts",
+		"test:closing-report-deal-type-validation": "tsx src/closing-report-deal-type-validation.test.ts",
+		"test:closing-report-existing-deal-type-validation": "tsx src/closing-report-existing-deal-type-validation.test.ts",
+		"test:closing-report-existing-links-monthly": "tsx src/closing-report-existing-links-monthly.test.ts",
+		"test:closing-report-gross-validation": "tsx src/closing-report-gross-validation.test.ts",
+		"test:company-registration-duplicate-guard": "tsx src/company-registration-duplicate-guard.test.ts",
+		"test:closing-report-monthly-performance-autocreate": "tsx src/closing-report-monthly-performance-autocreate.test.ts",
+		"test:closing-report-safety": "tsx src/closing-report-safety.test.ts",
+		"test:customer-contact-log-title": "tsx src/customer-contact-log-title.test.ts",
+		"test:feedback-ai-learning-log": "tsx src/feedback-ai-learning-log.test.ts",
+		"test:inquiry-title-cleanup": "tsx src/inquiry-title-cleanup.test.ts",
+		"test:inquiry-assign-owner": "tsx src/inquiry-assign-owner.test.ts",
+		"test:inquiry-project-creation": "tsx src/inquiry-project-creation.test.ts",
+		"test:land-ai-learning-log": "tsx src/land-ai-learning-log.test.ts",
+		"test:lost-order-system": "tsx src/lost-order-system.test.ts",
+		"test:monthly-performance-link": "tsx src/monthly-performance-link.test.ts",
+		"test:monthly-performance-skips-audit-record": "tsx src/monthly-performance-skips-audit-record.test.ts",
+		"test:project-document-request": "tsx src/project-document-request.test.ts",
+		"test:proposal-simulation-validation": "tsx src/proposal-simulation-validation.test.ts",
+		"test:project-equipment-detail-request": "tsx src/project-equipment-detail-request.test.ts",
+		"test:project-manager-action": "tsx src/project-manager-action.test.ts",
+		"test:resident-document-validation": "tsx src/resident-document-validation.test.ts",
+		"test:sales-pipeline-signal": "tsx src/sales-pipeline-signal.test.ts",
+		"test:second-review": "tsx src/second-review-schema.test.ts"
+	},
+	"engines": {
+		"node": ">=22.0.0",
+		"npm": ">=10.9.2"
+	},
+	"devDependencies": {
+		"@types/node": "^22.9.0",
+		"tsx": "^4.20.6",
+		"typescript": "^5.8.0"
+	},
+	"dependencies": {
+		"@notionhq/workers": ">=0.0.0",
+		"pdf-lib": "^1.17.1"
+	}
+}

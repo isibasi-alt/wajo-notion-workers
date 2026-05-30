@@ -1,0 +1,32 @@
+<h2>太陽光提案PDF: 年間維持費の扱い</h2>
+<p class="subtitle">物件特定情報は B で確定。次は利回り計算を過大に見せないための費用項目です。</p>
+
+<div class="mockup">
+  <div class="mockup-header">確定した必須ブロック</div>
+  <div class="mockup-body">
+    <div class="placeholder">
+      <p>物件: 発電所名 / 所在地 / 電力会社エリア / 低圧・高圧区分</p>
+      <p>設備: パネル・パワコン・枚数・DC容量・PCS容量</p>
+      <p>売電: FIT/FIP区分 / 売電単価 / 残存売電期間</p>
+      <p>運転: 連系開始日 / 稼働年数</p>
+      <p>価格: 販売価格 / 仕入れ価格</p>
+    </div>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="running-cost-required" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>年間ランニングコストを必須</h3>
+      <p>O&amp;M、保険、地代、管理費をまとめた年間費用を必須化。利回りが現実的になる。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="running-cost-optional" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>空ならPDFから除外</h3>
+      <p>入力は軽いが、費用ゼロに見える危険がある。利回り表示も弱くなる。</p>
+    </div>
+  </div>
+</div>

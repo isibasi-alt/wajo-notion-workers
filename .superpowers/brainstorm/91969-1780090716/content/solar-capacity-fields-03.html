@@ -1,0 +1,31 @@
+<h2>太陽光提案PDF: 容量項目をどう持つか</h2>
+<p class="subtitle">メーカー・型式は分ける方針で確定。次は容量の持ち方です。</p>
+
+<div class="mockup">
+  <div class="mockup-header">確定した必須項目</div>
+  <div class="mockup-body">
+    <div class="placeholder">
+      <p>パネルメーカー / パネル型式</p>
+      <p>パワコンメーカー / パワコン型式</p>
+      <p>パネル枚数</p>
+      <p>連系開始日 → 稼働年数は自動計算</p>
+    </div>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="single-capacity" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>発電容量だけ必須</h3>
+      <p>設備容量 kW を1項目で持つ。入力は軽いが、DC/AC比やPCS容量の説明は弱い。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="dc-ac-capacity" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>DC容量とPCS容量を必須</h3>
+      <p>パネル側容量 kW とパワコン側容量 kW を分ける。設備説明・融資資料・技術確認に強い。</p>
+    </div>
+  </div>
+</div>
