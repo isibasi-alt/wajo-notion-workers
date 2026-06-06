@@ -427,6 +427,58 @@ function tdbToPatches(tdb: TdbProfile): Record<string, SafePatch> {
 
 export { tdbToPatches as tdbToPatchesForTest };
 
+function buildDossierMarkdown(
+	companyName: string,
+	r: DeepResearch,
+	score: CreditScore,
+): string {
+	const section = (h: string, body: string) =>
+		body && body.trim() ? `## ${h}\n${body}\n` : "";
+	const lines = [
+		`# ${companyName} 商談ドシエ`,
+		`**与信判定**: 信頼度 ${score.信頼度} / 提案可否 ${score.提案可否}（${score.根拠}）`,
+		"",
+		section("会社概要", r.summary),
+		section(
+			"基本情報",
+			[
+				r.industry && `業種: ${r.industry}`,
+				r.capital && `資本金: ${r.capital}`,
+				r.revenue && `売上: ${r.revenue}`,
+				r.employees && `従業員: ${r.employees}`,
+				r.founded && `設立: ${r.founded}`,
+				r.listingStatus && `上場: ${r.listingStatus}`,
+			]
+				.filter(Boolean)
+				.join(" / "),
+		),
+		section(
+			"経営陣・キーパーソン",
+			[r.representative && `代表者: ${r.representative}`, r.executives]
+				.filter(Boolean)
+				.join("\n"),
+		),
+		section("役員・会社のSNS発信", r.executiveSns),
+		section("直近の動き", r.recentNews),
+		section("再エネ/蓄電池の接点", r.renewableSignals),
+		section("現在の課題仮説", r.currentIssue),
+		section("将来の課題仮説", r.futureIssue),
+		section("3C：顧客・市場", r.customerMarket3c),
+		section("3C：競合", r.competitor3c),
+		section("3C：和上との関係性", r.wajoRelation3c),
+		section("営業切り口", r.salesAngle),
+		section("和上解決策の適合", r.fit),
+		section("想定決裁者", r.decisionMaker),
+		section("想定反論・切り返し", r.objections),
+		r.citations.length
+			? `## 出典\n${r.citations.map((c) => `- ${c}`).join("\n")}`
+			: "",
+	];
+	return lines.filter((l) => l !== "").join("\n");
+}
+
+export { buildDossierMarkdown as buildDossierMarkdownForTest };
+
 const MAX_PENDING_LIMIT = 10;
 const DEFAULT_SALES_NEWS_KEYWORDS = [
 	"系統用蓄電池",
