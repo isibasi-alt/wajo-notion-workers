@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
-import { buildResearchQueriesForTest } from "./index";
+import {
+	buildResearchQueriesForTest,
+	extractCitationsForTest,
+	fallbackDeepResearchForTest,
+	normalizeDeepResearchForTest,
+} from "./index";
 
 async function main() {
 	const queries = buildResearchQueriesForTest({
@@ -19,6 +24,33 @@ async function main() {
 	assert.ok(aspects.includes("executiveSns"));
 	assert.ok(aspects.includes("renewableSignals"));
 	console.log("OK buildResearchQueries");
+
+	// 出典抽出: Perplexityレスポンスの citations を吸い出す
+	const cites = extractCitationsForTest({
+		citations: ["https://a.example/x", "https://b.example/y"],
+	});
+	assert.deepEqual(cites, ["https://a.example/x", "https://b.example/y"]);
+	assert.deepEqual(extractCitationsForTest({}), []);
+
+	// fallback: 空入力でも全フィールドが埋まる
+	const fb = fallbackDeepResearchForTest("株式会社サンプル食品");
+	assert.ok(fb.summary.includes("推測"));
+	assert.equal(fb.citations.length, 0);
+
+	// 正規化: 部分入力は fallback で穴埋め、citations は配列化
+	const norm = normalizeDeepResearchForTest(
+		{
+			summary: "食品製造業",
+			representative: "山田太郎",
+			citations: ["https://src.example/1"],
+		},
+		"株式会社サンプル食品",
+	);
+	assert.equal(norm.summary, "食品製造業");
+	assert.equal(norm.representative, "山田太郎");
+	assert.equal(norm.currentIssue.length > 0, true); // fallbackで補完
+	assert.deepEqual(norm.citations, ["https://src.example/1"]);
+	console.log("OK parse/normalize/citations");
 }
 main().catch((error) => {
 	console.error(error);

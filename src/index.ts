@@ -131,6 +131,95 @@ function buildResearchQueries(input: {
 
 export { buildResearchQueries as buildResearchQueriesForTest };
 
+function fallbackDeepResearch(companyName: string): DeepResearch {
+	const base = `推測ですが、${companyName}の公開情報が不足しているため、和上の営業仮説として整理します。`;
+	return {
+		summary: base,
+		currentIssue:
+			"推測ですが、電気料金やエネルギーコストの上昇が利益を圧迫している可能性があります。",
+		futureIssue:
+			"推測ですが、脱炭素・取引先要請への対応が今後の課題になり得ます。",
+		salesAngle:
+			"自家消費型太陽光による電気代圧縮と、蓄電池・FIPでの収益化を入口に提案。",
+		fit: "屋根・遊休地があれば和上の太陽光/蓄電池の適合度は高いと考えられます(要確認)。",
+		customerMarket3c:
+			"推測ですが、業界全体でエネルギーコストと脱炭素対応が共通課題。",
+		competitor3c: "推測ですが、地域の施工会社やEPCが競合になり得ます。",
+		wajoRelation3c:
+			"和上は800MW実績で施工リスクが低く、売買仲介まで一気通貫で対応可能。",
+		source: "公開情報の取得が不足。要追加調査。",
+		representative: "",
+		executives: "",
+		capital: "",
+		founded: "",
+		revenue: "",
+		employees: "",
+		industry: "",
+		listingStatus: "",
+		websiteUrl: "",
+		xUrl: "",
+		linkedinUrl: "",
+		corporateNumber: "",
+		executiveSns: "",
+		recentNews: "",
+		renewableSignals: "",
+		decisionMaker: "",
+		objections: "",
+		citations: [],
+	};
+}
+
+function extractCitations(response: { citations?: unknown }): string[] {
+	if (!Array.isArray(response.citations)) return [];
+	return response.citations.filter((c): c is string => typeof c === "string");
+}
+
+function normalizeDeepResearch(
+	input: Partial<DeepResearch>,
+	companyName: string,
+): DeepResearch {
+	const fb = fallbackDeepResearch(companyName);
+	const pick = (v: unknown, d: string): string =>
+		typeof v === "string" && v.trim() ? v : d;
+	return {
+		summary: pick(input.summary, fb.summary),
+		currentIssue: pick(input.currentIssue, fb.currentIssue),
+		futureIssue: pick(input.futureIssue, fb.futureIssue),
+		salesAngle: pick(input.salesAngle, fb.salesAngle),
+		fit: pick(input.fit, fb.fit),
+		customerMarket3c: pick(input.customerMarket3c, fb.customerMarket3c),
+		competitor3c: pick(input.competitor3c, fb.competitor3c),
+		wajoRelation3c: pick(input.wajoRelation3c, fb.wajoRelation3c),
+		source: pick(input.source, fb.source),
+		representative: pick(input.representative, ""),
+		executives: pick(input.executives, ""),
+		capital: pick(input.capital, ""),
+		founded: pick(input.founded, ""),
+		revenue: pick(input.revenue, ""),
+		employees: pick(input.employees, ""),
+		industry: pick(input.industry, ""),
+		listingStatus: pick(input.listingStatus, ""),
+		websiteUrl: pick(input.websiteUrl, ""),
+		xUrl: pick(input.xUrl, ""),
+		linkedinUrl: pick(input.linkedinUrl, ""),
+		corporateNumber: pick(input.corporateNumber, ""),
+		executiveSns: pick(input.executiveSns, ""),
+		recentNews: pick(input.recentNews, ""),
+		renewableSignals: pick(input.renewableSignals, ""),
+		decisionMaker: pick(input.decisionMaker, ""),
+		objections: pick(input.objections, ""),
+		citations: Array.isArray(input.citations)
+			? input.citations.filter((c): c is string => typeof c === "string")
+			: [],
+	};
+}
+
+export {
+	extractCitations as extractCitationsForTest,
+	fallbackDeepResearch as fallbackDeepResearchForTest,
+	normalizeDeepResearch as normalizeDeepResearchForTest,
+};
+
 const MAX_PENDING_LIMIT = 10;
 const DEFAULT_SALES_NEWS_KEYWORDS = [
 	"系統用蓄電池",
