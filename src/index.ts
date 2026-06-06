@@ -302,6 +302,48 @@ async function researchCompanyDeep(input: {
 	}
 }
 
+function scoreCompany(tdb: TdbProfile | null): CreditScore {
+	if (!tdb || tdb.企業評点 === null) {
+		return {
+			信頼度: "中",
+			提案可否: "タイミング待ち",
+			根拠:
+				"TDB与信が未取得のため暫定判定。Perplexity公開情報ベース。TDB取得後に再評価する。",
+		};
+	}
+	const 評点 = tdb.企業評点;
+	const 倒産 = tdb.倒産確率Pct;
+	let 信頼度: CreditScore["信頼度"];
+	let 提案可否: CreditScore["提案可否"];
+	if (評点 >= 51) {
+		信頼度 = "高";
+		提案可否 = "提案可能";
+	} else if (評点 >= 41) {
+		信頼度 = "中";
+		提案可否 = "提案可能";
+	} else if (評点 >= 36) {
+		信頼度 = "中";
+		提案可否 = "タイミング待ち";
+	} else {
+		信頼度 = "低";
+		提案可否 = "提案不可";
+	}
+	// 倒産確率が高ければ提案可否を抑制
+	if (倒産 !== null && 倒産 >= 10 && 提案可否 === "提案可能")
+		提案可否 = "タイミング待ち";
+	if (倒産 !== null && 倒産 >= 30) {
+		提案可否 = "提案不可";
+		信頼度 = "低";
+	}
+	return {
+		信頼度,
+		提案可否,
+		根拠: `TDB評点${評点}${倒産 !== null ? `・倒産確率${倒産}%` : ""}に基づく自動判定。`,
+	};
+}
+
+export { scoreCompany as scoreCompanyForTest };
+
 const MAX_PENDING_LIMIT = 10;
 const DEFAULT_SALES_NEWS_KEYWORDS = [
 	"系統用蓄電池",
