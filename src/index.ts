@@ -14824,27 +14824,19 @@ async function enrichCompany(
 	card: CardInfo,
 	isDuplicateCandidate: boolean,
 ): Promise<void> {
-	const research = await researchCompany(card);
+	// 名刺の最低限を先に確実化してから、深掘りパイプライン(Perplexity+与信)へ委譲。
 	await notion.pages.update({
 		page_id: company.id,
 		properties: {
-			企業調査ステータス: select("完了"),
-			企業サマリー: richText(research.summary),
-			現在課題仮説: richText(research.currentIssue),
-			将来課題仮説: richText(research.futureIssue),
-			営業切り口: richText(research.salesAngle),
-			和上解決策適合: richText(research.fit),
-			"3C：顧客・市場分析": richText(research.customerMarket3c),
-			"3C：競合分析": richText(research.competitor3c),
-			"3C：自社との関係性": richText(research.wajoRelation3c),
-			根拠ソース: richText(research.source),
+			企業調査ステータス: select("解析開始"),
 			名刺起点Webhookメモ: richText(
 				isDuplicateCandidate
-					? "Notion Workerが近似候補ありとして企業調査・3Cを返却。重複整理対象。"
-					: "Notion Workerが名刺起点で企業調査・3Cを返却。",
+					? "名刺起点。近似候補ありのためWorkerが深掘り調査を実行。"
+					: "名刺起点。Workerが深掘り調査(Perplexity+与信)を実行。",
 			),
 		},
 	});
+	await processCompanyResearch({ companyPageId: company.id, dryRun: false }, notion);
 }
 
 async function linkCardToCompany(
