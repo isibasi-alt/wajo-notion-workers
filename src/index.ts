@@ -92,6 +92,45 @@ const WAJO_PLAYBOOK = [
 	"- 営業の型: 相手の状況から課題仮説→和上の解決策を数字(電気代◯%減・回収□年・800MW実績)で接続→決裁者別(社長/財務/工場長)に言い換え→想定反論への切り返し。",
 ].join("\n");
 
+// ─── ライン1: 名刺→企業 深掘りリサーチ ─────────────────────────────────────
+function buildResearchQueries(input: {
+	companyName: string;
+	domain: string;
+	address: string;
+}): Array<{ aspect: string; prompt: string }> {
+	const c = `会社名:${input.companyName} / ドメイン:${input.domain || "不明"} / 住所:${input.address || "不明"}`;
+	const common =
+		"日本語で、公開情報のみに基づき、各事実に出典URLを併記。裏取りできない点は『推測ですが』と明記。";
+	return [
+		{
+			aspect: "basic",
+			prompt: `次の企業の基本情報(業種・事業内容・資本金・設立・従業員規模・売上規模・上場区分・本社所在地・公式サイト)を調べて。${c}。${common}`,
+		},
+		{
+			aspect: "executives",
+			prompt: `次の企業の代表者と主要役員(氏名・役職・経歴)を調べて。事業・経営に関する公開情報のみ。私生活は除外。${c}。${common}`,
+		},
+		{
+			aspect: "executiveSns",
+			prompt: `次の企業および代表・役員の公開SNS(X/LinkedIn/note/Facebook/YouTube)で、事業・経営に関する発信があれば要約して。アカウントURLも。私生活は除外。${c}。${common}`,
+		},
+		{
+			aspect: "recentNews",
+			prompt: `次の企業の直近1-2年のニュース・プレスリリース・動向を日付つきで調べて。${c}。${common}`,
+		},
+		{
+			aspect: "renewableSignals",
+			prompt: `次の企業の、再生可能エネルギー(太陽光・蓄電池)との接点を調べて。工場/倉庫の有無、電力使用規模、遊休地・屋根、脱炭素方針、補助金交付歴など。${c}。${common}`,
+		},
+		{
+			aspect: "decisionMaker",
+			prompt: `次の企業で、太陽光/蓄電池導入の意思決定に関わりそうな決裁者・部門を推定して。${c}。${common}`,
+		},
+	];
+}
+
+export { buildResearchQueries as buildResearchQueriesForTest };
+
 const MAX_PENDING_LIMIT = 10;
 const DEFAULT_SALES_NEWS_KEYWORDS = [
 	"系統用蓄電池",
