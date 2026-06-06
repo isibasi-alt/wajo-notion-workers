@@ -71,6 +71,8 @@ const DAILY_REPORT_LOG_DATA_SOURCE_ID =
 const CLOSING_REPORT_DATA_SOURCE_ID =
 	process.env.CLOSING_REPORT_DATA_SOURCE_ID ??
 	"8d5a506b-59b8-4e50-bc77-d5412774048d";
+const CLOSING_REPORT_TEMPLATE_ID = process.env.CLOSING_REPORT_TEMPLATE_ID;
+const PROJECT_TEMPLATE_ID = process.env.PROJECT_TEMPLATE_ID;
 const AI_LEARNING_LOG_DATA_SOURCE_ID =
 	process.env.AI_LEARNING_LOG_DATA_SOURCE_ID ??
 	"0577bcac-f09d-42f6-98e4-84062956abba";
@@ -78,6 +80,9 @@ const SALES_TEAM_USER_IDS = (process.env.SALES_TEAM_USER_IDS ?? "")
 	.split(",")
 	.map((id) => id.trim())
 	.filter(Boolean);
+
+const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY;
+const PERPLEXITY_MODEL = process.env.PERPLEXITY_MODEL || "sonar";
 
 const MAX_PENDING_LIMIT = 10;
 const DEFAULT_SALES_NEWS_KEYWORDS = [
@@ -359,6 +364,47 @@ type Research = {
 	competitor3c: string;
 	wajoRelation3c: string;
 	source: string;
+};
+
+type DeepResearch = Research & {
+	representative: string;   // 代表者
+	executives: string;       // 経営陣（代表以外のキーパーソン）
+	capital: string;          // 資本金
+	founded: string;          // 設立年月
+	revenue: string;          // 売上規模
+	employees: string;        // 従業員規模
+	industry: string;         // 業種
+	listingStatus: string;    // 上場区分
+	websiteUrl: string;
+	xUrl: string;
+	linkedinUrl: string;
+	corporateNumber: string;  // 法人番号
+	executiveSns: string;     // 役員SNS発信メモ（公開・事業範囲のみ）
+	recentNews: string;       // 直近ニュース（日付つき）
+	renewableSignals: string; // 再エネ接点シグナル
+	decisionMaker: string;    // 想定決裁者
+	objections: string;       // 想定反論・懸念
+	citations: string[];      // 出典URL
+};
+
+type TdbProfile = {
+	企業評点: number | null;   // TDB評点（概ね0-100、高いほど良い）
+	倒産確率Pct: number | null; // 倒産確率(%)
+	年商: string;
+	資本金: string;
+	従業員数: string;
+	設立: string;
+	業種: string;
+	代表者: string;
+	法人番号: string;
+	調査年月日: string;        // ISO日付
+	raw: string;              // 元帳票テキスト（監査用）
+};
+
+type CreditScore = {
+	信頼度: "高" | "中" | "低";
+	提案可否: "提案可能" | "タイミング待ち" | "提案不可";
+	根拠: string;
 };
 
 type MeetingPrepInput = {
@@ -9576,19 +9622,65 @@ function readProjectInfo(page: Page): ProjectInfo {
 	};
 }
 
+async function createProjectRecord(
+	notion: NotionClient,
+	properties: Record<string, unknown>,
+): Promise<Page> {
+	const createBase: Record<string, unknown> = {
+		parent: { data_source_id: PROJECT_DATA_SOURCE_ID },
+		properties,
+	};
+
+	if (!PROJECT_TEMPLATE_ID) {
+		return notion.pages.create(createBase);
+	}
+
+	const templatePayloads: Array<{ template?: Record<string, unknown> | string }> = [
+		{ template: { page_id: PROJECT_TEMPLATE_ID } },
+		{ template: { data_source_id: PROJECT_DATA_SOURCE_ID, page_id: PROJECT_TEMPLATE_ID } },
+		{ template: PROJECT_TEMPLATE_ID },
+	];
+
+	for (const payload of templatePayloads) {
+		try {
+			return await notion.pages.create({
+				...createBase,
+				...payload,
+			});
+		} catch (error) {
+			console.log(
+				`[createProjectRecord] template適用試行をスキップ: ${String(
+					error,
+				).slice(0, 180)}`,
+			);
+		}
+	}
+
+	console.log(
+		`[createProjectRecord] PROJECT_TEMPLATE_ID を使った作成は失敗したため、テンプレート未適用で作成します。`,
+	);
+	return notion.pages.create(createBase);
+}
+
 async function createProjectFromLand(
 	notion: NotionClient,
 	land: LandInfo,
 ): Promise<Page> {
 	const projectName = `${land.name}｜土地案件`;
-	const created = await notion.pages.create({
-		parent: { data_source_id: PROJECT_DATA_SOURCE_ID },
-		properties: {
-			案件名: title(projectName),
-		},
+	const created = await createProjectRecord(notion, {
+		案件名: title(projectName),
+		ステータス: select("🔴 情報収集中"),
+		獲得ソース: select("土地情報"),
+		獲得元区分: select("土地情報"),
+		仕入れ元区分: select("土地情報"),
+		対象物種別: select("土地"),
+		案件種別: select(inferProjectTypeFromLand(land)),
+		売買区分: select("不明"),
+		作成日: { date: { start: todayDateJST() } },
+		最終アクション日: { date: { start: todayDateJST() } },
+		関連土地情報: { relation: [{ id: land.page.id }] },
 	});
 	const projectPage = await notion.pages.retrieve({ page_id: created.id });
-	const projectType = inferProjectTypeFromLand(land);
 	const memo = [
 		`土地情報DBからWorker案件化。`,
 		`土地名: ${land.name}`,
@@ -9599,14 +9691,6 @@ async function createProjectFromLand(
 		"重複防止: 関連土地情報から既存案件を確認してから作成。",
 	].filter(Boolean).join("\n");
 	const patches: Record<string, SafePatch> = {
-		ステータス: { kind: "select", value: "🔴 情報収集中" },
-		仕入れ元区分: { kind: "select", value: "土地情報" },
-		獲得ソース: { kind: "select", value: "土地情報" },
-		対象物種別: { kind: "select", value: "土地" },
-		案件種別: { kind: "select", value: projectType },
-		売買区分: { kind: "select", value: "不明" },
-		作成日: { kind: "date", value: todayDateJST() },
-		最終アクション日: { kind: "date", value: todayDateJST() },
 		案件詳細: { kind: "text", value: memo },
 		情報ソース: { kind: "text", value: "土地情報DB / Worker案件化" },
 		確認待ち内容: {
@@ -9614,7 +9698,6 @@ async function createProjectFromLand(
 			value:
 				"系統、接道、農転/登記、所有者、売却条件、現地確認を人間が確認してください。",
 		},
-		関連土地情報: { kind: "relation", ids: [land.page.id] },
 	};
 	const assigneeIds = personIdsFromProperty(land.page.properties?.["担当営業ユーザー"]);
 	if (assigneeIds.length > 0) {
@@ -15561,11 +15644,13 @@ async function createProjectFromInquiry(
 	const properties = inquiryPage.properties ?? {};
 	const inquiryTitle = readGenericPageTitle(inquiryPage) || "問い合わせ";
 	const projectName = buildInquiryProjectName(inquiryTitle);
-	const created = await notion.pages.create({
-		parent: { data_source_id: PROJECT_DATA_SOURCE_ID },
-		properties: {
-			案件名: title(projectName),
-		},
+	const created = await createProjectRecord(notion, {
+		案件名: title(projectName),
+		ステータス: select("🔴 情報収集中"),
+		獲得ソース: select("問い合わせ"),
+		仕入れ元区分: select("問い合わせ"),
+		作成日: { date: { start: todayDateJST() } },
+		最終アクション日: { date: { start: todayDateJST() } },
 	});
 	const projectPage = await notion.pages.retrieve({ page_id: created.id });
 	const existingAssignedUserIds = personIdsFromProperty(properties["担当営業ユーザー"]);
@@ -15588,11 +15673,6 @@ async function createProjectFromInquiry(
 		"次に確認すること: 対象物、売買条件、必要資料、価格、所有者/決裁者。",
 	].join("\n");
 	const patches: Record<string, SafePatch> = {
-		ステータス: { kind: "select", value: "🔴 情報収集中" },
-		獲得ソース: { kind: "select", value: "問い合わせ" },
-		仕入れ元区分: { kind: "select", value: "問い合わせ" },
-		作成日: { kind: "date", value: today },
-		最終アクション日: { kind: "date", value: today },
 		案件詳細: { kind: "text", value: memo },
 		情報ソース: { kind: "text", value: "お問い合わせDB / Worker案件化" },
 		確認待ち内容: {
