@@ -500,6 +500,87 @@ async function appendCompanyDossierBody(
 	}
 }
 
+// 整合性ガード: 現実的でない/矛盾した商談相手を深掘り前に弾く（無料・決定論）
+const DEFAULT_TARGET_BLOCKLIST = [
+	"政府",
+	"government",
+	"省庁",
+	"行政機関",
+	"大統領",
+	"首相",
+	"国会",
+	"trump",
+	"トランプ",
+	"ntt",
+];
+
+function targetBlocklist(): string[] {
+	const extra = (process.env.WAJO_RESEARCH_BLOCKLIST ?? "")
+		.split(",")
+		.map((s) => s.trim().toLowerCase())
+		.filter(Boolean);
+	return [...DEFAULT_TARGET_BLOCKLIST, ...extra];
+}
+
+function validateResearchTarget(companyName: string): {
+	ok: boolean;
+	reason: string;
+} {
+	const name = companyName.trim();
+	if (!name) return { ok: false, reason: "企業名が空のため調査できません。" };
+	const lower = name.toLowerCase();
+	if (name.includes("和上") || lower.includes("wajo")) {
+		return {
+			ok: false,
+			reason: "自社（和上ホールディングス）を商談相手にはできません（論理矛盾）。",
+		};
+	}
+	for (const kw of targetBlocklist()) {
+		if (lower.includes(kw)) {
+			return {
+				ok: false,
+				reason: `「${kw}」を含むため、現実的な商談相手でないと判断しました。誤りなら手動で調査してください。`,
+			};
+		}
+	}
+	return { ok: true, reason: "" };
+}
+
+export { validateResearchTarget as validateResearchTargetForTest };
+
+// 整合性ガード(AI層): グレーな相手の妥当性を安価に判定。失敗時は通す(誤ブロック防止)。
+async function assessTargetPlausibility(
+	companyName: string,
+): Promise<{ realistic: boolean; reason: string }> {
+	if (!PERPLEXITY_API_KEY) return { realistic: true, reason: "" };
+	try {
+		const r = await perplexityChat([
+			{
+				role: "system",
+				content:
+					"あなたは日本の再エネ中小企業『和上ホールディングス』の営業審査担当。相手が太陽光/蓄電池の現実的な商談相手かを判定する。自社・各国政府・著名公人・非現実的な超巨大組織など商談がおよそ成立しない相手はrealistic=false。JSONのみで返す。",
+			},
+			{
+				role: "user",
+				content: `相手:「${companyName}」。{"realistic":true/false,"reason":"日本語で短く"} だけ返す。`,
+			},
+		]);
+		let parsed: { realistic?: unknown; reason?: unknown } = {};
+		const m = r.content.match(/\{[\s\S]*\}/);
+		if (m) parsed = JSON.parse(m[0]) as { realistic?: unknown; reason?: unknown };
+		if (typeof parsed.realistic === "boolean") {
+			return {
+				realistic: parsed.realistic,
+				reason: typeof parsed.reason === "string" ? parsed.reason : "",
+			};
+		}
+		return { realistic: true, reason: "" };
+	} catch (error) {
+		console.log("assessTargetPlausibility failed", String(error));
+		return { realistic: true, reason: "" };
+	}
+}
+
 const MAX_PENDING_LIMIT = 10;
 const DEFAULT_SALES_NEWS_KEYWORDS = [
 	"系統用蓄電池",
@@ -4950,6 +5031,36 @@ async function processCompanyResearch(
 		page_id: input.companyPageId,
 	});
 	const company = readCompany(companyPage);
+
+	// 0. 整合性ガード（深掘り前）: 矛盾/非現実的な相手はPerplexityを呼ばず要確認で停止
+	const guard = validateResearchTarget(company.name);
+	const plausibility = guard.ok
+		? await assessTargetPlausibility(company.name)
+		: { realistic: true, reason: "" };
+	if (!guard.ok || !plausibility.realistic) {
+		const reason = !guard.ok
+			? guard.reason
+			: plausibility.reason || "現実的な商談相手でないと判断しました。";
+		if (input.dryRun) {
+			return {
+				companyId: company.page.id,
+				action: "dry-run",
+				message: `dry-run: 整合性チェックで停止: ${reason}`,
+			};
+		}
+		await safeUpdateExistingProperties(notion, companyPage, {
+			企業調査ステータス: { kind: "select", value: "要確認" },
+			企業AI受付メモ: {
+				kind: "text",
+				value: `整合性チェック: ${reason} 深掘り調査をスキップしました。`,
+			},
+		});
+		return {
+			companyId: company.page.id,
+			action: "needs-review",
+			message: `整合性チェックで停止: ${reason}`,
+		};
+	}
 
 	// 1. TDB与信（暫定: 未接続でnull。プラン1Bで接続）
 	const tdb = await fetchTdbProfile(company);

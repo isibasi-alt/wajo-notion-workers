@@ -36,7 +36,8 @@
 		"test:deep-research-parse": "tsx src/deep-research-parse.test.ts",
 		"test:company-scoring": "tsx src/company-scoring.test.ts",
 		"test:deep-research-merge": "tsx src/deep-research-merge.test.ts",
-		"test:company-dossier": "tsx src/company-dossier.test.ts"
+		"test:company-dossier": "tsx src/company-dossier.test.ts",
+		"test:research-target-guard": "tsx src/research-target-guard.test.ts"
 	},
 	"engines": {
 		"node": ">=22.0.0",
