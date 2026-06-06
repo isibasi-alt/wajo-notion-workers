@@ -84,6 +84,14 @@ const SALES_TEAM_USER_IDS = (process.env.SALES_TEAM_USER_IDS ?? "")
 const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY;
 const PERPLEXITY_MODEL = process.env.PERPLEXITY_MODEL || "sonar";
 
+const WAJO_PLAYBOOK = [
+	"和上ホールディングスの強み:",
+	"- 太陽光・系統用蓄電池・発電所仲介(売買)の再エネ専門。太陽光建設実績 約800MW。",
+	"- 提供価値: 自家消費型太陽光で電気代圧縮 / 系統用蓄電池・FIPで余剰を収益化 / 高圧・低圧両対応 / 投資回収シミュレーション / 発電所の売買仲介。",
+	"- 刺さる相手の例: 工場・倉庫で電気代が原価を圧迫する企業 / 遊休地・屋根を持つ企業 / 脱炭素を取引先から要請される企業 / 売電中の発電所を売買したい事業者。",
+	"- 営業の型: 相手の状況から課題仮説→和上の解決策を数字(電気代◯%減・回収□年・800MW実績)で接続→決裁者別(社長/財務/工場長)に言い換え→想定反論への切り返し。",
+].join("\n");
+
 const MAX_PENDING_LIMIT = 10;
 const DEFAULT_SALES_NEWS_KEYWORDS = [
 	"系統用蓄電池",
