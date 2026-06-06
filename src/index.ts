@@ -344,6 +344,63 @@ function scoreCompany(tdb: TdbProfile | null): CreditScore {
 
 export { scoreCompany as scoreCompanyForTest };
 
+// 既存値(手入力)があれば壊さない。existingは企業マスターの読み取り値の部分集合。
+function mergeDeepResearch(
+	existing: Partial<DeepResearch>,
+	research: DeepResearch,
+): DeepResearch {
+	const keep = (e: unknown, r: string): string =>
+		typeof e === "string" && e.trim() ? e : r;
+	return {
+		summary: keep(existing.summary, research.summary),
+		currentIssue: keep(existing.currentIssue, research.currentIssue),
+		futureIssue: keep(existing.futureIssue, research.futureIssue),
+		salesAngle: keep(existing.salesAngle, research.salesAngle),
+		fit: keep(existing.fit, research.fit),
+		customerMarket3c: keep(existing.customerMarket3c, research.customerMarket3c),
+		competitor3c: keep(existing.competitor3c, research.competitor3c),
+		wajoRelation3c: keep(existing.wajoRelation3c, research.wajoRelation3c),
+		source: keep(existing.source, research.source),
+		representative: keep(existing.representative, research.representative),
+		executives: keep(existing.executives, research.executives),
+		capital: keep(existing.capital, research.capital),
+		founded: keep(existing.founded, research.founded),
+		revenue: keep(existing.revenue, research.revenue),
+		employees: keep(existing.employees, research.employees),
+		industry: keep(existing.industry, research.industry),
+		listingStatus: keep(existing.listingStatus, research.listingStatus),
+		websiteUrl: keep(existing.websiteUrl, research.websiteUrl),
+		xUrl: keep(existing.xUrl, research.xUrl),
+		linkedinUrl: keep(existing.linkedinUrl, research.linkedinUrl),
+		corporateNumber: keep(existing.corporateNumber, research.corporateNumber),
+		executiveSns: keep(existing.executiveSns, research.executiveSns),
+		recentNews: keep(existing.recentNews, research.recentNews),
+		renewableSignals: keep(existing.renewableSignals, research.renewableSignals),
+		decisionMaker: keep(existing.decisionMaker, research.decisionMaker),
+		objections: keep(existing.objections, research.objections),
+		citations: research.citations,
+	};
+}
+
+function isDeepResearchComplete(r: DeepResearch): boolean {
+	return [
+		r.summary,
+		r.currentIssue,
+		r.futureIssue,
+		r.salesAngle,
+		r.fit,
+		r.customerMarket3c,
+		r.competitor3c,
+		r.wajoRelation3c,
+		r.source,
+	].every((v) => v.trim().length > 0);
+}
+
+export {
+	mergeDeepResearch as mergeDeepResearchForTest,
+	isDeepResearchComplete as isDeepResearchCompleteForTest,
+};
+
 const MAX_PENDING_LIMIT = 10;
 const DEFAULT_SALES_NEWS_KEYWORDS = [
 	"系統用蓄電池",
