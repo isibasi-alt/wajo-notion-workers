@@ -401,6 +401,32 @@ export {
 	isDeepResearchComplete as isDeepResearchCompleteForTest,
 };
 
+// 暫定: TDBアクセスは未接続。プラン1B(COSMOSNet自動取得)でここを差し替える。
+async function fetchTdbProfile(_company: CompanyInfo): Promise<TdbProfile | null> {
+	void _company;
+	// TODO(plan-1B): COSMOSNet取得部品から TdbProfile を返すよう接続する。
+	return null;
+}
+
+function tdbToPatches(tdb: TdbProfile): Record<string, SafePatch> {
+	const patches: Record<string, SafePatch> = {};
+	const addText = (key: string, value: string) => {
+		if (value && value.trim()) patches[key] = { kind: "text", value };
+	};
+	addText("資本金", tdb.資本金);
+	addText("設立年月", tdb.設立);
+	addText("売上規模", tdb.年商);
+	addText("従業員規模", tdb.従業員数);
+	addText("業種", tdb.業種);
+	addText("代表者", tdb.代表者);
+	addText("法人番号（TDB）", tdb.法人番号);
+	if (tdb.調査年月日 && tdb.調査年月日.trim())
+		patches["TDB調査年月日"] = { kind: "date", value: tdb.調査年月日 };
+	return patches;
+}
+
+export { tdbToPatches as tdbToPatchesForTest };
+
 const MAX_PENDING_LIMIT = 10;
 const DEFAULT_SALES_NEWS_KEYWORDS = [
 	"系統用蓄電池",
