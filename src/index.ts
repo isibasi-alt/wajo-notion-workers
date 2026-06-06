@@ -479,6 +479,27 @@ function buildDossierMarkdown(
 
 export { buildDossierMarkdown as buildDossierMarkdownForTest };
 
+// ドシエMarkdownを本文ブロックへ追記（既存 appendMeetingPrepReportBody と同じ作法）
+async function appendCompanyDossierBody(
+	notion: NotionClient,
+	pageId: string,
+	markdown: string,
+): Promise<void> {
+	if (!notion.blocks?.children?.append) return;
+	const lines = markdown.split("\n").filter((line) => line.trim().length > 0);
+	const blocks = lines.map((line) => {
+		if (line.startsWith("## ")) return headingBlock(line.slice(3), 2);
+		if (line.startsWith("# ")) return headingBlock(line.slice(2), 1);
+		return paragraphBlock(line);
+	});
+	for (let i = 0; i < blocks.length; i += 90) {
+		await notion.blocks.children.append({
+			block_id: pageId,
+			children: blocks.slice(i, i + 90),
+		});
+	}
+}
+
 const MAX_PENDING_LIMIT = 10;
 const DEFAULT_SALES_NEWS_KEYWORDS = [
 	"系統用蓄電池",
@@ -4929,50 +4950,86 @@ async function processCompanyResearch(
 		page_id: input.companyPageId,
 	});
 	const company = readCompany(companyPage);
-	const research = await researchCompany(companyToCardInfo(company));
-	const next = mergeCompanyResearch(company, research);
-	const complete = isCompanyResearchComplete(next);
+
+	// 1. TDB与信（暫定: 未接続でnull。プラン1Bで接続）
+	const tdb = await fetchTdbProfile(company);
+	const score = scoreCompany(tdb);
+
+	// 2. Perplexity多段深掘り
+	const card = companyToCardInfo(company);
+	const research = await researchCompanyDeep({
+		companyName: company.name,
+		domain: card.domain,
+		address: company.address,
+	});
+
+	// 3. 既存手入力を壊さないマージ
+	const existing: Partial<DeepResearch> = {
+		summary: company.summary,
+		currentIssue: company.currentIssue,
+		futureIssue: company.futureIssue,
+		salesAngle: company.salesAngle,
+		fit: company.fit,
+		customerMarket3c: company.customerMarket3c,
+		competitor3c: company.competitor3c,
+		wajoRelation3c: company.wajoRelation3c,
+		source: company.source,
+	};
+	const merged = mergeDeepResearch(existing, research);
+	const complete = isDeepResearchComplete(merged);
 	const status = complete ? "完了" : "要確認";
-	const memo = appendShortMemo(
-		company.aiMemo,
-		complete
-			? "2026-05-22 Workerが企業評価と3C三項目を確認・補完。3Cが揃ったため完了。"
-			: "2026-05-22 Workerが企業評価を確認したが3C不足が残るため要確認で停止。",
-	);
 
 	if (input.dryRun) {
 		return {
 			companyId: company.page.id,
 			action: "dry-run",
 			message: complete
-				? "dry-run: 企業評価と3C三項目を補完し、完了にできます。"
-				: "dry-run: 3C不足が残るため、要確認で止める想定です。",
+				? "dry-run: 深掘りリサーチと与信判定を反映し、完了にできます。"
+				: "dry-run: 一部不足のため要確認で止める想定です。",
 		};
 	}
 
-	await notion.pages.update({
-		page_id: company.page.id,
-		properties: {
-			企業調査ステータス: select(status),
-			企業サマリー: richText(next.summary),
-			現在課題仮説: richText(next.currentIssue),
-			将来課題仮説: richText(next.futureIssue),
-			営業切り口: richText(next.salesAngle),
-			和上解決策適合: richText(next.fit),
-			"3C：顧客・市場分析": richText(next.customerMarket3c),
-			"3C：競合分析": richText(next.competitor3c),
-			"3C：自社との関係性": richText(next.wajoRelation3c),
-			根拠ソース: richText(next.source),
-			企業AI受付メモ: richText(memo),
-		},
-	});
+	// 4. 構造化列（TDB由来は安全マージ、リサーチ由来は空欄のみ補完）
+	const patches: Record<string, SafePatch> = tdb ? tdbToPatches(tdb) : {};
+	patches["信頼度"] = { kind: "select", value: score.信頼度 };
+	patches["提案可否"] = { kind: "select", value: score.提案可否 };
+	patches["企業調査ステータス"] = { kind: "select", value: status };
+	const properties = companyPage.properties ?? {};
+	addPatchIfBlank(patches, properties, "代表者", merged.representative);
+	addPatchIfBlank(patches, properties, "経営陣", merged.executives);
+	addPatchIfBlank(patches, properties, "業種", merged.industry);
+	addPatchIfBlank(patches, properties, "資本金", merged.capital);
+	addPatchIfBlank(patches, properties, "設立年月", merged.founded);
+	addPatchIfBlank(patches, properties, "売上規模", merged.revenue);
+	addPatchIfBlank(patches, properties, "従業員規模", merged.employees);
+	addPatchIfBlank(patches, properties, "役員SNS発信メモ", merged.executiveSns);
+	addPatchIfBlank(patches, properties, "直近ニュース", merged.recentNews);
+	addPatchIfBlank(patches, properties, "再エネ接点シグナル", merged.renewableSignals);
+	addPatchIfBlank(patches, properties, "想定決裁者", merged.decisionMaker);
+	addPatchIfBlank(patches, properties, "想定反論・懸念", merged.objections);
+	addPatchIfBlank(patches, properties, "出典ソース", merged.citations.join("\n"));
+	// 既存9テキスト列
+	addPatchIfBlank(patches, properties, "企業サマリー", merged.summary);
+	addPatchIfBlank(patches, properties, "現在課題仮説", merged.currentIssue);
+	addPatchIfBlank(patches, properties, "将来課題仮説", merged.futureIssue);
+	addPatchIfBlank(patches, properties, "営業切り口", merged.salesAngle);
+	addPatchIfBlank(patches, properties, "和上解決策適合", merged.fit);
+	addPatchIfBlank(patches, properties, "3C：顧客・市場分析", merged.customerMarket3c);
+	addPatchIfBlank(patches, properties, "3C：競合分析", merged.competitor3c);
+	addPatchIfBlank(patches, properties, "3C：自社との関係性", merged.wajoRelation3c);
+	addPatchIfBlank(patches, properties, "根拠ソース", merged.source);
+	await safeUpdateExistingProperties(notion, companyPage, patches);
+
+	// 5. 本文ドシエ
+	const dossier = buildDossierMarkdown(company.name, merged, score);
+	await appendCompanyDossierBody(notion, company.page.id, dossier);
 
 	return {
 		companyId: company.page.id,
 		action: complete ? "updated-company" : "needs-review",
 		message: complete
-			? "企業評価と3C三項目を補完し、完了にしました。"
-			: "企業評価は確認しましたが、3C不足が残るため要確認で止めました。",
+			? `深掘りリサーチ完了。与信: ${score.信頼度}/${score.提案可否}。`
+			: `深掘りは反映したが一部不足のため要確認。与信: ${score.信頼度}/${score.提案可否}。`,
 	};
 }
 
