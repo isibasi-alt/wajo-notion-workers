@@ -220,6 +220,88 @@ export {
 	normalizeDeepResearch as normalizeDeepResearchForTest,
 };
 
+async function perplexityChat(
+	messages: Array<{ role: string; content: string }>,
+): Promise<{ content: string; citations: string[] }> {
+	if (!PERPLEXITY_API_KEY) throw new Error("PERPLEXITY_API_KEY が未設定です");
+	const response = await fetch("https://api.perplexity.ai/chat/completions", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${PERPLEXITY_API_KEY}`,
+		},
+		body: JSON.stringify({ model: PERPLEXITY_MODEL, messages }),
+	});
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(
+			`Perplexity API error ${response.status}: ${errorText.slice(0, 200)}`,
+		);
+	}
+	const json = (await response.json()) as {
+		choices?: Array<{ message?: { content?: string } }>;
+		citations?: unknown;
+	};
+	const content = json.choices?.[0]?.message?.content ?? "";
+	return { content, citations: extractCitations(json) };
+}
+
+function parseJsonLoose(raw: string): Partial<DeepResearch> {
+	try {
+		const match = raw.match(/\{[\s\S]*\}/);
+		return match ? (JSON.parse(match[0]) as Partial<DeepResearch>) : {};
+	} catch {
+		return {};
+	}
+}
+
+async function researchCompanyDeep(input: {
+	companyName: string;
+	domain: string;
+	address: string;
+}): Promise<DeepResearch> {
+	if (!PERPLEXITY_API_KEY) return fallbackDeepResearch(input.companyName);
+	try {
+		const queries = buildResearchQueries(input);
+		// 観点別に並列で事実収集（合計時間は最遅1本）
+		const results = await Promise.all(
+			queries.map(async (q) => {
+				try {
+					const r = await perplexityChat([{ role: "user", content: q.prompt }]);
+					return { aspect: q.aspect, content: r.content, citations: r.citations };
+				} catch (error) {
+					console.log("perplexity aspect failed", q.aspect, String(error));
+					return { aspect: q.aspect, content: "", citations: [] as string[] };
+				}
+			}),
+		);
+		const allCitations = Array.from(
+			new Set(results.flatMap((r) => r.citations)),
+		);
+		const factsBlock = results
+			.map((r) => `## ${r.aspect}\n${r.content}`)
+			.join("\n\n");
+		// 事実を和上プレイブックで営業仕様のJSONに統合
+		const synth = await perplexityChat([
+			{
+				role: "system",
+				content: `あなたは和上ホールディングスの営業企画。次のプレイブックに沿って、収集事実だけを根拠に企業ドシエJSONを作る。断定できない点は『推測ですが』。\n${WAJO_PLAYBOOK}`,
+			},
+			{
+				role: "user",
+				content: `=== 収集事実 ===\n${factsBlock.slice(0, 12000)}\n\n会社名:${input.companyName}\n\n次のJSONキーのみで返す(値は日本語文字列): summary,currentIssue,futureIssue,salesAngle,fit,customerMarket3c,competitor3c,wajoRelation3c,source,representative,executives,capital,founded,revenue,employees,industry,listingStatus,websiteUrl,xUrl,linkedinUrl,corporateNumber,executiveSns,recentNews,renewableSignals,decisionMaker,objections`,
+			},
+		]);
+		const parsed = parseJsonLoose(synth.content);
+		const research = normalizeDeepResearch(parsed, input.companyName);
+		research.citations = allCitations;
+		return research;
+	} catch (error) {
+		console.log("researchCompanyDeep failed", String(error));
+		return fallbackDeepResearch(input.companyName);
+	}
+}
+
 const MAX_PENDING_LIMIT = 10;
 const DEFAULT_SALES_NEWS_KEYWORDS = [
 	"系統用蓄電池",
