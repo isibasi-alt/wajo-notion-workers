@@ -8938,14 +8938,18 @@ async function processSalesPerformanceReview(
 	if (!targetPeriod) missing.push("対象期間");
 	if (!evaluationReady && !auditOrTest) missing.push("評価準備OK");
 
+	const quotaSource = await buildSalesPerformanceQuotaSource(notion, properties);
+	if (!auditOrTest) missing.push(...quotaSource.warnings);
 	const propertySource = buildSalesPerformanceReviewSource(properties);
 	const relatedSource = await buildSalesPerformanceRelatedSource(notion, properties);
 	const source = buildSalesPerformanceEvaluationSource({
+		quotaSource: quotaSource.source,
 		propertySource,
 		relatedSource,
 	});
+	const sourceWarnings = buildSalesPerformanceSourceWarnings(properties);
 
-	if (missing.length > 0 && !auditOrTest) {
+	if (missing.length > 0 && !auditOrTest && !input.dryRun) {
 		const message = `評価の前提が不足しているため、点数・ランク・最終評価は変更せず要確認で停止しました。不足: ${missing.join(" / ")}`;
 		if (!input.dryRun) {
 			await safeUpdateExistingProperties(notion, performancePage, {
@@ -8991,7 +8995,7 @@ async function processSalesPerformanceReview(
 			salesPerformancePageId: performancePage.id,
 			action: "dry-run",
 			status: "dry-run",
-			message: `dry-run: ${titleText} を ${source.length} 文字の評価材料から一次評価案化できます。不足警告: ${missing.join(" / ") || "なし"}。監査/テスト扱い: ${auditOrTest ? "はい" : "いいえ"}。`,
+			message: `dry-run: ${titleText} を ${source.length} 文字の評価材料から一次評価案化できます。不足警告: ${[...missing, ...sourceWarnings].join(" / ") || "なし"}。監査/テスト扱い: ${auditOrTest ? "はい" : "いいえ"}。`,
 			sourcePreview: buildSalesPerformanceDryRunPreview(source),
 		};
 	}
@@ -9008,13 +9012,14 @@ async function processSalesPerformanceReview(
 		});
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
+		const safeMessage = summarizeSalesPerformanceWorkerError(message);
 		await safeUpdateExistingProperties(notion, performancePage, {
 			AI処理状態: { kind: "select", value: "要確認" },
 			上司確認事項: {
 				kind: "text",
 				value: appendShortMemo(
-					text(properties["上司確認事項"]),
-					`人見さん営業評価Workerエラー: ${message.slice(0, 500)}`,
+					sanitizeLegacySalesPerformanceNoise(text(properties["上司確認事項"])),
+					`人見さん営業評価Workerエラー: ${safeMessage}`,
 				),
 			},
 		});
@@ -9022,7 +9027,7 @@ async function processSalesPerformanceReview(
 			salesPerformancePageId: performancePage.id,
 			action: "error",
 			status: "要確認",
-			message: `OpenAI API呼び出し失敗: ${message}`,
+			message: `OpenAI API呼び出し失敗: ${safeMessage}`,
 			sourcePreview: [],
 		};
 	}
@@ -9053,8 +9058,6 @@ function isAuditOrTestPerformance(
 		titleText,
 		text(properties["監査区分"]),
 		text(properties["本人コメント"]),
-		text(properties["上司確認事項"]),
-		text(properties["AI評価メモ"]),
 	].join(" ");
 	return /AIテスト|正式テスト|監査除外|ドライラン|削除可|検証/.test(joined);
 }
@@ -9088,6 +9091,7 @@ function buildSalesPerformanceReviewSource(
 	]
 		.filter(([, value]) => value)
 		.map(([label, value]) => `【${label}】\n${value}`);
+	const missingNumberLines = buildSalesPerformanceSourceWarnings(properties);
 	const dates = [
 		dateStartFromProperty(properties["開始日"])
 			? `開始日: ${dateStartFromProperty(properties["開始日"])}`
@@ -9101,20 +9105,31 @@ function buildSalesPerformanceReviewSource(
 		numberLines.length > 0
 			? `【定量評価（実績）｜65点】\n営業の実績数字のみを読む。\n${numberLines.join("\n")}`
 			: "",
+		missingNumberLines.length > 0
+			? `【定量評価不足警告】\n${missingNumberLines.join("\n")}`
+			: "",
 		textLines.join("\n\n"),
 	]
 		.filter(Boolean)
 		.join("\n\n");
 }
 
+function buildSalesPerformanceSourceWarnings(properties: Record<string, unknown>): string[] {
+	return [
+		typeof numberValue(properties["仕入れ件数"]) !== "number" ? "仕入れ件数: 未入力" : "",
+		typeof numberValue(properties["仕入れ金額"]) !== "number" ? "仕入れ金額: 未入力" : "",
+	].filter(Boolean);
+}
+
 function buildSalesPerformanceEvaluationSource(input: {
+	quotaSource?: string;
 	propertySource: string;
 	relatedSource: string;
 	pageText?: string;
 }): string {
 	void input.pageText;
-	return [input.propertySource, input.relatedSource]
-		.filter((part) => part.trim().length > 0)
+	return [input.quotaSource, input.propertySource, input.relatedSource]
+		.filter((part): part is string => Boolean(part?.trim()))
 		.join("\n\n")
 		.slice(0, 16000);
 }
@@ -9128,6 +9143,10 @@ function buildSalesPerformanceDryRunPreview(source: string): string[] {
 		.filter(Boolean)
 		.filter((line) =>
 			line.includes("定量評価（実績）｜65点") ||
+			line.includes("定量評価不足警告") ||
+			line.includes("ノルマ申請（月初ゲート）") ||
+			line.startsWith("申請ステータス:") ||
+			line.startsWith("粗利目標:") ||
 			line.includes("定性評価（活動ログ）｜35点") ||
 			line.includes("補助確認事項（採点対象外）") ||
 			line.includes("採点対象: false") ||
@@ -9138,6 +9157,64 @@ function buildSalesPerformanceDryRunPreview(source: string): string[] {
 			importantLinePattern.test(line),
 		)
 		.slice(0, 20);
+}
+
+type SalesPerformanceQuotaSource = {
+	source: string;
+	warnings: string[];
+};
+
+async function buildSalesPerformanceQuotaSource(
+	notion: NotionClient,
+	properties: Record<string, unknown>,
+): Promise<SalesPerformanceQuotaSource> {
+	const quotaIds = uniqueIds([
+		...relationIdsFromProperty(properties["関連ノルマ申請"]),
+		...relationIdsFromProperty(properties["ノルマ申請"]),
+	]);
+	if (quotaIds.length === 0) {
+		return {
+			source: "【ノルマ申請（月初ゲート）】\nノルマ申請未接続",
+			warnings: ["ノルマ申請未接続"],
+		};
+	}
+	try {
+		const quotaPage = await notion.pages.retrieve({ page_id: quotaIds[0] });
+		const quotaProperties = quotaPage.properties ?? {};
+		const status = text(quotaProperties["申請ステータス"]) || text(quotaProperties["承認ステータス"]);
+		const approved = ["承認", "承認済", "承認済み"].includes(status);
+		const lines = [
+			"【ノルマ申請（月初ゲート）】",
+			quotaPage.url ? `URL: ${quotaPage.url}` : "",
+			`申請ステータス: ${status || "未設定"}`,
+			text(quotaProperties["評価タイプ"]) ? `評価タイプ: ${text(quotaProperties["評価タイプ"])}` : "",
+			numberValue(quotaProperties["粗利目標"]) !== null && numberValue(quotaProperties["粗利目標"]) !== undefined
+				? `粗利目標: ${numberValue(quotaProperties["粗利目標"])}`
+				: "",
+			numberValue(quotaProperties["売上目標"]) !== null && numberValue(quotaProperties["売上目標"]) !== undefined
+				? `売上目標: ${numberValue(quotaProperties["売上目標"])}`
+				: "",
+			numberValue(quotaProperties["成約件数目標"]) !== null && numberValue(quotaProperties["成約件数目標"]) !== undefined
+				? `成約件数目標: ${numberValue(quotaProperties["成約件数目標"])}`
+				: "",
+			numberValue(quotaProperties["仕入れ件数目標"]) !== null && numberValue(quotaProperties["仕入れ件数目標"]) !== undefined
+				? `仕入れ件数目標: ${numberValue(quotaProperties["仕入れ件数目標"])}`
+				: "",
+			numberValue(quotaProperties["仕入れ金額目標"]) !== null && numberValue(quotaProperties["仕入れ金額目標"]) !== undefined
+				? `仕入れ金額目標: ${numberValue(quotaProperties["仕入れ金額目標"])}`
+				: "",
+			approved ? "" : `ノルマ申請承認警告: 申請ステータスが${status || "未設定"}のため、人間確認モードに落とす`,
+		].filter(Boolean);
+		return {
+			source: lines.join("\n"),
+			warnings: approved ? [] : [`ノルマ申請未承認:${status || "未設定"}`],
+		};
+	} catch (error) {
+		return {
+			source: `【ノルマ申請（月初ゲート）】\nノルマ申請取得失敗: ${String(error).slice(0, 120)}`,
+			warnings: ["ノルマ申請取得失敗"],
+		};
+	}
 }
 
 async function buildSalesPerformanceRelatedSource(
@@ -9328,9 +9405,11 @@ export {
 	buildSalesPerformanceEvaluationSource as buildSalesPerformanceEvaluationSourceForTest,
 	buildSalesPerformanceDryRunPreview as buildSalesPerformanceDryRunPreviewForTest,
 	buildSalesPerformanceReviewSource as buildSalesPerformanceReviewSourceForTest,
+	buildSalesPerformanceQuotaSource as buildSalesPerformanceQuotaSourceForTest,
 	buildSalesPerformanceRelatedSource as buildSalesPerformanceRelatedSourceForTest,
 	buildSalesPerformanceReviewPatches as buildSalesPerformanceReviewPatchesForTest,
 	isHitomiMemoEvaluationEvidence as isHitomiMemoEvaluationEvidenceForTest,
+	isAuditOrTestPerformance as isAuditOrTestPerformanceForTest,
 	isWaniPoMemoryEvaluationEvidence as isWaniPoMemoryEvaluationEvidenceForTest,
 };
 
@@ -9347,7 +9426,7 @@ function buildSalesPerformanceReviewPatches(
 		AI評価メモ: {
 			kind: "text",
 			value: replaceWorkerReviewSection(
-				text(properties["AI評価メモ"]),
+				sanitizeLegacySalesPerformanceNoise(text(properties["AI評価メモ"])),
 				"人見さんWorker一次評価案:",
 				buildSalesPerformanceReviewMemo(review, missing, auditOrTest),
 			),
@@ -9355,7 +9434,7 @@ function buildSalesPerformanceReviewPatches(
 		上司確認事項: {
 			kind: "text",
 			value: replaceWorkerReviewSection(
-				text(properties["上司確認事項"]),
+				sanitizeLegacySalesPerformanceNoise(text(properties["上司確認事項"])),
 				"人見さん確認事項:",
 				buildSalesPerformanceConfirmationMemo(review, missing, auditOrTest),
 			),
@@ -9412,7 +9491,7 @@ function buildSalesPerformanceReviewMemo(
 	const lines = [
 		`人見さんWorker一次評価案: ${new Date().toISOString()}`,
 		"総合スコア・評価ランク・評価ステータス確定は未変更。",
-		auditOrTest ? "監査除外/テストデータとして確認。本番評価根拠には使わない。" : "",
+		auditOrTest ? "監査対象外データとして確認。本番評価根拠には使わない。" : "",
 		missing.length > 0 ? `不足/人間確認: ${missing.join(" / ")}` : "",
 		evidenceLines.length > 0 ? "【根拠リンク・材料】" : "",
 		...evidenceLines,
@@ -9459,13 +9538,43 @@ function buildSalesPerformanceConfirmationMemo(
 ): string {
 	const lines = [
 		`人見さん確認事項: ${new Date().toISOString()}`,
-		auditOrTest ? "監査除外/テストデータのため本番評価には反映しない。" : "",
+		auditOrTest ? "監査対象外データのため本番評価には反映しない。" : "",
 		missing.length > 0 ? `不足/人間確認: ${missing.join(" / ")}` : "",
 		...review.managerConfirmationItems.map((item) => `・${item}`),
 		review.riskNotes.length > 0 ? "注意:" : "",
 		...review.riskNotes.map((item) => `・${item}`),
 	].filter(Boolean);
 	return lines.join("\n").slice(0, 1800);
+}
+
+function sanitizeLegacySalesPerformanceNoise(current: string): string {
+	return current
+		.replace(
+			/人見さん営業評価Worker要確認: OpenAI API error[\s\S]*?OpenAI API利用不可のため要確認で停止。AI評価メモ、点数、ランク、評価ステータス確定は変更していません。\n?/g,
+			"",
+		)
+		.replace(
+			/人見さん営業評価Worker要確認: OPENAI_API_KEY[^\n]*\n?OpenAI API利用不可のため要確認で停止。AI評価メモ、点数、ランク、評価ステータス確定は変更していません。\n?/g,
+			"",
+		)
+		.replace(/人見さん営業評価Workerエラー: OpenAI API error[^\n]*/g, "")
+		.replace(/人見さん営業評価Workerエラー: OPENAI_API_KEY[^\n]*/g, "")
+		.replace(
+			/本番データ条件（監査除外\/テスト\/ダミー除外）/g,
+			"本番データ条件（監査対象外/確認用/ダミー除外）",
+		)
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
+}
+
+function summarizeSalesPerformanceWorkerError(message: string): string {
+	if (/429|quota|billing/i.test(message)) {
+		return "OpenAI利用上限または課金設定の確認が必要です。";
+	}
+	if (/OPENAI_API_KEY|WAJO_OPENAI_API_KEY/.test(message)) {
+		return "OpenAI APIキー設定の確認が必要です。";
+	}
+	return message.split("\n")[0].slice(0, 180);
 }
 
 async function callOpenAISalesPerformanceReview(input: {

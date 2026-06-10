@@ -8,10 +8,12 @@ import {
 	buildActivityLogFromWaniPoMemoryForTest,
 	buildSalesPerformanceEvaluationSourceForTest,
 	buildSalesPerformanceDryRunPreviewForTest,
+	buildSalesPerformanceQuotaSourceForTest,
 	buildSalesPerformanceRelatedSourceForTest,
 	buildSalesPerformanceReviewPatchesForTest,
 	buildSalesPerformanceReviewSourceForTest,
 	isHitomiMemoEvaluationEvidenceForTest,
+	isAuditOrTestPerformanceForTest,
 	isWaniPoMemoryEvaluationEvidenceForTest,
 	linkActivityLogsToSalesPerformanceForTest,
 	reflectCustomerContactLogsToActivityLogsForTest,
@@ -131,6 +133,18 @@ const retrievedPages: Record<string, Record<string, unknown>> = {
 		貢献カテゴリ: select("ナレッジ共有"),
 		AIコメント: richText("他メンバーの提案準備に寄与した。"),
 	},
+	"quota-draft": {
+		申請名: title("2026年5月ノルマ申請"),
+		申請ステータス: select("下書き"),
+		評価タイプ: select("両方"),
+		粗利目標: number(8_000_000),
+	},
+	"quota-approved": {
+		申請名: title("2026年5月ノルマ申請"),
+		申請ステータス: select("承認済み"),
+		評価タイプ: select("両方"),
+		粗利目標: number(8_000_000),
+	},
 };
 
 const notion = {
@@ -159,10 +173,28 @@ async function main() {
 	assert.match(monthlySource, /実績粗利額.*1500000/);
 	assert.match(monthlySource, /成約件数.*3/);
 	assert.match(monthlySource, /定量評価（実績）｜65点/);
+	assert.match(monthlySource, /定量評価不足警告/);
+	assert.match(monthlySource, /仕入れ件数: 未入力/);
+	assert.match(monthlySource, /仕入れ金額: 未入力/);
 	assert.doesNotMatch(monthlySource, /月次数字・月次報告/);
 	assert.doesNotMatch(monthlySource, /結果スコア/);
 	assert.doesNotMatch(monthlySource, /AI活用ポイント/);
 	assert.doesNotMatch(monthlySource, /本人コメント|マネージャーコメント|AI評価メモ/);
+
+	const draftQuotaSource = await buildSalesPerformanceQuotaSourceForTest(
+		notion as never,
+		{ 関連ノルマ申請: relation(["quota-draft"]) },
+	);
+	assert.match(draftQuotaSource.source, /ノルマ申請（月初ゲート）/);
+	assert.match(draftQuotaSource.source, /申請ステータス: 下書き/);
+	assert.deepEqual(draftQuotaSource.warnings, ["ノルマ申請未承認:下書き"]);
+
+	const approvedQuotaSource = await buildSalesPerformanceQuotaSourceForTest(
+		notion as never,
+		{ 関連ノルマ申請: relation(["quota-approved"]) },
+	);
+	assert.match(approvedQuotaSource.source, /申請ステータス: 承認済み/);
+	assert.deepEqual(approvedQuotaSource.warnings, []);
 
 	const relatedSource = await buildSalesPerformanceRelatedSourceForTest(
 		notion as never,
@@ -225,10 +257,12 @@ async function main() {
 	assert.doesNotMatch(genericActivitySource, /汎用活動ログ|評価対象チェックだけ/);
 
 	const evaluationSource = buildSalesPerformanceEvaluationSourceForTest({
+		quotaSource: draftQuotaSource.source,
 		propertySource: monthlySource,
 		relatedSource,
 		pageText: "月次ページ本文に書かれた主観メモ。採点根拠に混ぜない。",
 	});
+	assert.ok(evaluationSource.indexOf("ノルマ申請（月初ゲート）") < evaluationSource.indexOf("定量評価（実績）｜65点"));
 	assert.match(evaluationSource, /定量評価（実績）｜65点/);
 	assert.match(evaluationSource, /定性評価（活動ログ）｜35点/);
 	assert.doesNotMatch(evaluationSource, /月次ページ本文|主観メモ|補足本文/);
@@ -291,6 +325,64 @@ async function main() {
 		apiKey: "",
 		model: "gpt-4o-mini",
 	});
+
+	assert.equal(
+		isAuditOrTestPerformanceForTest(
+			{
+				監査区分: select("通常監査"),
+				AI評価メモ: richText("過去のWorker出力: 監査除外/テストデータとして確認。"),
+				上司確認事項: richText("過去の確認事項: 本番評価には反映しない。"),
+			},
+			"2026年5月 石橋大右｜本番",
+		),
+		false,
+		"通常監査の本番ページは、古いAI出力欄だけで監査/テスト扱いにしない",
+	);
+	assert.equal(
+		isAuditOrTestPerformanceForTest(
+			{
+				監査区分: select("監査除外"),
+				AI評価メモ: richText(""),
+				上司確認事項: richText(""),
+			},
+			"2026年5月 石橋大右｜本番",
+		),
+		true,
+		"監査除外は引き続き監査/テスト扱いにする",
+	);
+
+	const cleanupReviewPatches = buildSalesPerformanceReviewPatchesForTest(
+		{
+			AI評価メモ: richText("既存メモ"),
+			上司確認事項: richText(
+				[
+					"【上司確認事項（要確認）】",
+					"4) 本番データ条件（監査除外/テスト/ダミー除外）に該当する要素はないか？",
+					"人見さん営業評価Worker要確認: OpenAI API error 429: quota",
+					"OpenAI API利用不可のため要確認で停止。AI評価メモ、点数、ランク、評価ステータス確定は変更していません。",
+					"人見さん営業評価Worker要確認: OPENAI_API_KEY が未設定です",
+					"OpenAI API利用不可のため要確認で停止。AI評価メモ、点数、ランク、評価ステータス確定は変更していません。",
+				].join("\n"),
+			),
+		},
+		{
+			conclusion: "監査対象外データの確認。",
+			resultExplanation: "評価対象外。",
+			actionGuidance: "確認のみ。",
+			contributionView: "",
+			evidence: [],
+			personComment: "確認中。",
+			managerConfirmationItems: ["確認事項"],
+			nextMonthImprovements: [],
+			riskNotes: [],
+			recommendedStatus: "要確認",
+		},
+		[],
+		true,
+	);
+	assert.doesNotMatch(cleanupReviewPatches.AI評価メモ.value, /監査除外/);
+	assert.doesNotMatch(cleanupReviewPatches.上司確認事項.value, /監査除外|OpenAI API error|OPENAI_API_KEY|OpenAI API利用不可/);
+	assert.match(cleanupReviewPatches.上司確認事項.value, /監査対象外/);
 
 	const reviewPatches = buildSalesPerformanceReviewPatchesForTest(
 		{
