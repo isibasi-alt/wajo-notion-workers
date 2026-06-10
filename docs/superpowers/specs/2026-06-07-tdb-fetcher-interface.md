@@ -40,10 +40,12 @@
   "ヒント": {
     "website": "https://www.eco-st.co.jp/",
     "住所": "大阪府大阪市中央区道修町..."
-  }
+  },
+  "購入許可": false
 }
 ```
 
+* **購入許可（2026-06-10追加・課金の二重鍵）**: 帳票購入(課金)は、取得部品側 `TDB_ALLOW_PURCHASE=1` **かつ** リクエストの `購入許可: true` が両方揃った時だけ実行。A（企業評価実行）は常に false（無料の検索・特定まで）。true を送るのは B「与信を取る(本命のみ)」（`processCreditCheckWebhook`・MANAGER_USER_IDSゲート＋TDB調査年月日90日ロック付き）だけ。全件自動課金は構造的に不可能。
 * `企業名` 必須（`CompanyInfo.name`）。`ヒント`は名寄せ精度向上用（同名他社の誤取得を防ぐ。`CompanyInfo.website`/`address`から渡す）。
 * 法人番号は現状 `CompanyInfo` に無いので送らない。**TDB側が法人番号を返してくる**（下記レスポンス）→ それを構造化列「法人番号（TDB）」に保存する。
 

@@ -439,7 +439,10 @@ export {
 // TDB取得部品(会社Mac mini上のPlaywrightサービス)をHTTPで叩く。
 // TDB_FETCHER_URL 未設定なら null=従来通り暫定与信にフォールバック(本番に影響ゼロ)。
 // I/F契約: docs/superpowers/specs/2026-06-07-tdb-fetcher-interface.md
-async function fetchTdbProfile(company: CompanyInfo): Promise<TdbProfile | null> {
+async function fetchTdbProfile(
+	company: CompanyInfo,
+	options?: { purchase?: boolean },
+): Promise<TdbProfile | null> {
 	const url = process.env.TDB_FETCHER_URL?.trim();
 	if (!url) return null;
 	try {
@@ -452,6 +455,9 @@ async function fetchTdbProfile(company: CompanyInfo): Promise<TdbProfile | null>
 			body: JSON.stringify({
 				企業名: company.name,
 				ヒント: { website: company.website, 住所: company.address },
+				// 課金の二重キー: 取得部品側の TDB_ALLOW_PURCHASE=1 と、このリクエスト単位の
+				// 購入許可が両方trueの時だけ帳票を購入する。A(企業評価実行)からは渡さない=常に無料。
+				購入許可: options?.purchase === true,
 			}),
 		});
 		if (!res.ok) return null;
@@ -461,6 +467,61 @@ async function fetchTdbProfile(company: CompanyInfo): Promise<TdbProfile | null>
 		return null; // 取得部品が落ちていても本体リサーチは止めない
 	}
 }
+
+// 与信取得(課金)の権限ゲート。MANAGER_USER_IDS(カンマ区切りNotionユーザーID)に
+// 含まれる人だけ許可。未設定なら全員拒否=設定するまで課金ボタンは動かない(安全側)。
+function isManagerUser(userId: string | undefined): boolean {
+	const norm = (s: string) => s.trim().toLowerCase().replace(/-/g, "");
+	const ids = (process.env.MANAGER_USER_IDS ?? "")
+		.split(",")
+		.map(norm)
+		.filter(Boolean);
+	if (ids.length === 0 || !userId) return false;
+	return ids.includes(norm(userId));
+}
+export { isManagerUser as isManagerUserForTest };
+
+// 実行中ロック(検品指摘③): TDB取得はPlaywrightで数十秒かかるため、その間の再押し/
+// 重複配送で二重課金しないよう、企業AI受付メモの「TDB取得中 <ISO分>」マーカーを見る。
+// ttl分以内のマーカーがあり、その後に完了/失敗の記録が無ければ「実行中」と判定(純関数)。
+function isCreditCheckInFlight(
+	memo: string,
+	nowIso: string,
+	ttlMinutes: number,
+): boolean {
+	const re = /TDB取得中 (\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/g;
+	let last: { index: number; ts: string } | null = null;
+	for (const m of memo.matchAll(re)) {
+		last = { index: m.index ?? 0, ts: m[1] ?? "" };
+	}
+	if (!last) return false;
+	const done = Math.max(
+		memo.lastIndexOf("TDB確報与信を取得"),
+		memo.lastIndexOf("TDB与信取得に失敗"),
+	);
+	if (done > last.index) return false;
+	const started = Date.parse(`${last.ts}:00Z`);
+	const now = Date.parse(nowIso);
+	if (!Number.isFinite(started) || !Number.isFinite(now)) return false;
+	const ageMinutes = (now - started) / 60000;
+	return ageMinutes >= 0 && ageMinutes <= ttlMinutes;
+}
+export { isCreditCheckInFlight as isCreditCheckInFlightForTest };
+
+// 二重課金ロック: 既存のTDB調査年月日が refreshDays 以内なら再購入しない(純関数)。
+// 日付が読めない/無い場合は false=購入対象。
+function isTdbSurveyFresh(
+	surveyDateIso: string,
+	nowIso: string,
+	refreshDays: number,
+): boolean {
+	const survey = Date.parse(surveyDateIso);
+	const now = Date.parse(nowIso);
+	if (!Number.isFinite(survey) || !Number.isFinite(now)) return false;
+	const ageDays = (now - survey) / (24 * 60 * 60 * 1000);
+	return ageDays >= 0 && ageDays <= refreshDays;
+}
+export { isTdbSurveyFresh as isTdbSurveyFreshForTest };
 
 // 取得部品の生JSONを TdbProfile に正規化・検証する純関数。
 // status!=="found"や非オブジェクトはnull。評点/倒産確率は数値以外をnullに丸め、
@@ -1161,7 +1222,14 @@ type CompanyResearchInput = {
 
 type CompanyResearchResult = {
 	companyId: string;
-	action: "updated-company" | "needs-review" | "dry-run";
+	action:
+		| "updated-company"
+		| "needs-review"
+		| "dry-run"
+		| "needs-permission"
+		| "skipped-fresh"
+		| "in-flight"
+		| "updated-credit";
 	message: string;
 };
 
@@ -2708,6 +2776,33 @@ worker.tool("processCompanyResearchById", {
 	},
 });
 
+worker.tool("processCreditCheckById", {
+	title: "WAJO 与信を取る(本命のみ・課金)",
+	description:
+		"企業マスターのページIDからTDB確報与信(COSMOSNet)を取得します。マネージャーのみ・1社単位課金(≒1,320〜1,760円)・調査年月日が新しければ再購入しません。",
+	schema: j.object({
+		companyPageId: j.string().describe("企業マスターDBのページID"),
+		requesterUserId: j
+			.string()
+			.describe("実行者のNotionユーザーID(MANAGER_USER_IDSと照合)。空なら権限なし扱い"),
+		dryRun: j.boolean().describe("trueなら課金も書き込みもしません"),
+		force: j
+			.boolean()
+			.describe("trueなら調査年月日が新しくても再取得(追加課金)。通常はfalse"),
+	}),
+	outputSchema: j.object({
+		companyId: j.string(),
+		action: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ companyPageId, requesterUserId, dryRun, force }, { notion }) => {
+		return processCreditCheck(
+			{ companyPageId, requesterUserId, dryRun, force },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
 worker.tool("processMeetingMemoFormatById", {
 	title: "WAJO ミーティングメモ整形",
 	description:
@@ -3308,6 +3403,37 @@ worker.webhook("processCompanyResearchWebhook", {
 			}
 			await processCompanyResearch(
 				{ companyPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processCreditCheckWebhook", {
+	title: "WAJO 与信を取る(本命のみ)Webhook",
+	description:
+		"企業マスターの「与信を取る(本命のみ)」ボタンから起動。マネージャーのみTDB確報与信を1社単位で取得します(課金)。押した人がMANAGER_USER_IDSに無い場合は課金せず停止します。",
+	execute: async (events, { notion }) => {
+		// 課金エンドポイントはフェイルクローズ(検品指摘①): シークレット未設定なら動かない
+		if (!(process.env.WAJO_WORKER_WEBHOOK_SECRET ?? "").trim()) {
+			throw new Error(
+				"WAJO_WORKER_WEBHOOK_SECRET が未設定のため、課金Webhookは実行しません(フェイルクローズ)。",
+			);
+		}
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			// 課金は誤爆禁止(検品指摘・軽微): 企業名の部分一致フォールバックは使わず、
+			// ページIDが明示されている時だけ実行する
+			const companyPageId = extractWebhookPageId(body);
+			if (!companyPageId) {
+				throw new Error(
+					"課金WebhookはページID必須です(企業名からの曖昧検索は誤課金防止のため使いません)。ボタンのWebhook設定でページIDを送ってください。",
+				);
+			}
+			const requesterUserId = extractTriggerUserIdFromWebhook(body);
+			await processCreditCheck(
+				{ companyPageId, requesterUserId, dryRun: false },
 				notion as unknown as NotionClient,
 			);
 		}
@@ -6638,6 +6764,117 @@ async function processCompanyResearch(
 		message: complete
 			? `深掘りリサーチ完了。与信: ${score.信頼度}/${score.提案可否}。`
 			: `深掘りは反映したが一部不足のため要確認。与信: ${score.信頼度}/${score.提案可否}。`,
+	};
+}
+
+// ── B与信「与信を取る(本命のみ)」── 課金を伴うTDB確報与信の取得。
+// 鉄則: ①マネージャーだけ(MANAGER_USER_IDS) ②本命1社ずつボタン手動 ③新鮮なら再購入しない
+// ④購入はリクエスト単位の購入許可と取得部品側TDB_ALLOW_PURCHASEの二重キー。全件自動取得は構造的に不可能。
+type CreditCheckInput = {
+	companyPageId: string;
+	requesterUserId?: string;
+	dryRun: boolean;
+	force?: boolean;
+};
+
+async function processCreditCheck(
+	input: CreditCheckInput,
+	notion: NotionClient,
+): Promise<CompanyResearchResult> {
+	const companyPage = await notion.pages.retrieve({
+		page_id: input.companyPageId,
+	});
+	const company = readCompany(companyPage);
+
+	// 1. 権限ゲート(課金ボタンはマネージャーのみ)
+	if (!isManagerUser(input.requesterUserId)) {
+		return {
+			companyId: company.page.id,
+			action: "needs-permission",
+			message:
+				"与信取得(課金)はマネージャーのみ実行できます。MANAGER_USER_IDS に登録されたユーザーでボタンを押してください。",
+		};
+	}
+
+	// 2. 二重課金ロック(既存のTDB調査年月日が新しければ買い直さない)
+	const properties = companyPage.properties ?? {};
+	const surveyProp = properties["TDB調査年月日"] as
+		| { date?: { start?: string } }
+		| undefined;
+	const surveyDate = surveyProp?.date?.start ?? "";
+	const refreshDays = Number(process.env.TDB_REFRESH_DAYS) || 90;
+	if (
+		!input.force &&
+		surveyDate &&
+		isTdbSurveyFresh(surveyDate, new Date().toISOString(), refreshDays)
+	) {
+		return {
+			companyId: company.page.id,
+			action: "skipped-fresh",
+			message: `TDB与信は取得済みです(調査年月日 ${surveyDate}・${refreshDays}日以内)。再取得する場合は force を指定してください(追加課金)。`,
+		};
+	}
+
+	if (input.dryRun) {
+		return {
+			companyId: company.page.id,
+			action: "dry-run",
+			message: `dry-run: ${company.name} のTDB確報与信を取得し、与信8項目と信頼度/提案可否を更新できます(課金≒1,320〜1,760円/件)。`,
+		};
+	}
+
+	// 3. 実行中ロック(検品指摘③): 取得中の再押し/重複配送で二重課金しない
+	const nowIso = new Date().toISOString();
+	const inFlightTtl = Number(process.env.TDB_INFLIGHT_TTL_MINUTES) || 10;
+	if (isCreditCheckInFlight(company.aiMemo, nowIso, inFlightTtl)) {
+		return {
+			companyId: company.page.id,
+			action: "in-flight",
+			message: `TDB与信を取得中です(${inFlightTtl}分以内に開始)。完了を待ってから再実行してください。`,
+		};
+	}
+	const markerMemo = appendShortMemo(
+		company.aiMemo,
+		`TDB取得中 ${nowIso.slice(0, 16)}(実行者:${input.requesterUserId ?? "不明"})`,
+	);
+	await safeUpdateExistingProperties(notion, companyPage, {
+		企業AI受付メモ: { kind: "text", value: markerMemo },
+	});
+
+	// 4. 取得(リクエスト単位の購入許可つき)
+	const tdb = await fetchTdbProfile(company, { purchase: true });
+	if (!tdb) {
+		const memo = appendShortMemo(
+			markerMemo,
+			`${nowIso.slice(0, 10)} TDB与信取得に失敗(部品未接続/該当なし/購入ガード)。課金は発生していない可能性が高いが、取得部品のログを確認。`,
+		);
+		await safeUpdateExistingProperties(notion, companyPage, {
+			企業AI受付メモ: { kind: "text", value: memo },
+		});
+		return {
+			companyId: company.page.id,
+			action: "needs-review",
+			message:
+				"TDB与信を取得できませんでした(取得部品未接続/該当なし/購入ガード)。企業AI受付メモに記録しました。",
+		};
+	}
+
+	// 5. 与信確定: TDB8項目(確報=既存値より優先)＋信頼度/提案可否＋メモ(実行者を監査記録)
+	const score = scoreCompany(tdb);
+	const memo = appendShortMemo(
+		markerMemo,
+		`${nowIso.slice(0, 10)} TDB確報与信を取得: 評点${tdb.企業評点 ?? "不明"}/倒産確率${tdb.倒産確率Pct ?? "不明"}%。信頼度${score.信頼度}/提案可否${score.提案可否}。(実行者:${input.requesterUserId ?? "不明"})`,
+	);
+	await safeUpdateExistingProperties(notion, companyPage, {
+		...tdbToPatches(tdb),
+		信頼度: { kind: "select", value: score.信頼度 },
+		提案可否: { kind: "select", value: score.提案可否 },
+		企業AI受付メモ: { kind: "text", value: memo },
+	});
+	return {
+		companyId: company.page.id,
+		action: "updated-credit",
+		message: `TDB確報与信を反映しました。評点${tdb.企業評点 ?? "不明"} → 信頼度${score.信頼度}/提案可否${score.提案可否}。`,
 	};
 }
 

@@ -42,7 +42,8 @@
 		"test:research-target-guard": "tsx src/research-target-guard.test.ts",
 		"test:tdb-fetcher": "tsx src/tdb-fetcher.test.ts",
 		"test:structured-fact-clean": "tsx src/structured-fact-clean.test.ts",
-		"test:structured-fact-repair": "tsx src/structured-fact-repair.test.ts"
+		"test:structured-fact-repair": "tsx src/structured-fact-repair.test.ts",
+		"test:credit-check": "tsx src/credit-check.test.ts"
 	},
 	"engines": {
 		"node": ">=22.0.0",
