@@ -1,0 +1,500 @@
+import { LAND_SUBSTATIONS, type LandSubstation } from "./land-substations.js";
+
+export type LandTreasureInput = {
+	name: string;
+	address: string;
+	areaTsubo: number | null;
+	powerArea: string;
+	landUse: string;
+	road: string;
+	farmland: string;
+	farmlandType: string;
+	registry: string;
+	nearbyResidentialDistanceM: number | null;
+	nearbyResidentialCheck: string;
+	transmissionLine: string;
+	latitude: number | null;
+	longitude: number | null;
+	substationDistanceKm: number | null;
+};
+
+export type LandTreasureGrade = "S" | "A" | "B" | "C";
+
+export type LandTreasureSubstationCandidate = {
+	name: string;
+	distanceKm: number;
+	operator: string;
+	gridStatus: string;
+	voltageKv: number | null;
+	latitude: number;
+	longitude: number;
+	confirmationUrl: string;
+};
+
+export type LandTreasureEvaluation = {
+	overallGrade: LandTreasureGrade;
+	score: number;
+	bucket: string;
+	actionBucket: string;
+	caseStatus: string;
+	projectType: string;
+	powerArea: string;
+	landRating: string;
+	powerRating: string;
+	roadRating: string;
+	subsidyRating: string;
+	demandRating: string;
+	nearestSubstationName: string;
+	nearestSubstationDistanceKm: number | null;
+	nearestSubstationOperator: string;
+	nearestSubstationGridStatus: string;
+	substationCandidates: LandTreasureSubstationCandidate[];
+	roadWidthM: number | null;
+	physicalAiScore: number;
+	salesAiScore: number;
+	customerValue: string;
+	blockers: string[];
+	sabcReason: string;
+	landEvaluation: string;
+	powerEvaluation: string;
+	roadEvaluation: string;
+	subsidyEvaluation: string;
+	demandEvaluation: string;
+	nextAction: string;
+	reviewMemo: string;
+};
+
+type NearestSubstation = {
+	substation: LandSubstation;
+	distanceKm: number;
+};
+
+export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEvaluation {
+	const area = input.areaTsubo ?? 0;
+	const powerArea = input.powerArea || inferPowerAreaFromAddress(input.address) || "未確認";
+	const nearestCandidates = findNearestSubstations(input.latitude, input.longitude, powerArea, 3);
+	const nearest = nearestCandidates[0] ?? null;
+	const distanceKm = nearest?.distanceKm ?? input.substationDistanceKm;
+	const roadWidthM = roadWidthFromText(input.road);
+	const gridStatus = nearest?.substation.grid || "";
+	const blockers = identifyBirdEyeBlockers(input, roadWidthM, distanceKm);
+	const physicalAiScore = scorePhysicalAi({
+		area,
+		distanceKm,
+		gridStatus,
+		roadWidthM,
+		landUse: input.landUse,
+		blockers,
+	});
+	const salesAiScore = scoreSalesAi({
+		area,
+		distanceKm,
+		roadWidthM,
+		powerArea,
+		farmland: input.farmland,
+		farmlandType: input.farmlandType,
+		registry: input.registry,
+		nearbyResidentialDistanceM: input.nearbyResidentialDistanceM,
+		blockers,
+	});
+	const uncappedScore = clamp(Math.round(physicalAiScore * 0.62 + salesAiScore * 0.38), 0, 100);
+	const score = applyBirdEyeCaps(uncappedScore, blockers);
+	const overallGrade: LandTreasureGrade =
+		score >= 90 ? "S" : score >= 80 ? "A" : score >= 65 ? "B" : "C";
+	const bucket =
+		overallGrade === "S"
+			? "即アタック"
+			: overallGrade === "A"
+				? "案件化候補"
+				: overallGrade === "B"
+					? "優先確認"
+					: "追加確認";
+	const actionBucket =
+		overallGrade === "S"
+			? "即アタック"
+			: roadWidthM === null
+				? "接道確認"
+				: distanceKm === null && area >= 1500
+					? "系統保留"
+					: overallGrade === "A" || overallGrade === "B"
+						? "現地確認"
+						: "継続監視";
+	const caseStatus = overallGrade === "S" || overallGrade === "A" ? "案件化保留" : "未案件化";
+	const projectType =
+		area >= 5000
+			? "高圧系統用"
+			: area >= 1500
+				? "高圧系統用"
+				: area >= 300
+					? "低圧バルク"
+					: "未判定";
+	const landRating = score >= 90 ? "◎" : score >= 80 ? "◎" : score >= 65 ? "○" : "△";
+	const powerRating = choosePowerRating(distanceKm, gridStatus);
+	const roadRating = chooseRoadRatingFromWidth(roadWidthM, input.road);
+	const subsidyRating = "要確認";
+	const demandRating = area >= 1500 ? "あり" : area >= 300 ? "不明" : "なし";
+	const nearestName = nearest?.substation.n ?? "";
+	const nearestDistanceText =
+		distanceKm === null ? "未確認" : `${round1(distanceKm)}km`;
+	const substationLine = nearest
+		? `最寄り変電所: ${nearestName}（${nearestDistanceText} / ${nearest.substation.op} / 系統=${gridStatus || "未確認"} / ${nearest.substation.kv ?? "電圧未確認"}kV）`
+		: `最寄り変電所: 未特定（距離=${nearestDistanceText}）`;
+	const substationCandidates = nearestCandidates.map((candidate) => ({
+		name: candidate.substation.n,
+		distanceKm: candidate.distanceKm,
+		operator: candidate.substation.op,
+		gridStatus: candidate.substation.grid,
+		voltageKv: candidate.substation.kv ?? null,
+		latitude: candidate.substation.lat,
+		longitude: candidate.substation.lng,
+		confirmationUrl: googleMapsUrl(candidate.substation.lat, candidate.substation.lng),
+	}));
+	const substationCandidatesLine = formatSubstationCandidates(substationCandidates);
+	const roadLine = roadWidthM
+		? `接道: ${input.road || "入力なし"}（幅員${roadWidthM}mとして判定）`
+		: `接道: ${input.road || "未確認"}（幅員は未確定）`;
+	const customerValue = buildCustomerValueStatement({
+		grade: overallGrade,
+		score,
+		area,
+		distanceKm,
+		powerArea,
+		projectType,
+		blockers,
+	});
+	const blockerLine =
+		blockers.length > 0
+			? `変電所だけではS評価にしない。主な阻害要因: ${blockers.join(" / ")}`
+			: "変電所距離だけでなく、面積・接道・農転/登記・近隣住宅・営業出口を合わせても大きな阻害要因は未検出。";
+	const sabcReason = [
+		`SABC評価=${overallGrade}`,
+		`2AI統合=${score}点`,
+		`AI-1 物理・系統評価=${physicalAiScore}点`,
+		`AI-2 営業・案件化評価=${salesAiScore}点`,
+		substationLine,
+		substationCandidatesLine,
+		roadLine,
+		blockerLine,
+		customerValue,
+	].join(" / ");
+
+	return {
+		overallGrade,
+		score,
+		bucket,
+		actionBucket,
+		caseStatus,
+		projectType,
+		powerArea,
+		landRating,
+		powerRating,
+		roadRating,
+		subsidyRating,
+		demandRating,
+		nearestSubstationName: nearestName,
+		nearestSubstationDistanceKm: distanceKm,
+		nearestSubstationOperator: nearest?.substation.op ?? "",
+		nearestSubstationGridStatus: gridStatus,
+		substationCandidates,
+		roadWidthM,
+		physicalAiScore,
+		salesAiScore,
+		customerValue,
+		blockers,
+		sabcReason,
+		landEvaluation: [
+			`${input.name}は、${area > 0 ? `${Math.round(area).toLocaleString("ja-JP")}坪` : "面積未確認"}・所在地「${input.address || "未確認"}」を起点にした土地評価です。`,
+			`2AI評価として、物理・系統AIは${physicalAiScore}点、営業・案件化AIは${salesAiScore}点。SABC統合では${overallGrade} / ${score}点です。`,
+			`鳥の目で見ると、${customerValue}`,
+			substationCandidatesLine,
+			blockerLine,
+			overallGrade === "S"
+				? "変電所近接、面積、接道の条件が強いため、優先確認候補として人間確認へ回す価値があります。"
+				: "案件化前に、変電所距離、接道、農転、登記、近隣住宅距離の確認を続けてください。",
+		].join("\n"),
+		powerEvaluation: [
+			powerArea === "未確認"
+				? "電力会社エリアは未確認です。"
+			: `電力会社エリアは${powerArea}として評価しました。`,
+			substationLine,
+			substationCandidatesLine,
+			distanceKm !== null && distanceKm <= 1
+				? "変電所1km圏内のため、系統用蓄電池候補として最優先で系統空き・接続検討を確認してください。"
+				: "変電所距離と系統空きは確定資料で再確認してください。",
+		].join("\n"),
+		roadEvaluation: [
+			roadLine,
+			roadWidthM !== null && roadWidthM >= 6
+				? "6m以上の接道として、大型車進入・搬入計画の初期条件は強い判定です。"
+				: roadWidthM !== null && roadWidthM >= 4
+					? "4m以上の接道として一次条件は満たしますが、大型車進入は現地で確認してください。"
+					: "道路幅員、道路種別、進入経路、大型車搬入可否を現地資料または道路台帳で確認してください。",
+		].join("\n"),
+		subsidyEvaluation:
+			"未確認。補助金・制度適合は年度、用途、設備種別、自治体条件により変わるため、公式情報で確認してください。",
+		demandEvaluation:
+			area >= 5000
+				? "推測ですが、系統用蓄電池・高圧/特高系の需要仮説を強く置けます。"
+				: area >= 1500
+					? "推測ですが、蓄電池・高圧系の需要仮説を置けます。"
+					: "推測ですが、低圧集約、売却候補、近隣案件との組み合わせで価値を確認します。",
+		nextAction:
+			overallGrade === "S"
+				? "最寄り変電所、接道、農転/登記、近隣住宅距離を人間が確認し、案件化・仕入れ打診へ進めてください。"
+				: blockers.length > 0
+					? `変電所近接だけで進めず、先に ${blockers.join(" / ")} を解消または確認してください。`
+					: "不足条件を整理し、接道・用途地域・農転/登記・需要地距離を確認してから再評価してください。",
+		reviewMemo: sabcReason,
+	};
+}
+
+function findNearestSubstations(
+	latitude: number | null,
+	longitude: number | null,
+	powerArea: string,
+	limit: number,
+): NearestSubstation[] {
+	if (latitude === null || longitude === null) return [];
+	const matched = LAND_SUBSTATIONS.filter((substation) =>
+		operatorMatchesPowerArea(substation.op, powerArea),
+	);
+	const candidates = matched.length > 0 ? matched : LAND_SUBSTATIONS;
+	return candidates
+		.map((substation) => ({
+			substation,
+			distanceKm: haversineKm(latitude, longitude, substation.lat, substation.lng),
+		}))
+		.sort((a, b) => a.distanceKm - b.distanceKm)
+		.slice(0, limit);
+}
+
+function formatSubstationCandidates(candidates: LandTreasureSubstationCandidate[]): string {
+	if (candidates.length === 0) return "変電所候補3件: 未特定（緯度経度なし）";
+	return [
+		"変電所候補3件:",
+		...candidates.map((candidate, index) =>
+			[
+				`${index + 1}. ${candidate.name}`,
+				`${round1(candidate.distanceKm)}km`,
+				candidate.operator,
+				`系統=${candidate.gridStatus || "未確認"}`,
+				candidate.voltageKv !== null ? `${candidate.voltageKv}kV` : "電圧未確認",
+				`確認リンク=${candidate.confirmationUrl}`,
+			].join(" / "),
+		),
+	].join("\n");
+}
+
+function googleMapsUrl(latitude: number, longitude: number): string {
+	return `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
+}
+
+function scorePhysicalAi(input: {
+	area: number;
+	distanceKm: number | null;
+	gridStatus: string;
+	roadWidthM: number | null;
+	landUse: string;
+	blockers: string[];
+}): number {
+	let score = 0;
+	score += input.area >= 5000 ? 18 : input.area >= 2400 ? 14 : input.area >= 1500 ? 10 : 5;
+	score += scoreDistance(input.distanceKm);
+	score += input.gridStatus === "○" ? 24 : input.gridStatus === "△" ? 12 : input.gridStatus === "×" ? -8 : 8;
+	score += input.roadWidthM === null ? 8 : input.roadWidthM >= 6 ? 18 : input.roadWidthM >= 4 ? 14 : -6;
+	score += input.landUse ? 5 : 0;
+	score -= input.blockers.length * 7;
+	return clamp(score, 0, 100);
+}
+
+function scoreSalesAi(input: {
+	area: number;
+	distanceKm: number | null;
+	roadWidthM: number | null;
+	powerArea: string;
+	farmland: string;
+	farmlandType: string;
+	registry: string;
+	nearbyResidentialDistanceM: number | null;
+	blockers: string[];
+}): number {
+	let score = 0;
+	score += input.area >= 5000 ? 34 : input.area >= 2400 ? 26 : input.area >= 1500 ? 20 : 8;
+	score += input.powerArea && input.powerArea !== "未確認" ? 12 : 0;
+	score += input.distanceKm !== null && input.distanceKm <= 1 ? 24 : input.distanceKm !== null && input.distanceKm <= 3 ? 18 : input.distanceKm !== null && input.distanceKm <= 5 ? 12 : 4;
+	score += input.roadWidthM === null ? 6 : input.roadWidthM >= 6 ? 16 : input.roadWidthM >= 4 ? 12 : -8;
+	score += /不要|済|確認済|可|可能/.test(`${input.farmland} ${input.farmlandType} ${input.registry}`) ? 14 : 6;
+	score += input.nearbyResidentialDistanceM === null ? 4 : input.nearbyResidentialDistanceM >= 30 ? 8 : -10;
+	score -= input.blockers.length * 9;
+	return clamp(score, 0, 100);
+}
+
+function identifyBirdEyeBlockers(
+	input: LandTreasureInput,
+	roadWidthM: number | null,
+	distanceKm: number | null,
+): string[] {
+	const blockers: string[] = [];
+	if (distanceKm === null) {
+		blockers.push("変電所距離が未確認");
+	}
+	if (!input.road) {
+		blockers.push("接道情報が未確認");
+	} else if (
+		roadWidthM === null &&
+		!/大型車進入可|搬入可|4m|４m|6m|６m|幅員\s*[46４６]/.test(input.road)
+	) {
+		blockers.push("接道幅員・大型車進入が未確認");
+	}
+	if (/未接道|進入不可|不可|なし|無し/.test(input.road) || (roadWidthM !== null && roadWidthM < 4)) {
+		blockers.push("未接道または大型車進入不可");
+	}
+	if (!input.farmland && !input.farmlandType) {
+		blockers.push("農地・農転確認が未入力");
+	}
+	if (/不可/.test(input.farmland) || /第1種農地/.test(input.farmlandType)) {
+		blockers.push("農地転用に阻害要因あり");
+	}
+	if (!input.registry) {
+		blockers.push("登記確認が未入力");
+	}
+	if (/所有者不明/.test(input.registry)) {
+		blockers.push("登記・所有者確認に阻害要因あり");
+	}
+	if (input.nearbyResidentialDistanceM === null && !input.nearbyResidentialCheck) {
+		blockers.push("近隣住宅距離が未確認");
+	}
+	if (
+		(input.nearbyResidentialDistanceM !== null && input.nearbyResidentialDistanceM < 30) ||
+		/30m未満/.test(input.nearbyResidentialCheck)
+	) {
+		blockers.push("近隣住宅が近い");
+	}
+	return blockers;
+}
+
+function applyBirdEyeCaps(score: number, blockers: string[]): number {
+	if (blockers.length === 0) return score;
+	let cap = 78;
+	if (blockers.some((item) => /変電所距離/.test(item))) cap = Math.min(cap, 72);
+	if (blockers.some((item) => /接道情報|接道幅員/.test(item))) cap = Math.min(cap, 69);
+	if (blockers.some((item) => /農地・農転確認|登記確認/.test(item))) cap = Math.min(cap, 72);
+	if (blockers.some((item) => /近隣住宅距離/.test(item))) cap = Math.min(cap, 74);
+	if (blockers.some((item) => /未接道/.test(item))) cap = Math.min(cap, 58);
+	if (blockers.some((item) => /農地転用/.test(item))) cap = Math.min(cap, 62);
+	if (blockers.some((item) => /所有者/.test(item))) cap = Math.min(cap, 62);
+	if (blockers.length >= 3) cap = Math.min(cap, 64);
+	if (blockers.filter((item) => /不可|阻害|近い|未接道/.test(item)).length >= 3) {
+		cap = Math.min(cap, 55);
+	}
+	return Math.min(score, cap);
+}
+
+function buildCustomerValueStatement(input: {
+	grade: LandTreasureGrade;
+	score: number;
+	area: number;
+	distanceKm: number | null;
+	powerArea: string;
+	projectType: string;
+	blockers: string[];
+}): string {
+	const areaText = input.area > 0 ? `${Math.round(input.area).toLocaleString("ja-JP")}坪` : "面積未確認";
+	const distanceText = input.distanceKm === null ? "変電所距離未確認" : `変電所約${round1(input.distanceKm)}km`;
+	if (input.blockers.length > 0) {
+		return `顧客に提示できる価値は「${distanceText}・${areaText}の可能性」までで、現時点では${input.blockers.join("、")}が先に潰すべきリスクです。`;
+	}
+	if (input.grade === "S") {
+		return `顧客に提示できる価値は「${input.powerArea}エリアで${distanceText}、${areaText}、${input.projectType}として初期検討できる希少な候補地」です。`;
+	}
+	if (input.grade === "A") {
+		return `顧客に提示できる価値は「${distanceText}と${areaText}を起点に、追加確認後に案件化を狙える候補地」です。`;
+	}
+	return `顧客に提示できる価値はまだ限定的です。${distanceText}と${areaText}以外の成立条件を追加確認してください。`;
+}
+
+function scoreDistance(distanceKm: number | null): number {
+	if (distanceKm === null) return 8;
+	if (distanceKm <= 1) return 35;
+	if (distanceKm <= 3) return 28;
+	if (distanceKm <= 5) return 22;
+	if (distanceKm <= 10) return 12;
+	if (distanceKm <= 20) return 3;
+	return -12;
+}
+
+function choosePowerRating(distanceKm: number | null, gridStatus: string): string {
+	if (distanceKm !== null && distanceKm <= 1 && gridStatus !== "×") return "◎";
+	if (distanceKm !== null && distanceKm <= 5) return "○";
+	if (distanceKm !== null && distanceKm <= 10) return "△";
+	return gridStatus === "×" ? "×" : "△";
+}
+
+function chooseRoadRatingFromWidth(widthM: number | null, road: string): string {
+	if (/不可|なし|無し|狭い|2m未満|未接道/.test(road)) return "不可";
+	if (widthM === null) return road ? "要確認" : "要確認";
+	if (widthM >= 4) return "可";
+	return "不可";
+}
+
+function roadWidthFromText(value: string): number | null {
+	const normalized = value.replace(/[０-９．]/g, (char) =>
+		String.fromCharCode(char.charCodeAt(0) - 0xfee0),
+	);
+	const match = normalized.match(/(\d+(?:\.\d+)?)\s*(?:m|ｍ|メートル|M)/i);
+	return match ? Number(match[1]) : null;
+}
+
+function operatorMatchesPowerArea(operator: string, powerArea: string): boolean {
+	if (!powerArea || powerArea === "未確認") return true;
+	if (/中部/.test(powerArea)) return /中部/.test(operator);
+	if (/東京/.test(powerArea)) return /東京/.test(operator);
+	if (/関西/.test(powerArea)) return /関西/.test(operator);
+	if (/九州/.test(powerArea)) return /九州/.test(operator);
+	if (/北海道/.test(powerArea)) return /北海道/.test(operator);
+	if (/東北/.test(powerArea)) return /東北/.test(operator);
+	if (/北陸/.test(powerArea)) return /北陸/.test(operator);
+	if (/中国/.test(powerArea)) return /中国/.test(operator);
+	if (/四国/.test(powerArea)) return /四国/.test(operator);
+	if (/沖縄/.test(powerArea)) return /沖縄/.test(operator);
+	return true;
+}
+
+function inferPowerAreaFromAddress(address: string): string {
+	if (!address) return "";
+	if (/大阪|京都|兵庫|奈良|滋賀|和歌山/.test(address)) return "関西電力";
+	if (/東京|神奈川|埼玉|千葉|茨城|栃木|群馬|山梨|静岡県富士川以東/.test(address)) return "東京電力";
+	if (/愛知|岐阜|三重|長野|静岡/.test(address)) return "中部電力";
+	if (/福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島/.test(address)) return "九州電力";
+	if (/北海道/.test(address)) return "北海道電力";
+	if (/青森|岩手|宮城|秋田|山形|福島|新潟/.test(address)) return "東北電力";
+	if (/富山|石川|福井/.test(address)) return "北陸電力";
+	if (/鳥取|島根|岡山|広島|山口/.test(address)) return "中国電力";
+	if (/徳島|香川|愛媛|高知/.test(address)) return "四国電力";
+	if (/沖縄/.test(address)) return "沖縄電力";
+	return "";
+}
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+	const radiusKm = 6371;
+	const dLat = toRadians(lat2 - lat1);
+	const dLng = toRadians(lng2 - lng1);
+	const a =
+		Math.sin(dLat / 2) ** 2 +
+		Math.cos(toRadians(lat1)) *
+			Math.cos(toRadians(lat2)) *
+			Math.sin(dLng / 2) ** 2;
+	return radiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function toRadians(value: number): number {
+	return (value * Math.PI) / 180;
+}
+
+function round1(value: number): number {
+	return Math.round(value * 10) / 10;
+}
+
+function clamp(value: number, min: number, max: number): number {
+	return Math.max(min, Math.min(max, value));
+}

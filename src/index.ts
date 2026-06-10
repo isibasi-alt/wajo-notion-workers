@@ -2,6 +2,11 @@ import { Worker, WebhookVerificationError } from "@notionhq/workers";
 import { j } from "@notionhq/workers/schema-builder";
 import { generateInspectedShoutaBrief, type ShoutaInput } from "./shouta-brief";
 import { PDFDocument, StandardFonts, rgb, type PDFImage } from "pdf-lib";
+import {
+	evaluateLandTreasure,
+	type LandTreasureEvaluation,
+	type LandTreasureSubstationCandidate,
+} from "./land-treasure-engine.js";
 
 const worker = new Worker();
 export default worker;
@@ -1469,7 +1474,15 @@ type LandInfo = {
 	landUse: string;
 	road: string;
 	farmland: string;
+	farmlandType: string;
+	registry: string;
+	nearbyResidentialDistanceM: number | null;
+	nearbyResidentialCheck: string;
+	transmissionLine: string;
 	substationDistance: string;
+	substationDistanceKm: number | null;
+	latitude: number | null;
+	longitude: number | null;
 };
 
 type ProjectInfo = {
@@ -1481,6 +1494,8 @@ type LandEvaluation = {
 	overallGrade: string;
 	score: number;
 	bucket: string;
+	requiresInvestigation?: boolean;
+	investigationGaps?: string[];
 	actionBucket: string;
 	caseStatus: string;
 	projectType: string;
@@ -1497,6 +1512,14 @@ type LandEvaluation = {
 	demandEvaluation: string;
 	nextAction: string;
 	reviewMemo: string;
+	nearestSubstationName?: string;
+	nearestSubstationDistanceKm?: number | null;
+	nearestSubstationOperator?: string;
+	nearestSubstationGridStatus?: string;
+	substationCandidates?: LandTreasureSubstationCandidate[];
+	physicalAiScore?: number;
+	salesAiScore?: number;
+	sabcReason?: string;
 };
 
 type DealSecondReviewInput = {
@@ -12968,7 +12991,7 @@ async function processLandEvaluation(
 			page_id: input.pageId,
 		}));
 	const land = readLand(page);
-	const evaluation = buildLandEvaluation(land);
+	const evaluation = await buildLandEvaluation(land);
 
 	if (input.dryRun) {
 		return {
@@ -12990,6 +13013,18 @@ async function processLandEvaluation(
 			score: evaluation.score,
 			bucket: evaluation.bucket,
 			message: "所在地または面積が不足しているため、詳細評価前の要確認にしました。",
+		};
+	}
+
+	if (evaluation.requiresInvestigation) {
+		await markLandNeedsReview(notion, land, evaluation);
+		return {
+			pageId: input.pageId,
+			action: "needs-review",
+			overallGrade: evaluation.overallGrade,
+			score: evaluation.score,
+			bucket: evaluation.bucket,
+			message: `本評価に必要な確認が不足しているため、要確認にしました: ${evaluation.investigationGaps?.join("、") ?? "確認事項あり"}`,
 		};
 	}
 
@@ -15466,6 +15501,16 @@ function readLand(page: Page): LandInfo {
 		numberFromText(text(properties["面積（坪）"]) || text(properties["面積"]));
 	const powerArea =
 		text(properties["電力会社エリア"]) || inferPowerAreaFromAddress(address);
+	const substationDistanceKm =
+		numberValue(properties["変電所距離（km）"]) ??
+		numberValue(properties["変電所距離"]) ??
+		numberValue(properties["系統距離"]) ??
+		distanceKmFromText(
+			text(properties["変電所距離（km）"]) ||
+				text(properties["変電所距離"]) ||
+				text(properties["系統距離"]) ||
+				text(properties["最寄り変電所距離"]),
+		);
 
 	return {
 		page,
@@ -15481,15 +15526,42 @@ function readLand(page: Page): LandInfo {
 		road:
 			text(properties["接道"]) ||
 			text(properties["接道状況"]) ||
-			text(properties["AI接道評価"]),
+			text(properties["道路状況"]),
 		farmland:
+			text(properties["農地転用可否"]) ||
 			text(properties["農転/登記/近隣確認"]) ||
 			text(properties["農地判定"]) ||
 			text(properties["登記確認"]),
+		farmlandType: text(properties["農地種別"]),
+		registry:
+			text(properties["登記確認状況"]) ||
+			text(properties["登記確認"]) ||
+			text(properties["農転/登記/近隣確認"]),
+		nearbyResidentialDistanceM:
+			numberValue(properties["近隣住宅距離（m）"]) ??
+			numberValue(properties["近隣住宅距離"]) ??
+			numberFromText(text(properties["近隣住宅距離（m）"]) || text(properties["近隣住宅距離"])),
+		nearbyResidentialCheck: text(properties["近隣住宅確認"]),
+		transmissionLine: text(properties["送電線の有無"]),
 		substationDistance:
+			(substationDistanceKm !== null ? `${substationDistanceKm}km` : "") ||
+			text(properties["変電所距離（km）"]) ||
 			text(properties["変電所距離"]) ||
 			text(properties["系統距離"]) ||
 			text(properties["最寄り変電所距離"]),
+		substationDistanceKm,
+		latitude:
+			numberValue(properties["緯度"]) ??
+			numberValue(properties["latitude"]) ??
+			numberValue(properties["Latitude"]) ??
+			placeCoordinate(properties["GPS情報"], "lat") ??
+			numberFromText(text(properties["緯度"]) || text(properties["latitude"])),
+		longitude:
+			numberValue(properties["経度"]) ??
+			numberValue(properties["longitude"]) ??
+			numberValue(properties["Longitude"]) ??
+			placeCoordinate(properties["GPS情報"], "lon") ??
+			numberFromText(text(properties["経度"]) || text(properties["longitude"])),
 	};
 }
 
@@ -15497,69 +15569,1979 @@ function shouldProcessLand(land: LandInfo): boolean {
 	return Boolean(land.address && land.areaTsubo && land.areaTsubo > 0);
 }
 
-function buildLandEvaluation(land: LandInfo): LandEvaluation {
+type LandMapContext = {
+	latitude: number | null;
+	longitude: number | null;
+	googleMapsUrl: string;
+	roadAccess: string;
+	geocodeSource: string;
+	farmlandNavi: LandFarmlandNaviContext;
+	surroundingPlaces: LandSurroundingPlacesContext;
+	reinfolib: LandReinfolibContext;
+	parcelCadastre: LandParcelCadastreContext;
+	gsiRoad: LandGsiRoadContext;
+	gridCapacity: LandGridCapacityContext;
+};
+
+type LandFarmlandNaviRecord = {
+	address: string;
+	landCategory: string;
+	area: number | null;
+	agriculturalClassification: string;
+	cityPlanningClassification: string;
+	ownerIntention: string;
+	rightClassification: string;
+	idleStatus: string;
+	jurisdictionAgricultureCommitteeName: string;
+	latitude: number | null;
+	longitude: number | null;
+	distanceM: number | null;
+};
+
+type LandFarmlandFieldPolygonCandidate = {
+	fieldPolygonId: string;
+	cityCode: string;
+	landCategory: string;
+	area: number | null;
+	geometryType: string;
+	sourceUrl: string;
+};
+
+type LandFarmlandNaviContext = {
+	status: "connected" | "no-token" | "no-coordinate" | "no-result" | "error";
+	source: string;
+	message: string;
+	records: LandFarmlandNaviRecord[];
+	nearest: LandFarmlandNaviRecord | null;
+	fieldPolygons: LandFarmlandFieldPolygonCandidate[];
+};
+
+type LandSurroundingPlaceCandidate = {
+	name: string;
+	primaryType: string;
+	categoryLabel: string;
+	formattedAddress: string;
+	latitude: number | null;
+	longitude: number | null;
+	distanceM: number | null;
+	googleMapsUri: string;
+};
+
+type LandSurroundingPlacesContext = {
+	status: "connected" | "no-key" | "no-coordinate" | "no-result" | "error";
+	source: string;
+	message: string;
+	places: LandSurroundingPlaceCandidate[];
+};
+
+type LandParcelCadastreCandidate = {
+	municipality: string;
+	oaza: string;
+	koaza: string;
+	lotNumber: string;
+	mapType: string;
+	accuracy: string;
+	sourceUrl: string;
+	confirmationUrl: string;
+};
+
+type LandParcelCadastreContext = {
+	status: "connected" | "no-url" | "no-coordinate" | "no-result" | "error";
+	source: string;
+	message: string;
+	candidates: LandParcelCadastreCandidate[];
+};
+
+type LandGsiRoadCandidate = {
+	name: string;
+	category: string;
+	widthRank: string;
+	widthEstimateM: number | null;
+	distanceM: number;
+	sourceUrl: string;
+};
+
+type LandGsiRoadContext = {
+	status: "connected" | "no-coordinate" | "no-result" | "error";
+	source: string;
+	message: string;
+	candidates: LandGsiRoadCandidate[];
+};
+
+type LandGridCapacityRecord = {
+	powerArea: string;
+	operator: string;
+	facilityName: string;
+	voltageKv: number | null;
+	availableCapacityMw: number | null;
+	status: string;
+	nMinusOne: string;
+	updatedAt: string;
+	sourceUrl: string;
+};
+
+type LandGridCapacityOfficialLink = {
+	label: string;
+	url: string;
+};
+
+type LandGridCapacityContext = {
+	status: "connected" | "no-url" | "no-result" | "error";
+	source: string;
+	message: string;
+	powerArea: string;
+	officialLinks: LandGridCapacityOfficialLink[];
+	records: LandGridCapacityRecord[];
+};
+
+type LandReinfolibPricePoint = {
+	cityCode: string;
+	targetYear: string;
+	useCategory: string;
+	location: string;
+	priceYenPerSqm: number | null;
+	yearOnYearChangeRate: string;
+	distanceM: number | null;
+};
+
+type LandReinfolibZoning = {
+	cityCode: string;
+	cityName: string;
+	useArea: string;
+	buildingCoverageRatio: string;
+	floorAreaRatio: string;
+};
+
+type LandReinfolibHazardRisk = {
+	apiId: string;
+	label: string;
+	detail: string;
+};
+
+type LandReinfolibTransactionSummary = {
+	cityCode: string;
+	count: number;
+	medianUnitPriceYenPerSqm: number | null;
+	sampleDistricts: string[];
+};
+
+type LandReinfolibContext = {
+	status: "connected" | "no-token" | "no-coordinate" | "no-result" | "error";
+	source: string;
+	message: string;
+	landPrice: LandReinfolibPricePoint | null;
+	zoning: LandReinfolibZoning | null;
+	hazards: LandReinfolibHazardRisk[];
+	transactionSummary: LandReinfolibTransactionSummary | null;
+	referencePriceRange: string;
+};
+
+async function resolveLandMapContext(land: LandInfo): Promise<LandMapContext> {
+	const key = process.env.GOOGLE_MAPS_API_KEY || process.env.GOOGLE_API_KEY || "";
+	let latitude = land.latitude;
+	let longitude = land.longitude;
+	let geocodeSource = "";
+	let roadAccess = "";
+
+	if ((latitude === null || longitude === null) && land.substationDistanceKm === null && key && land.address) {
+		const geocoded = await geocodeLandAddress(land.address, key);
+		if (geocoded) {
+			latitude = geocoded.latitude;
+			longitude = geocoded.longitude;
+			geocodeSource = "Google Geocoding API";
+		}
+	}
+
+	if (latitude !== null && longitude !== null && key && !land.road) {
+		roadAccess = await fetchGoogleRoadAccess(latitude, longitude, key);
+	}
+
+	const farmlandNavi = await fetchFarmlandNaviContext(latitude, longitude);
+	const surroundingPlaces = await fetchGoogleSurroundingPlacesContext(latitude, longitude, key);
+	const reinfolib = await fetchReinfolibContext(latitude, longitude, land.areaTsubo);
+	const parcelCadastre = await fetchParcelCadastreContext(latitude, longitude);
+	const gsiRoad = await fetchGsiRoadContext(latitude, longitude);
+	const powerArea = land.powerArea || inferPowerAreaFromAddress(land.address) || "未確認";
+	const gridCapacity = await fetchGridCapacityContext(powerArea);
+
+	return {
+		latitude,
+		longitude,
+		googleMapsUrl:
+			latitude !== null && longitude !== null
+				? `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`
+				: "",
+		roadAccess,
+		geocodeSource,
+		farmlandNavi,
+		surroundingPlaces,
+		reinfolib,
+		parcelCadastre,
+		gsiRoad,
+		gridCapacity,
+	};
+}
+
+async function fetchFarmlandNaviContext(
+	latitude: number | null,
+	longitude: number | null,
+): Promise<LandFarmlandNaviContext> {
+	const source = "WAGRI農地API / eMAFF農地ナビ連携データ";
+	if (latitude === null || longitude === null) {
+		return {
+			status: "no-coordinate",
+			source,
+			message: "農地ナビ接続: 未実行（緯度経度なし）",
+			records: [],
+			nearest: null,
+			fieldPolygons: [],
+		};
+	}
+	const token = process.env.WAGRI_ACCESS_TOKEN || process.env.WAGRI_API_TOKEN || process.env.WAGRI_TOKEN || "";
+	if (!token) {
+		return {
+			status: "no-token",
+			source,
+			message: "農地ナビ接続: 未接続（WAGRI_ACCESS_TOKEN未設定）",
+			records: [],
+			nearest: null,
+			fieldPolygons: [],
+		};
+	}
+
+	const delta = 0.0025;
+	const url = new URL("https://api.wagri2.net/basic/farmland/AgriculturalLand/SearchByLongitudeLatitude");
+	url.searchParams.set("minLatitude", String(latitude - delta));
+	url.searchParams.set("maxLatitude", String(latitude + delta));
+	url.searchParams.set("minLongitude", String(longitude - delta));
+	url.searchParams.set("maxLongitude", String(longitude + delta));
+
+	const body = await fetchJsonWithHeaders(url, { "X-Authorization": token });
+	if (!Array.isArray(body)) {
+		return {
+			status: "error",
+			source,
+			message: "農地ナビ接続: 取得失敗（WAGRI農地APIの応答を解析できません）",
+			records: [],
+			nearest: null,
+			fieldPolygons: [],
+		};
+	}
+
+	const records = body
+		.map((item) => readFarmlandNaviRecord(item, latitude, longitude))
+		.filter((record): record is LandFarmlandNaviRecord => record !== null)
+		.sort((a, b) => (a.distanceM ?? Number.POSITIVE_INFINITY) - (b.distanceM ?? Number.POSITIVE_INFINITY))
+		.slice(0, 10);
+	const nearest = records[0] ?? null;
+	const fieldPolygons = await fetchFarmlandFieldPolygonCandidates(latitude, longitude, token);
+	return {
+		status: records.length > 0 || fieldPolygons.length > 0 ? "connected" : "no-result",
+		source,
+		message:
+			records.length > 0 || fieldPolygons.length > 0
+				? `農地ナビ接続: WAGRI農地API 取得成功（農地ピン${records.length}件 / ID付与済み筆ポリゴン取得API v3 ${fieldPolygons.length}件）`
+				: "農地ナビ接続: WAGRI農地API 取得0件",
+		records,
+		nearest,
+		fieldPolygons,
+	};
+}
+
+function readFarmlandNaviRecord(
+	value: unknown,
+	originLatitude: number,
+	originLongitude: number,
+): LandFarmlandNaviRecord | null {
+	const item = readObject(value);
+	const latitude = numberOrNull(item.Latitude);
+	const longitude = numberOrNull(item.Longitude);
+	const area = numberOrNull(item.Area);
+	const address = stringOrBlank(item.Address);
+	const landCategory = stringOrBlank(item.LandCategory);
+	const agriculturalClassification = stringOrBlank(item.AgriculturalVibrationMethodClassification);
+	const cityPlanningClassification = stringOrBlank(item.CityPlanningActClassification);
+	if (!address && !landCategory && !agriculturalClassification && !cityPlanningClassification) return null;
+	return {
+		address,
+		landCategory,
+		area,
+		agriculturalClassification,
+		cityPlanningClassification,
+		ownerIntention: stringOrBlank(item.IntentionOwnerAgriculturalLand),
+		rightClassification: stringOrBlank(item.RightClassification),
+		idleStatus: stringOrBlank(item.IsIdleAgriculturalLand),
+		jurisdictionAgricultureCommitteeName: stringOrBlank(item.JurisdictionAgricultureCommitteeName),
+		latitude,
+		longitude,
+		distanceM:
+			latitude !== null && longitude !== null
+				? Math.round(distanceMetersBetween(originLatitude, originLongitude, latitude, longitude))
+				: null,
+	};
+}
+
+async function fetchFarmlandFieldPolygonCandidates(
+	latitude: number,
+	longitude: number,
+	token: string,
+): Promise<LandFarmlandFieldPolygonCandidate[]> {
+	const url = new URL("https://api.wagri2.net/basic/farmland/FieldPolygonID3/Get");
+	url.searchParams.set("lat", String(latitude));
+	url.searchParams.set("lng", String(longitude));
+	url.searchParams.set("cmp", "1");
+	const body = await fetchJsonWithHeaders(url, { "X-Authorization": token });
+	if (!body) return [];
+	return farmlandFieldPolygonFeatures(body)
+		.map((feature) => readFarmlandFieldPolygonCandidate(feature.properties, feature.geometry, url.toString()))
+		.filter((candidate): candidate is LandFarmlandFieldPolygonCandidate => candidate !== null)
+		.slice(0, 5);
+}
+
+function farmlandFieldPolygonFeatures(body: unknown): Array<{ properties: unknown; geometry: unknown }> {
+	if (Array.isArray(body)) {
+		return body.map((item) => {
+			const root = readObject(item);
+			return {
+				properties: root.properties || root.Properties || root,
+				geometry: root.geometry || root.Geometry,
+			};
+		});
+	}
+	const root = readObject(body);
+	if (root.type === "Feature" || root.Type === "Feature") {
+		return [{ properties: root.properties || root.Properties, geometry: root.geometry || root.Geometry }];
+	}
+	const features = objectArray(root.features || root.Features || root.data || root.Data || root.results || root.result);
+	return features.map((feature) => ({
+		properties: feature.properties || feature.Properties || feature,
+		geometry: feature.geometry || feature.Geometry,
+	}));
+}
+
+function readFarmlandFieldPolygonCandidate(
+	properties: unknown,
+	geometry: unknown,
+	sourceUrl: string,
+): LandFarmlandFieldPolygonCandidate | null {
+	const props = readObject(properties);
+	const geom = readObject(geometry);
+	const fieldPolygonId = firstNonBlank(
+		props.FieldPolygonId,
+		props.FieldPolygonID,
+		props.fieldPolygonId,
+		props.field_polygon_id,
+		props.ID,
+		props.id,
+		props.筆ポリゴンID,
+		props.筆ID,
+	);
+	const cityCode = firstNonBlank(props.CityCode, props.cityCode, props.LocalGovernmentCd, props.市区町村コード);
+	const landCategory = firstNonBlank(props.LandCategory, props.landCategory, props.地目);
+	const area =
+		numberFromUnknown(props.Area) ??
+		numberFromUnknown(props.area) ??
+		numberFromUnknown(props.面積) ??
+		numberFromUnknown(props["面積㎡"]);
+	const geometryType = firstNonBlank(geom.type, geom.Type, props.geometryType, props.形状種別);
+	if (!fieldPolygonId && !cityCode && !landCategory && area === null && !geometryType) return null;
+	return {
+		fieldPolygonId,
+		cityCode,
+		landCategory,
+		area,
+		geometryType,
+		sourceUrl,
+	};
+}
+
+function distanceMetersBetween(
+	lat1: number,
+	lon1: number,
+	lat2: number,
+	lon2: number,
+): number {
+	const radiusKm = 6371;
+	const dLat = degreesToRadians(lat2 - lat1);
+	const dLon = degreesToRadians(lon2 - lon1);
+	const a =
+		Math.sin(dLat / 2) ** 2 +
+		Math.cos(degreesToRadians(lat1)) *
+			Math.cos(degreesToRadians(lat2)) *
+			Math.sin(dLon / 2) ** 2;
+	return radiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 1000;
+}
+
+function degreesToRadians(value: number): number {
+	return (value * Math.PI) / 180;
+}
+
+function farmlandNaviEvidence(context: LandFarmlandNaviContext): string {
+	if (context.status !== "connected" || (!context.nearest && context.fieldPolygons.length === 0)) return context.message;
+	const nearest = context.nearest;
+	const lines = [
+		context.message,
+		`農地ナビ接続元: ${context.source}`,
+		nearest?.address ? `所在・地番: ${nearest.address}` : "",
+		nearest?.distanceM !== null && nearest?.distanceM !== undefined ? `入力地点からの距離: 約${nearest.distanceM}m` : "",
+		nearest?.landCategory ? `地目: ${nearest.landCategory}` : "",
+		nearest?.area !== null && nearest?.area !== undefined ? `農地ナビ面積: ${nearest.area.toLocaleString("ja-JP")}㎡` : "",
+		nearest?.agriculturalClassification ? `農振法区分: ${nearest.agriculturalClassification}` : "",
+		nearest?.cityPlanningClassification ? `都市計画法区分: ${nearest.cityPlanningClassification}` : "",
+		nearest?.ownerIntention ? `所有者意向: ${nearest.ownerIntention}` : "",
+		nearest?.rightClassification ? `権利の種類: ${nearest.rightClassification}` : "",
+		nearest?.idleStatus ? `遊休農地: ${nearest.idleStatus}` : "",
+		nearest?.jurisdictionAgricultureCommitteeName ? `所管農業委員会: ${nearest.jurisdictionAgricultureCommitteeName}` : "",
+		...context.fieldPolygons.slice(0, 3).map((candidate, index) =>
+			[
+				`農地筆ポリゴン候補${index + 1}: ID付与済み筆ポリゴン取得API v3`,
+				candidate.fieldPolygonId ? `筆ポリゴンID=${candidate.fieldPolygonId}` : "",
+				candidate.cityCode ? `市区町村コード=${candidate.cityCode}` : "",
+				candidate.landCategory ? `地目=${candidate.landCategory}` : "",
+				candidate.area !== null ? `面積=${candidate.area.toLocaleString("ja-JP")}㎡` : "",
+				candidate.geometryType ? `農地区画形状候補=${candidate.geometryType}` : "農地区画形状候補",
+			].filter(Boolean).join(" / "),
+		),
+		"注意: eMAFF農地ナビ/WAGRIの農地ピン・農地筆ポリゴンは法的証明ではないため、農業委員会で最終確認。",
+	];
+	return lines.filter(Boolean).join("\n");
+}
+
+async function fetchGoogleSurroundingPlacesContext(
+	latitude: number | null,
+	longitude: number | null,
+	key: string,
+): Promise<LandSurroundingPlacesContext> {
+	const source = "Google Places API (New) Nearby Search";
+	if (latitude === null || longitude === null) {
+		return {
+			status: "no-coordinate",
+			source,
+			message: "周辺条件: 未実行（緯度経度なし）",
+			places: [],
+		};
+	}
+	if (!key) {
+		return {
+			status: "no-key",
+			source,
+			message: "周辺条件: 未接続（GOOGLE_MAPS_API_KEY未設定）",
+			places: [],
+		};
+	}
+
+	const url = new URL("https://places.googleapis.com/v1/places:searchNearby");
+	const body = await fetchJsonPostWithHeaders(
+		url,
+		{
+			"Content-Type": "application/json",
+			"X-Goog-Api-Key": key,
+			"X-Goog-FieldMask":
+				"places.displayName,places.primaryType,places.types,places.formattedAddress,places.location,places.googleMapsUri",
+		},
+		{
+			includedTypes: [
+				"school",
+				"hospital",
+				"train_station",
+				"shopping_mall",
+				"supermarket",
+				"local_government_office",
+			],
+			maxResultCount: 12,
+			locationRestriction: {
+				circle: {
+					center: { latitude, longitude },
+					radius: 1500,
+				},
+			},
+			rankPreference: "DISTANCE",
+			languageCode: "ja",
+			regionCode: "JP",
+		},
+	);
+	if (!body) {
+		return {
+			status: "error",
+			source,
+			message: "周辺条件: Google Places API 取得失敗",
+			places: [],
+		};
+	}
+	const root = readObject(body);
+	const places = objectArray(root.places)
+		.map((place) => readSurroundingPlaceCandidate(place, latitude, longitude))
+		.filter((candidate): candidate is LandSurroundingPlaceCandidate => candidate !== null)
+		.slice(0, 8);
+	return {
+		status: places.length > 0 ? "connected" : "no-result",
+		source,
+		message:
+			places.length > 0
+				? `周辺条件: Google Places API 取得成功（周辺施設候補${places.length}件）`
+				: "周辺条件: Google Places API 取得0件",
+		places,
+	};
+}
+
+function readSurroundingPlaceCandidate(
+	value: Record<string, unknown>,
+	originLatitude: number,
+	originLongitude: number,
+): LandSurroundingPlaceCandidate | null {
+	const displayName = readObject(value.displayName);
+	const location = readObject(value.location);
+	const latitude = numberOrNull(location.latitude);
+	const longitude = numberOrNull(location.longitude);
+	const primaryType = firstNonBlank(value.primaryType, ...(Array.isArray(value.types) ? value.types : []));
+	const name = firstNonBlank(displayName.text, value.name);
+	if (!name && !primaryType) return null;
+	return {
+		name,
+		primaryType,
+		categoryLabel: surroundingPlaceCategoryLabel(primaryType),
+		formattedAddress: stringOrBlank(value.formattedAddress),
+		latitude,
+		longitude,
+		distanceM:
+			latitude !== null && longitude !== null
+				? Math.round(distanceMetersBetween(originLatitude, originLongitude, latitude, longitude))
+				: null,
+		googleMapsUri: stringOrBlank(value.googleMapsUri),
+	};
+}
+
+function surroundingPlaceCategoryLabel(primaryType: string): string {
+	if (/school/.test(primaryType)) return "学校候補";
+	if (/hospital|doctor|pharmacy/.test(primaryType)) return "病院候補";
+	if (/train_station|transit_station|bus_station/.test(primaryType)) return "駅候補";
+	if (/shopping_mall|supermarket|store|restaurant/.test(primaryType)) return "商業候補";
+	if (/local_government_office|city_hall/.test(primaryType)) return "行政候補";
+	return "周辺施設候補";
+}
+
+function surroundingPlacesEvidence(context: LandSurroundingPlacesContext): string {
+	if (context.status !== "connected") return context.message;
+	const lines = [
+		context.message,
+		`周辺条件接続元: ${context.source}`,
+		...context.places.slice(0, 5).map((place, index) =>
+			[
+				`周辺施設候補${index + 1}: ${place.categoryLabel}`,
+				place.name,
+				place.distanceM !== null ? `入力地点から約${place.distanceM}m` : "",
+				place.formattedAddress,
+				place.googleMapsUri ? `確認リンク=${place.googleMapsUri}` : "",
+			].filter(Boolean).join(" / "),
+		),
+		"注意: Google Places APIの周辺施設候補であり、住宅密集判定ではない。近隣説明リスクは航空写真、ストリートビュー、現地確認で確認。",
+	];
+	return lines.filter(Boolean).join("\n");
+}
+
+async function fetchParcelCadastreContext(
+	latitude: number | null,
+	longitude: number | null,
+): Promise<LandParcelCadastreContext> {
+	const source = "法務省 登記所備付地図データ / G空間情報センター配置済みGeoJSON";
+	if (latitude === null || longitude === null) {
+		return {
+			status: "no-coordinate",
+			source,
+			message: "登記所備付地図データ接続: 未実行（緯度経度なし）",
+			candidates: [],
+		};
+	}
+
+	const urlTexts = uniqueStrings(
+		[
+			...(process.env.MOJ_CHIZU_GEOJSON_URLS || "").split(/[\n,]/),
+			process.env.MOJ_CHIZU_GEOJSON_URL || "",
+		]
+			.map((value) => value.trim())
+			.filter(Boolean),
+	);
+	if (urlTexts.length === 0) {
+		return {
+			status: "no-url",
+			source,
+			message: "登記所備付地図データ接続: 未接続（MOJ_CHIZU_GEOJSON_URLS未設定）",
+			candidates: [],
+		};
+	}
+
+	let readableSourceCount = 0;
+	const candidates: LandParcelCadastreCandidate[] = [];
+	for (const urlText of urlTexts.slice(0, 12)) {
+		let url: URL;
+		try {
+			url = new URL(urlText);
+		} catch {
+			continue;
+		}
+		const body = await fetchJson(url);
+		if (!body) continue;
+		readableSourceCount += 1;
+		for (const feature of geoJsonFeatures(body)) {
+			if (!pointInGeoJsonGeometry(feature.geometry, longitude, latitude)) continue;
+			const candidate = readParcelCadastreCandidate(feature.properties, url.toString());
+			if (candidate) candidates.push(candidate);
+			if (candidates.length >= 5) break;
+		}
+		if (candidates.length >= 5) break;
+	}
+
+	if (candidates.length > 0) {
+		return {
+			status: "connected",
+			source,
+			message: `登記所備付地図データ接続: 取得成功（地番候補${candidates.length}件）`,
+			candidates,
+		};
+	}
+
+	return {
+		status: readableSourceCount > 0 ? "no-result" : "error",
+		source,
+		message:
+			readableSourceCount > 0
+				? "登記所備付地図データ接続: 取得0件（地番候補なし）"
+				: "登記所備付地図データ接続: 取得失敗（配置済みGeoJSONを読み取れません）",
+		candidates: [],
+	};
+}
+
+function readParcelCadastreCandidate(
+	properties: unknown,
+	sourceUrl: string,
+): LandParcelCadastreCandidate | null {
+	const props = readObject(properties);
+	const lotNumber = firstNonBlank(
+		props.地番,
+		props.地番表示,
+		props.筆番,
+		props.chiban,
+		props.Chiban,
+		props.lotNumber,
+		props.LOT_NO,
+	);
+	const municipality = firstNonBlank(
+		props.市区町村名,
+		props.市町村名,
+		props.自治体名,
+		props.city,
+		props.municipality,
+		props.MUNICIPALITY,
+	);
+	const oaza = firstNonBlank(
+		props.大字,
+		props.大字名,
+		props.大字町丁目名,
+		props.oaza,
+		props.OAZA,
+	);
+	const koaza = firstNonBlank(
+		props.小字,
+		props.小字名,
+		props.koaza,
+		props.KOAZA,
+	);
+	if (!lotNumber && !municipality && !oaza && !koaza) return null;
+	return {
+		municipality,
+		oaza,
+		koaza,
+		lotNumber,
+		mapType: firstNonBlank(props.地図種類, props.図郭種別, props.map_type, props.type),
+		accuracy: firstNonBlank(props.精度区分, props.座標系, props.accuracy),
+		sourceUrl,
+		confirmationUrl: "https://www.moj.go.jp/MINJI/minji05_00494.html",
+	};
+}
+
+function parcelCadastreEvidence(context: LandParcelCadastreContext): string {
+	if (context.status !== "connected") return context.message;
+	const lines = [
+		context.message,
+		`登記所備付地図データ接続元: ${context.source}`,
+		...context.candidates.slice(0, 3).map((candidate, index) => {
+			const location = [candidate.municipality, candidate.oaza, candidate.koaza].filter(Boolean).join("");
+			const lot = candidate.lotNumber ? ` ${candidate.lotNumber}` : "";
+			return [
+				`地番候補${index + 1}: ${location}${lot}`.trim(),
+				"筆界候補",
+				`地図種類=${candidate.mapType || "未記載"}`,
+				`精度=${candidate.accuracy || "未記載"}`,
+				`確認リンク=${candidate.confirmationUrl}`,
+			].join(" / ");
+		}),
+		"注意: 地番候補・筆界候補であり、登記確認済みではない。所有者・地目・地積・権利部は登記情報提供サービスまたは法務局で確認。",
+	];
+	return lines.filter(Boolean).join("\n");
+}
+
+async function fetchGsiRoadContext(
+	latitude: number | null,
+	longitude: number | null,
+): Promise<LandGsiRoadContext> {
+	const source = "国土地理院ベクトルタイル提供実験（地図情報・道路中心線）";
+	if (latitude === null || longitude === null) {
+		return {
+			status: "no-coordinate",
+			source,
+			message: "国土地理院道路候補: 未実行（緯度経度なし）",
+			candidates: [],
+		};
+	}
+	if (process.env.GSI_ROAD_TILE_ENABLED === "0") {
+		return {
+			status: "no-result",
+			source,
+			message: "国土地理院道路候補: 未実行（GSI_ROAD_TILE_ENABLED=0）",
+			candidates: [],
+		};
+	}
+
+	const tile = lonLatToTile(longitude, latitude, 16);
+	const tileUrls: URL[] = [];
+	for (let dx = -1; dx <= 1; dx += 1) {
+		for (let dy = -1; dy <= 1; dy += 1) {
+			tileUrls.push(gsiRoadTileUrl(tile.z, tile.x + dx, tile.y + dy));
+		}
+	}
+
+	const candidates: LandGsiRoadCandidate[] = [];
+	for (const url of tileUrls) {
+		const body = await fetchJson(url);
+		if (!body) continue;
+		for (const feature of geoJsonFeatures(body)) {
+			const distanceM = distanceMetersToLineGeometry(feature.geometry, longitude, latitude);
+			if (distanceM === null || distanceM > 40) continue;
+			const candidate = readGsiRoadCandidate(feature.properties, url.toString(), distanceM);
+			if (candidate) candidates.push(candidate);
+		}
+	}
+
+	const nearest = uniqueGsiRoadCandidates(candidates)
+		.sort((a, b) => a.distanceM - b.distanceM)
+		.slice(0, 5);
+	return {
+		status: nearest.length > 0 ? "connected" : "no-result",
+		source,
+		message:
+			nearest.length > 0
+				? `国土地理院道路候補: 取得成功（道路候補${nearest.length}件）`
+				: "国土地理院道路候補: 取得0件（40m圏内の道路中心線候補なし）",
+		candidates: nearest,
+	};
+}
+
+function uniqueGsiRoadCandidates(candidates: LandGsiRoadCandidate[]): LandGsiRoadCandidate[] {
+	const seen = new Set<string>();
+	const unique: LandGsiRoadCandidate[] = [];
+	for (const candidate of candidates) {
+		const key = [
+			candidate.name,
+			candidate.category,
+			candidate.widthRank,
+			Math.round(candidate.distanceM / 5) * 5,
+		].join("|");
+		if (seen.has(key)) continue;
+		seen.add(key);
+		unique.push(candidate);
+	}
+	return unique;
+}
+
+function gsiRoadTileUrl(z: number, x: number, y: number): URL {
+	return new URL(`https://cyberjapandata.gsi.go.jp/xyz/experimental_rdcl/${z}/${x}/${y}.geojson`);
+}
+
+function readGsiRoadCandidate(
+	properties: unknown,
+	sourceUrl: string,
+	distanceM: number,
+): LandGsiRoadCandidate | null {
+	const props = readObject(properties);
+	const widthRank = firstNonBlank(
+		props.rnkWidth,
+		props.vt_rnkwidth,
+		props.幅員区分,
+		props.widthRank,
+		props.Width,
+		props.width,
+	);
+	const name = firstNonBlank(props.name, props.道路名, props.routeName, props.路線名);
+	const category = firstNonBlank(props.rdCtg, props.vt_rdctg, props.道路分類, props.category);
+	if (!name && !category && !widthRank) return null;
+	return {
+		name,
+		category,
+		widthRank,
+		widthEstimateM: estimateRoadWidthM(widthRank),
+		distanceM: Math.round(distanceM),
+		sourceUrl,
+	};
+}
+
+function gsiRoadEvidence(context: LandGsiRoadContext, address = ""): string {
+	const roadLedgerText = roadLedgerConfirmationEvidence(address);
+	if (context.status !== "connected") return context.message;
+	const lines = [
+		context.message,
+		`国土地理院道路候補接続元: ${context.source}`,
+		...context.candidates.slice(0, 3).map((candidate, index) => {
+			const widthEstimate =
+				candidate.widthEstimateM !== null ? `幅員推定=約${candidate.widthEstimateM.toFixed(1)}m` : "幅員推定=未算出";
+			return [
+				`道路候補${index + 1}: ${candidate.name || "名称未記載"}`,
+				candidate.category ? `道路分類=${candidate.category}` : "道路分類=未記載",
+				`入力地点から約${candidate.distanceM}m`,
+				candidate.widthRank ? `幅員区分=${candidate.widthRank}` : "幅員区分=未記載",
+				widthEstimate,
+				"道路台帳で確認",
+			].join(" / ");
+		}),
+		roadLedgerText,
+		"注意: 国土地理院の道路中心線と幅員区分からの道路候補・幅員推定であり、接道成立、道路種別、道路幅員確定、大型車搬入可否の証明ではありません。道路台帳・建築指導課・土木事務所で確認。",
+	];
+	return lines.filter(Boolean).join("\n");
+}
+
+function roadLedgerConfirmationEvidence(address: string): string {
+	const municipality = municipalityFromAddress(address);
+	const target = municipality || "所在地の市区町村";
+	const searchUrl = roadLedgerSearchUrl(target);
+	return [
+		`道路台帳確認先: ${target} 道路管理課・建築指導課・土木事務所`,
+		"確認事項: 幅員、道路種別、建築基準法道路、接道義務、大型車搬入",
+		`検索リンク=${searchUrl}`,
+		"注意: 検索リンクは確認入口であり、公式回答ではない",
+	].join(" / ");
+}
+
+function roadLedgerConfirmationQuickEvidence(address: string): string {
+	const municipality = municipalityFromAddress(address);
+	const target = municipality || "所在地の市区町村";
+	return [
+		`道路台帳確認先: ${target} 道路管理課・建築指導課・土木事務所`,
+		"建築基準法道路",
+		"検索リンク=https://www.google.com/search",
+	].join(" / ");
+}
+
+function municipalityFromAddress(address: string): string {
+	const normalized = address.replace(/\s+/g, "");
+	if (!normalized) return "";
+	const withoutPrefecture = normalized.replace(/^.*?[都道府県]/, "");
+	const match = withoutPrefecture.match(/^(.+?(?:市|区|町|村))/);
+	return match?.[1] || "";
+}
+
+function roadLedgerSearchUrl(target: string): string {
+	const query = `${target} 道路台帳 幅員 建築基準法道路`;
+	return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+}
+
+async function fetchGridCapacityContext(powerArea: string): Promise<LandGridCapacityContext> {
+	const normalizedPowerArea = powerArea || "未確認";
+	const source = "資源エネルギー庁 / OCCTO / 各送配電会社の系統空容量公開情報";
+	const officialLinks = gridCapacityOfficialLinks(normalizedPowerArea);
+	const urlTexts = gridCapacityPublicUrls();
+	if (urlTexts.length === 0) {
+		return {
+			status: "no-url",
+			source,
+			message: `系統空き確認: 公表値候補未取得（GRID_CAPACITY_PUBLIC_JSON_URLS未設定）。${gridCapacityLinkLabels(officialLinks)}で確認。接続可否確定ではない。`,
+			powerArea: normalizedPowerArea,
+			officialLinks,
+			records: [],
+		};
+	}
+
+	const records: LandGridCapacityRecord[] = [];
+	for (const urlText of urlTexts) {
+		let url: URL;
+		try {
+			url = new URL(urlText);
+		} catch {
+			continue;
+		}
+		const body = await fetchJson(url);
+		for (const item of gridCapacityRecords(body)) {
+			const record = readGridCapacityRecord(item, url.toString());
+			if (record && powerAreaMatchesGridCapacity(record, normalizedPowerArea)) {
+				records.push(record);
+			}
+		}
+	}
+	const uniqueRecords = uniqueGridCapacityRecords(records).slice(0, 5);
+	return {
+		status: uniqueRecords.length > 0 ? "connected" : "no-result",
+		source,
+		message:
+			uniqueRecords.length > 0
+				? `系統空き確認: 公表値候補${uniqueRecords.length}件（接続可否確定ではない）`
+				: `系統空き確認: 公表値候補0件。${gridCapacityLinkLabels(officialLinks)}と接続検討で確認。接続可否確定ではない。`,
+		powerArea: normalizedPowerArea,
+		officialLinks,
+		records: uniqueRecords,
+	};
+}
+
+function gridCapacityPublicUrls(): string[] {
+	const values = [
+		process.env.GRID_CAPACITY_PUBLIC_JSON_URLS || "",
+		process.env.GRID_CAPACITY_PUBLIC_JSON || "",
+		process.env.GRID_CAPACITY_PUBLIC_JSON_URL || "",
+	];
+	return uniqueStrings(
+		values
+			.flatMap((value) => value.split(/[\n,]/))
+			.map((value) => value.trim())
+			.filter(Boolean),
+	);
+}
+
+function gridCapacityOfficialLinks(powerArea: string): LandGridCapacityOfficialLink[] {
+	const links: LandGridCapacityOfficialLink[] = [
+		{
+			label: "資源エネルギー庁 系統情報公表ページ",
+			url: "https://www.enecho.meti.go.jp/category/saving_and_new/saiene/grid/07_map.html",
+		},
+		{
+			label: "OCCTO/電力広域的運営推進機関 空き容量マップリンク集",
+			url: "https://www.occto.or.jp/access/link/mapping.html",
+		},
+	];
+	if (/中部/.test(powerArea)) {
+		links.push({
+			label: "中部電力パワーグリッド 系統空容量・予想潮流マッピング",
+			url: "https://powergrid.chuden.co.jp/goannai/hatsuden_kouri/takuso_kyokyu/rule/map/",
+		});
+	}
+	return links;
+}
+
+function gridCapacityLinkLabels(links: LandGridCapacityOfficialLink[]): string {
+	return links.map((link) => link.label).join(" / ");
+}
+
+function gridCapacityRecords(body: unknown | null): Array<Record<string, unknown>> {
+	if (Array.isArray(body)) return objectArray(body);
+	const root = readObject(body);
+	return objectArray(root.data || root.Data || root.results || root.result || root.items || root.features);
+}
+
+function readGridCapacityRecord(value: Record<string, unknown>, fallbackSourceUrl: string): LandGridCapacityRecord | null {
+	const props = readObject(value.properties || value);
+	const facilityName = firstNonBlank(
+		props.facilityName,
+		props.substationName,
+		props.name,
+		props.設備名,
+		props.変電所名,
+		props.系統名,
+	);
+	const operator = firstNonBlank(props.operator, props.powerGrid, props.company, props.送配電会社, props.会社名);
+	const powerArea = firstNonBlank(props.powerArea, props.area, gridCapacityPowerArea(props), operator);
+	const availableCapacityMw =
+		numberFromUnknown(props.availableCapacityMw) ??
+		numberFromUnknown(props.availableCapacityMW) ??
+		numberFromUnknown(props.availableCapacity) ??
+		numberFromUnknown(props.空容量MW) ??
+		numberFromUnknown(props.空容量) ??
+		numberFromUnknown(props.capacityMw);
+	const voltageKv =
+		numberFromUnknown(props.voltageKv) ??
+		numberFromUnknown(props.voltageKV) ??
+		numberFromUnknown(props.voltage) ??
+		numberFromUnknown(props.電圧kV) ??
+		numberFromUnknown(props.電圧);
+	const status = firstNonBlank(props.status, props.状態, props.空容量状態, props.constraintStatus);
+	const nMinusOne = firstNonBlank(props.nMinusOne, props.N1, props["N-1"], props.N_MINUS_ONE, props.備考);
+	const updatedAt = firstNonBlank(props.updatedAt, props.updateDate, props.更新日, props.公表日);
+	const sourceUrl = firstNonBlank(props.sourceUrl, props.url, props.公式リンク, props.link) || fallbackSourceUrl;
+	if (!facilityName && !operator && availableCapacityMw === null && !status) return null;
+	return {
+		powerArea,
+		operator,
+		facilityName,
+		voltageKv,
+		availableCapacityMw,
+		status,
+		nMinusOne,
+		updatedAt,
+		sourceUrl,
+	};
+}
+
+function gridCapacityPowerArea(props: Record<string, unknown>): string {
+	return firstNonBlank(props.電力エリア, props.供給エリア, props.エリア);
+}
+
+function powerAreaMatchesGridCapacity(record: LandGridCapacityRecord, powerArea: string): boolean {
+	const areaKey = gridCapacityAreaKey(powerArea);
+	if (!areaKey) return true;
+	return new RegExp(areaKey).test([record.powerArea, record.operator].join(" "));
+}
+
+function gridCapacityAreaKey(powerArea: string): string {
+	if (/中部/.test(powerArea)) return "中部";
+	if (/東京/.test(powerArea)) return "東京";
+	if (/関西/.test(powerArea)) return "関西";
+	if (/九州/.test(powerArea)) return "九州";
+	if (/北海道/.test(powerArea)) return "北海道";
+	if (/東北/.test(powerArea)) return "東北";
+	if (/北陸/.test(powerArea)) return "北陸";
+	if (/中国/.test(powerArea)) return "中国";
+	if (/四国/.test(powerArea)) return "四国";
+	if (/沖縄/.test(powerArea)) return "沖縄";
+	return "";
+}
+
+function uniqueGridCapacityRecords(records: LandGridCapacityRecord[]): LandGridCapacityRecord[] {
+	const seen = new Set<string>();
+	const unique: LandGridCapacityRecord[] = [];
+	for (const record of records) {
+		const key = [
+			record.operator,
+			record.facilityName,
+			record.voltageKv ?? "",
+			record.availableCapacityMw ?? "",
+			record.updatedAt,
+		].join("|");
+		if (seen.has(key)) continue;
+		seen.add(key);
+		unique.push(record);
+	}
+	return unique;
+}
+
+function gridCapacityEvidence(context: LandGridCapacityContext): string {
+	if (context.status !== "connected") {
+		return [
+			context.message,
+			`系統空き確認元: ${context.source}`,
+			`公式確認先: ${context.officialLinks.map((link) => `${link.label} ${link.url}`).join(" / ")}`,
+			"注意: 空容量マップの表示は公表値候補であり、接続可否確定ではない。送配電会社の接続検討で受電地点、連系制約、N-1電制、工事費負担金を確認。",
+		].join("\n");
+	}
+	const lines = [
+		context.message,
+		`系統空き確認元: ${context.source}`,
+		`公式確認先: ${context.officialLinks.map((link) => `${link.label} ${link.url}`).join(" / ")}`,
+		...context.records.slice(0, 3).map((record, index) => {
+			const capacity =
+				record.availableCapacityMw !== null
+					? `空容量 ${record.availableCapacityMw.toLocaleString("ja-JP", { maximumFractionDigits: 3 })}MW`
+					: "空容量 未記載";
+			return [
+				`公表値候補${index + 1}: ${record.facilityName || "設備名未記載"}`,
+				record.operator || "送配電会社未記載",
+				record.voltageKv !== null ? `${record.voltageKv}kV` : "電圧未記載",
+				capacity,
+				record.status ? `状態=${record.status}` : "",
+				record.nMinusOne || "N-1電制は接続検討で確認",
+				record.updatedAt ? `更新=${record.updatedAt}` : "",
+				`公式リンク=${record.sourceUrl}`,
+			].filter(Boolean).join(" / ");
+		}),
+		"注意: 公表値候補であり、接続可否確定ではない。送配電会社の接続検討、受電地点、連系制約、N-1電制、工事費負担金で確認。",
+	];
+	return lines.filter(Boolean).join("\n");
+}
+
+function estimateRoadWidthM(value: string): number | null {
+	const text = normalizeDigits(value);
+	if (!text) return null;
+	const rangeMatch = text.match(/(\d+(?:\.\d+)?)\s*m?\s*以上\s*(\d+(?:\.\d+)?)\s*m?\s*未満/i);
+	if (rangeMatch) return (Number(rangeMatch[1]) + Number(rangeMatch[2])) / 2;
+	const underMatch = text.match(/(\d+(?:\.\d+)?)\s*m?\s*未満/i);
+	if (underMatch) return Number(underMatch[1]) / 2;
+	const overMatch = text.match(/(\d+(?:\.\d+)?)\s*m?\s*以上/i);
+	if (overMatch) return Number(overMatch[1]);
+	const explicitMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:m|メートル)/i);
+	if (explicitMatch) return Number(explicitMatch[1]);
+	const code = Number(text);
+	if (code === 1) return 1.5;
+	if (code === 2) return 4.25;
+	if (code === 3) return 9.25;
+	if (code === 4) return 16.25;
+	if (code === 5) return 19.5;
+	return null;
+}
+
+async function fetchReinfolibContext(
+	latitude: number | null,
+	longitude: number | null,
+	areaTsubo: number | null,
+): Promise<LandReinfolibContext> {
+	const source = "国土交通省 不動産情報ライブラリAPI";
+	if (latitude === null || longitude === null) {
+		return {
+			status: "no-coordinate",
+			source,
+			message: "不動産情報ライブラリ接続: 未実行（緯度経度なし）",
+			landPrice: null,
+			zoning: null,
+			hazards: [],
+			transactionSummary: null,
+			referencePriceRange: "",
+		};
+	}
+	const key =
+		process.env.REINFOLIB_API_KEY ||
+		process.env.REAL_ESTATE_LIBRARY_API_KEY ||
+		process.env.MLIT_REINFOLIB_API_KEY ||
+		"";
+	if (!key) {
+		return {
+			status: "no-token",
+			source,
+			message: "不動産情報ライブラリ接続: 未接続（REINFOLIB_API_KEY未設定）",
+			landPrice: null,
+			zoning: null,
+			hazards: [],
+			transactionSummary: null,
+			referencePriceRange: "",
+		};
+	}
+
+	const tile = lonLatToTile(longitude, latitude, 15);
+	const headers = { "Ocp-Apim-Subscription-Key": key };
+	const landPriceYear = process.env.REINFOLIB_LAND_PRICE_YEAR || String(new Date().getFullYear() - 1);
+	const [priceBody, zoningBody, disasterBody, floodBody, sedimentBody] = await Promise.all([
+		fetchJsonWithHeaders(
+			reinfolibUrl("XPT002", {
+				response_format: "geojson",
+				z: String(tile.z),
+				x: String(tile.x),
+				y: String(tile.y),
+				year: landPriceYear,
+			}),
+			headers,
+		),
+		fetchJsonWithHeaders(
+			reinfolibUrl("XKT002", {
+				response_format: "geojson",
+				z: String(tile.z),
+				x: String(tile.x),
+				y: String(tile.y),
+			}),
+			headers,
+		),
+		fetchJsonWithHeaders(
+			reinfolibUrl("XKT016", {
+				response_format: "geojson",
+				z: String(tile.z),
+				x: String(tile.x),
+				y: String(tile.y),
+			}),
+			headers,
+		),
+		fetchJsonWithHeaders(
+			reinfolibUrl("XKT026", {
+				response_format: "geojson",
+				z: String(tile.z),
+				x: String(tile.x),
+				y: String(tile.y),
+			}),
+			headers,
+		),
+		fetchJsonWithHeaders(
+			reinfolibUrl("XKT029", {
+				response_format: "geojson",
+				z: String(tile.z),
+				x: String(tile.x),
+				y: String(tile.y),
+			}),
+			headers,
+		),
+	]);
+	const landPrice = readReinfolibLandPrice(priceBody, latitude, longitude);
+	const zoning = readReinfolibZoning(zoningBody, latitude, longitude);
+	const hazards = [
+		...readReinfolibHazards(disasterBody, latitude, longitude, "XKT016", "災害危険区域"),
+		...readReinfolibHazards(floodBody, latitude, longitude, "XKT026", "洪水浸水想定区域"),
+		...readReinfolibHazards(sedimentBody, latitude, longitude, "XKT029", "土砂災害警戒区域"),
+	];
+	const cityCode = zoning?.cityCode || landPrice?.cityCode || "";
+	const transactionSummary = cityCode
+		? await fetchReinfolibTransactionSummary(cityCode, headers)
+		: null;
+	const referencePriceRange = buildReinfolibReferencePriceRange(
+		areaTsubo,
+		landPrice?.priceYenPerSqm ?? transactionSummary?.medianUnitPriceYenPerSqm ?? null,
+	);
+	const hasAnyResult = Boolean(
+		landPrice || zoning || hazards.length > 0 || transactionSummary || referencePriceRange,
+	);
+	return {
+		status: hasAnyResult ? "connected" : "no-result",
+		source,
+		message: hasAnyResult
+			? "不動産情報ライブラリ接続: 取得成功"
+			: "不動産情報ライブラリ接続: 取得0件",
+		landPrice,
+		zoning,
+		hazards,
+		transactionSummary,
+		referencePriceRange,
+	};
+}
+
+function reinfolibUrl(apiId: string, params: Record<string, string>): URL {
+	const url = new URL(`https://www.reinfolib.mlit.go.jp/ex-api/external/${apiId}`);
+	for (const [key, value] of Object.entries(params)) {
+		if (value) url.searchParams.set(key, value);
+	}
+	return url;
+}
+
+function lonLatToTile(longitude: number, latitude: number, z: number): { z: number; x: number; y: number } {
+	const latRad = degreesToRadians(latitude);
+	const scale = 2 ** z;
+	const x = Math.floor(((longitude + 180) / 360) * scale);
+	const y = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * scale);
+	return { z, x, y };
+}
+
+function readReinfolibLandPrice(
+	body: unknown | null,
+	latitude: number,
+	longitude: number,
+): LandReinfolibPricePoint | null {
+	const features = geoJsonFeatures(body);
+	let nearest: LandReinfolibPricePoint | null = null;
+	for (const feature of features) {
+		const props = readObject(feature.properties);
+		const coordinates = pointCoordinates(feature.geometry);
+		const distanceM = coordinates
+			? Math.round(distanceMetersBetween(latitude, longitude, coordinates.latitude, coordinates.longitude))
+			: null;
+		const price: LandReinfolibPricePoint = {
+			cityCode: stringOrBlank(props.city_code),
+			targetYear: stringOrBlank(props.target_year_name_ja),
+			useCategory: stringOrBlank(props.use_category_name_ja),
+			location: stringOrBlank(props.location_number_ja) || stringOrBlank(props.place_name_ja),
+			priceYenPerSqm: yenNumber(props.u_current_years_price_ja),
+			yearOnYearChangeRate: stringOrBlank(props.year_on_year_change_rate),
+			distanceM,
+		};
+		if (!price.priceYenPerSqm && !price.location) continue;
+		if (!nearest || (price.distanceM ?? Number.POSITIVE_INFINITY) < (nearest.distanceM ?? Number.POSITIVE_INFINITY)) {
+			nearest = price;
+		}
+	}
+	return nearest;
+}
+
+function readReinfolibZoning(
+	body: unknown | null,
+	latitude: number,
+	longitude: number,
+): LandReinfolibZoning | null {
+	for (const feature of geoJsonFeatures(body)) {
+		if (!pointInGeoJsonGeometry(feature.geometry, longitude, latitude)) continue;
+		const props = readObject(feature.properties);
+		return {
+			cityCode: stringOrBlank(props.city_code),
+			cityName: stringOrBlank(props.city_name),
+			useArea: stringOrBlank(props.use_area_ja),
+			buildingCoverageRatio: stringOrBlank(props.u_building_coverage_ratio_ja),
+			floorAreaRatio: stringOrBlank(props.u_floor_area_ratio_ja),
+		};
+	}
+	return null;
+}
+
+function readReinfolibHazards(
+	body: unknown | null,
+	latitude: number,
+	longitude: number,
+	apiId: string,
+	label: string,
+): LandReinfolibHazardRisk[] {
+	return geoJsonFeatures(body)
+		.filter((feature) => pointInGeoJsonGeometry(feature.geometry, longitude, latitude))
+		.map((feature) => ({
+			apiId,
+			label,
+			detail: reinfolibHazardDetail(readObject(feature.properties)),
+		}));
+}
+
+async function fetchReinfolibTransactionSummary(
+	cityCode: string,
+	headers: Record<string, string>,
+): Promise<LandReinfolibTransactionSummary | null> {
+	const year = process.env.REINFOLIB_TRANSACTION_YEAR || String(new Date().getFullYear() - 1);
+	const body = await fetchJsonWithHeaders(
+		reinfolibUrl("XIT001", {
+			year,
+			priceClassification: "01",
+			city: cityCode,
+			language: "ja",
+		}),
+		headers,
+	);
+	const records = reinfolibRecords(body).filter((item) => /土地/.test(stringOrBlank(item.Type)));
+	if (records.length === 0) return null;
+	const unitPrices = records
+		.map((item) => {
+			const unitPrice = yenNumber(item.UnitPrice);
+			if (unitPrice) return unitPrice;
+			const tradePrice = yenNumber(item.TradePrice);
+			const area = numberFromUnknown(item.Area);
+			return tradePrice && area && area > 0 ? Math.round(tradePrice / area) : null;
+		})
+		.filter((value): value is number => value !== null && Number.isFinite(value) && value > 0)
+		.sort((a, b) => a - b);
+	const sampleDistricts = uniqueStrings(records.map((item) => stringOrBlank(item.DistrictName)).filter(Boolean)).slice(0, 3);
+	return {
+		cityCode,
+		count: records.length,
+		medianUnitPriceYenPerSqm: medianNumber(unitPrices),
+		sampleDistricts,
+	};
+}
+
+function reinfolibEvidence(context: LandReinfolibContext): string {
+	if (context.status !== "connected") return context.message;
+	const lines = [context.message, `不動産情報ライブラリ接続元: ${context.source}`];
+	if (context.landPrice) {
+		const price = context.landPrice;
+		lines.push(
+			[
+				"地価公示・地価調査:",
+				price.priceYenPerSqm !== null ? `${price.priceYenPerSqm.toLocaleString("ja-JP")}円/㎡` : "",
+				price.targetYear ? `（${price.targetYear}` : "",
+				price.useCategory ? ` / ${price.useCategory}` : "",
+				price.location ? ` / ${price.location}` : "",
+				price.distanceM !== null ? ` / 入力地点から約${price.distanceM}m` : "",
+				price.targetYear ? "）" : "",
+			].join(""),
+		);
+		if (price.yearOnYearChangeRate) lines.push(`地価変動率: ${price.yearOnYearChangeRate}%`);
+	}
+	if (context.referencePriceRange) lines.push(`参考価格レンジ: ${context.referencePriceRange}（売買価格確定ではない）`);
+	if (context.zoning) {
+		if (context.zoning.useArea) lines.push(`用途地域: ${context.zoning.useArea}`);
+		if (context.zoning.buildingCoverageRatio) lines.push(`建蔽率: ${context.zoning.buildingCoverageRatio}`);
+		if (context.zoning.floorAreaRatio) lines.push(`容積率: ${context.zoning.floorAreaRatio}`);
+		if (context.zoning.cityName) lines.push(`都市計画確認自治体: ${context.zoning.cityName}`);
+	}
+	if (context.hazards.length > 0) {
+		lines.push(
+			`防災一次確認: ${context.hazards
+				.map((risk) => `${risk.label}${risk.detail ? `（${risk.detail}）` : ""}`)
+				.join(" / ")}`,
+		);
+	} else {
+		lines.push("防災一次確認: 災害危険区域・洪水浸水想定区域・土砂災害警戒区域はAPI応答内で重なり未検出（安全確定ではない）");
+	}
+	if (context.transactionSummary) {
+		const summary = context.transactionSummary;
+		lines.push(
+			[
+				`同一市区町村の取引事例候補: ${summary.count}件`,
+				summary.medianUnitPriceYenPerSqm !== null
+					? `㎡単価中央値 約${summary.medianUnitPriceYenPerSqm.toLocaleString("ja-JP")}円/㎡`
+					: "",
+				summary.sampleDistricts.length > 0 ? `地区例: ${summary.sampleDistricts.join("、")}` : "",
+			].filter(Boolean).join(" / "),
+		);
+	}
+	lines.push("注意: 不動産情報ライブラリの価格・都市計画・防災情報は一次確認であり、売買価格、接道、建築可否、安全性の確定ではありません。");
+	return lines.filter(Boolean).join("\n");
+}
+
+function buildReinfolibReferencePriceRange(areaTsubo: number | null, unitPriceYenPerSqm: number | null): string {
+	if (!areaTsubo || areaTsubo <= 0 || !unitPriceYenPerSqm || unitPriceYenPerSqm <= 0) return "";
+	const areaSqm = areaTsubo * 3.305785;
+	const base = areaSqm * unitPriceYenPerSqm;
+	return `${formatRoughYen(base * 0.7)}〜${formatRoughYen(base * 1.3)}`;
+}
+
+function formatRoughYen(value: number): string {
+	if (value >= 100_000_000) return `約${(value / 100_000_000).toFixed(1)}億円`;
+	return `約${Math.round(value / 10_000).toLocaleString("ja-JP")}万円`;
+}
+
+function geoJsonFeatures(body: unknown | null): Array<{ properties: unknown; geometry: unknown }> {
+	const root = readObject(body);
+	if (root.type === "Feature") {
+		return [{ properties: root.properties, geometry: root.geometry }];
+	}
+	return objectArray(root.features).map((feature) => ({
+		properties: feature.properties,
+		geometry: feature.geometry,
+	}));
+}
+
+function pointCoordinates(geometry: unknown): { latitude: number; longitude: number } | null {
+	const geom = readObject(geometry);
+	if (geom.type !== "Point") return null;
+	const coordinates = Array.isArray(geom.coordinates) ? geom.coordinates : [];
+	const longitude = numberOrNull(coordinates[0]);
+	const latitude = numberOrNull(coordinates[1]);
+	return latitude !== null && longitude !== null ? { latitude, longitude } : null;
+}
+
+function pointInGeoJsonGeometry(geometry: unknown, longitude: number, latitude: number): boolean {
+	const geom = readObject(geometry);
+	if (geom.type === "Point") {
+		const point = pointCoordinates(geometry);
+		return Boolean(point && distanceMetersBetween(latitude, longitude, point.latitude, point.longitude) <= 25);
+	}
+	if (geom.type === "Polygon") {
+		return polygonContainsPoint(geom.coordinates, longitude, latitude);
+	}
+	if (geom.type === "MultiPolygon") {
+		const polygons = Array.isArray(geom.coordinates) ? geom.coordinates : [];
+		return polygons.some((polygon) => polygonContainsPoint(polygon, longitude, latitude));
+	}
+	return false;
+}
+
+function distanceMetersToLineGeometry(
+	geometry: unknown,
+	longitude: number,
+	latitude: number,
+): number | null {
+	const geom = readObject(geometry);
+	if (geom.type === "LineString") {
+		return distanceMetersToLineString(geom.coordinates, longitude, latitude);
+	}
+	if (geom.type === "MultiLineString") {
+		const lines = Array.isArray(geom.coordinates) ? geom.coordinates : [];
+		const distances = lines
+			.map((line) => distanceMetersToLineString(line, longitude, latitude))
+			.filter((value): value is number => value !== null);
+		return distances.length > 0 ? Math.min(...distances) : null;
+	}
+	return null;
+}
+
+function distanceMetersToLineString(
+	coordinates: unknown,
+	longitude: number,
+	latitude: number,
+): number | null {
+	const points = Array.isArray(coordinates) ? coordinates : [];
+	let nearest: number | null = null;
+	for (let i = 1; i < points.length; i += 1) {
+		const previous = lonLatPoint(points[i - 1]);
+		const current = lonLatPoint(points[i]);
+		if (!previous || !current) continue;
+		const distanceM = distanceMetersToSegment(longitude, latitude, previous.longitude, previous.latitude, current.longitude, current.latitude);
+		nearest = nearest === null ? distanceM : Math.min(nearest, distanceM);
+	}
+	return nearest;
+}
+
+function lonLatPoint(value: unknown): { longitude: number; latitude: number } | null {
+	const coordinates = Array.isArray(value) ? value : [];
+	const longitude = numberOrNull(coordinates[0]);
+	const latitude = numberOrNull(coordinates[1]);
+	return longitude !== null && latitude !== null ? { longitude, latitude } : null;
+}
+
+function distanceMetersToSegment(
+	pointLongitude: number,
+	pointLatitude: number,
+	startLongitude: number,
+	startLatitude: number,
+	endLongitude: number,
+	endLatitude: number,
+): number {
+	const lonScale = Math.cos(degreesToRadians(pointLatitude)) * 111_320;
+	const latScale = 111_320;
+	const px = 0;
+	const py = 0;
+	const sx = (startLongitude - pointLongitude) * lonScale;
+	const sy = (startLatitude - pointLatitude) * latScale;
+	const ex = (endLongitude - pointLongitude) * lonScale;
+	const ey = (endLatitude - pointLatitude) * latScale;
+	const dx = ex - sx;
+	const dy = ey - sy;
+	const lengthSquared = dx * dx + dy * dy;
+	if (lengthSquared === 0) return Math.hypot(px - sx, py - sy);
+	const t = Math.max(0, Math.min(1, ((px - sx) * dx + (py - sy) * dy) / lengthSquared));
+	const nearestX = sx + t * dx;
+	const nearestY = sy + t * dy;
+	return Math.hypot(px - nearestX, py - nearestY);
+}
+
+function polygonContainsPoint(polygon: unknown, longitude: number, latitude: number): boolean {
+	const rings = Array.isArray(polygon) ? polygon : [];
+	const outer = rings[0];
+	if (!ringContainsPoint(outer, longitude, latitude)) return false;
+	return !rings.slice(1).some((ring) => ringContainsPoint(ring, longitude, latitude));
+}
+
+function ringContainsPoint(ring: unknown, longitude: number, latitude: number): boolean {
+	const points = Array.isArray(ring) ? ring : [];
+	let inside = false;
+	for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+		const current = Array.isArray(points[i]) ? points[i] : [];
+		const previous = Array.isArray(points[j]) ? points[j] : [];
+		const xi = numberOrNull(current[0]);
+		const yi = numberOrNull(current[1]);
+		const xj = numberOrNull(previous[0]);
+		const yj = numberOrNull(previous[1]);
+		if (xi === null || yi === null || xj === null || yj === null) continue;
+		const intersects = yi > latitude !== yj > latitude && longitude < ((xj - xi) * (latitude - yi)) / (yj - yi) + xi;
+		if (intersects) inside = !inside;
+	}
+	return inside;
+}
+
+function reinfolibHazardDetail(props: Record<string, unknown>): string {
+	return [
+		stringOrBlank(props.A48_005_ja),
+		stringOrBlank(props.A48_007_name_ja),
+		stringOrBlank(props.A48_008_ja),
+		stringOrBlank(props.A31a_202),
+		stringOrBlank(props.A31a_205) ? `浸水深ランク${stringOrBlank(props.A31a_205)}` : "",
+		stringOrBlank(props.A33_001),
+		stringOrBlank(props.A33_005_ja),
+	]
+		.filter(Boolean)
+		.join(" / ");
+}
+
+function reinfolibRecords(body: unknown | null): Array<Record<string, unknown>> {
+	if (Array.isArray(body)) return objectArray(body);
+	const root = readObject(body);
+	return objectArray(root.data || root.Data || root.results || root.result);
+}
+
+function yenNumber(value: unknown): number | null {
+	if (typeof value === "number" && Number.isFinite(value)) return value;
+	if (typeof value !== "string") return null;
+	const match = value.replace(/,/g, "").match(/\d+(?:\.\d+)?/);
+	return match ? Number(match[0]) : null;
+}
+
+function numberFromUnknown(value: unknown): number | null {
+	if (typeof value === "number" && Number.isFinite(value)) return value;
+	if (typeof value !== "string") return null;
+	const normalized = value.replace(/,/g, "").trim();
+	if (!normalized) return null;
+	const number = Number(normalized);
+	return Number.isFinite(number) ? number : null;
+}
+
+function medianNumber(values: number[]): number | null {
+	if (values.length === 0) return null;
+	const middle = Math.floor(values.length / 2);
+	return values.length % 2 === 1
+		? values[middle]!
+		: Math.round((values[middle - 1]! + values[middle]!) / 2);
+}
+
+async function fetchJsonWithHeaders(
+	url: URL,
+	headers: Record<string, string>,
+): Promise<unknown | null> {
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 8000);
+	try {
+		const response = await fetch(url, { headers, signal: controller.signal });
+		if (!response.ok) return null;
+		return response.json();
+	} catch {
+		return null;
+	} finally {
+		clearTimeout(timeout);
+	}
+}
+
+async function fetchJsonPostWithHeaders(
+	url: URL,
+	headers: Record<string, string>,
+	body: Record<string, unknown>,
+): Promise<unknown | null> {
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 8000);
+	try {
+		const response = await fetch(url, {
+			method: "POST",
+			headers,
+			body: JSON.stringify(body),
+			signal: controller.signal,
+		});
+		if (!response.ok) return null;
+		return response.json();
+	} catch {
+		return null;
+	} finally {
+		clearTimeout(timeout);
+	}
+}
+
+async function geocodeLandAddress(
+	address: string,
+	key: string,
+): Promise<{ latitude: number; longitude: number } | null> {
+	const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+	url.searchParams.set("address", address);
+	url.searchParams.set("language", "ja");
+	url.searchParams.set("region", "jp");
+	url.searchParams.set("key", key);
+	const body = await fetchJson(url);
+	const results = objectArray((body as Record<string, unknown> | null)?.results);
+	const first = results[0];
+	const location = readObject(readObject(first?.geometry).location);
+	const latitude = numberOrNull(location.lat);
+	const longitude = numberOrNull(location.lng);
+	return latitude !== null && longitude !== null ? { latitude, longitude } : null;
+}
+
+async function fetchGoogleRoadAccess(
+	latitude: number,
+	longitude: number,
+	key: string,
+): Promise<string> {
+	const url = new URL("https://roads.googleapis.com/v1/nearestRoads");
+	url.searchParams.set("points", `${latitude},${longitude}`);
+	url.searchParams.set("key", key);
+	const body = await fetchJson(url);
+	const snappedPoints = objectArray((body as Record<string, unknown> | null)?.snappedPoints);
+	if (snappedPoints.length === 0) return "";
+	const placeIds = uniqueStrings(
+		snappedPoints
+			.map((point) => {
+				const placeId = readObject(point).placeId;
+				return typeof placeId === "string" ? placeId : "";
+			})
+			.filter(Boolean),
+	).slice(0, 3);
+	return placeIds.length > 0
+		? `近接道路候補あり（Google Roads placeId: ${placeIds.join(", ")}）。幅員は道路台帳で確認。`
+		: "近接道路候補あり。幅員は道路台帳で確認。";
+}
+
+async function fetchJson(url: URL): Promise<unknown | null> {
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 8000);
+	try {
+		const response = await fetch(url, { signal: controller.signal });
+		if (!response.ok) return null;
+		return response.json();
+	} catch {
+		return null;
+	} finally {
+		clearTimeout(timeout);
+	}
+}
+
+function objectArray(value: unknown): Array<Record<string, unknown>> {
+	return Array.isArray(value)
+		? value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+		: [];
+}
+
+function readObject(value: unknown): Record<string, unknown> {
+	return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function numberOrNull(value: unknown): number | null {
+	return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function stringOrBlank(value: unknown): string {
+	return typeof value === "string" ? value.trim() : "";
+}
+
+function firstNonBlank(...values: unknown[]): string {
+	for (const value of values) {
+		const text = stringOrBlank(value);
+		if (text) return text;
+	}
+	return "";
+}
+
+function normalizeDigits(value: string): string {
+	return value.replace(/[０-９．]/g, (char) =>
+		String.fromCharCode(char.charCodeAt(0) - 0xfee0),
+	);
+}
+
+function buildLandQuickEvidence(mapContext: LandMapContext, address = ""): string {
+	const parts: string[] = [];
+	if (mapContext.googleMapsUrl || mapContext.geocodeSource || mapContext.roadAccess) {
+		parts.push(
+			[
+				"座標化",
+				mapContext.geocodeSource ? `座標取得: ${mapContext.geocodeSource}` : "",
+				mapContext.googleMapsUrl ? `Google Maps: ${mapContext.googleMapsUrl}` : "",
+				mapContext.roadAccess ? "Google Roads: 近接道路候補あり" : "",
+			].filter(Boolean).join(" / "),
+		);
+	}
+	const farmland = mapContext.farmlandNavi.nearest;
+	if (farmland) {
+		const farmlandPolygon = mapContext.farmlandNavi.fieldPolygons[0] ?? null;
+		parts.push(
+			[
+				"農地ナビ接続",
+				"WAGRI農地API",
+				"eMAFF農地ナビ",
+				farmlandPolygon ? "ID付与済み筆ポリゴン取得API v3" : "",
+				farmlandPolygon ? "農地筆ポリゴン候補" : "",
+				farmlandPolygon?.fieldPolygonId ? `筆ポリゴンID: ${farmlandPolygon.fieldPolygonId}` : "",
+				farmlandPolygon?.geometryType ? `農地区画形状候補: ${farmlandPolygon.geometryType}` : farmlandPolygon ? "農地区画形状候補" : "",
+				farmland.landCategory ? `地目: ${farmland.landCategory}` : "",
+				farmland.agriculturalClassification ? `農振法区分: ${farmland.agriculturalClassification}` : "",
+				farmland.cityPlanningClassification ? `都市計画法区分: ${farmland.cityPlanningClassification}` : "",
+				farmland.jurisdictionAgricultureCommitteeName ? `所管農業委員会: ${farmland.jurisdictionAgricultureCommitteeName}` : "",
+			].filter(Boolean).join(" / "),
+		);
+	}
+	const gridRecord = mapContext.gridCapacity.records[0] ?? null;
+	if (gridRecord) {
+		parts.push(
+			[
+				"系統空き確認",
+				"公表値候補",
+				"資源エネルギー庁",
+				"OCCTO/電力広域的運営推進機関",
+				mapContext.gridCapacity.officialLinks.some((link) => /中部/.test(link.label))
+					? "中部電力パワーグリッド 系統空容量・予想潮流マッピング"
+					: "",
+				gridRecord.operator ? `送配電会社: ${gridRecord.operator}` : "",
+				gridRecord.facilityName ? `設備: ${gridRecord.facilityName}` : "",
+				gridRecord.voltageKv !== null ? `${gridRecord.voltageKv}kV` : "",
+				gridRecord.availableCapacityMw !== null
+					? `空容量 ${gridRecord.availableCapacityMw.toLocaleString("ja-JP", { maximumFractionDigits: 3 })}MW`
+					: "",
+				gridRecord.status ? `状態: ${gridRecord.status}` : "",
+				"接続可否確定ではない",
+				"接続検討で確認",
+			].filter(Boolean).join(" / "),
+		);
+	} else {
+		parts.push(
+			[
+				"系統空き確認",
+				"公表値候補未取得",
+				"資源エネルギー庁",
+				"OCCTO/電力広域的運営推進機関",
+				mapContext.gridCapacity.officialLinks.some((link) => /中部/.test(link.label))
+					? "中部電力パワーグリッド 系統空容量・予想潮流マッピング"
+					: "",
+				"接続可否確定ではない",
+				"接続検討で確認",
+			].filter(Boolean).join(" / "),
+		);
+	}
+	if (mapContext.surroundingPlaces.places.length > 0) {
+		const categories = uniqueStrings(
+			mapContext.surroundingPlaces.places.map((place) => place.categoryLabel).filter(Boolean),
+		).slice(0, 4);
+		parts.push(
+			[
+				"周辺条件",
+				"Google Places API",
+				`周辺施設候補: ${categories.join("、")}`,
+				"近隣説明リスクは現地確認",
+				"住宅密集判定ではない",
+			].filter(Boolean).join(" / "),
+		);
+	}
+	const road = mapContext.gsiRoad.candidates[0] ?? null;
+	if (road) {
+		parts.push(
+			[
+				`国土地理院道路候補: ${road.name || "名称未記載"}`,
+				"道路中心線",
+				road.category ? `道路分類=${road.category}` : "",
+				`距離約${road.distanceM}m`,
+				road.widthRank ? `幅員区分=${road.widthRank}` : "",
+				road.widthEstimateM !== null ? `幅員推定=約${road.widthEstimateM.toFixed(1)}m` : "",
+				"道路台帳で確認",
+				roadLedgerConfirmationQuickEvidence(address),
+			].filter(Boolean).join(" / "),
+		);
+	}
+	const parcel = mapContext.parcelCadastre.candidates[0] ?? null;
+	if (parcel) {
+		parts.push(
+			[
+				"登記所備付地図データ接続",
+				`地番候補: ${[parcel.municipality, parcel.oaza, parcel.koaza].filter(Boolean).join("")}${parcel.lotNumber ? ` ${parcel.lotNumber}` : ""}`,
+				"筆界候補",
+				"登記確認済みではない",
+			].join(" / "),
+		);
+	}
+	const reinfolib = mapContext.reinfolib;
+	if (reinfolib.status === "connected") {
+		const reinfolibParts = ["不動産情報ライブラリ接続"];
+		if (reinfolib.landPrice?.priceYenPerSqm !== null && reinfolib.landPrice?.priceYenPerSqm !== undefined) {
+			reinfolibParts.push(`地価公示・地価調査: ${reinfolib.landPrice.priceYenPerSqm.toLocaleString("ja-JP")}円/㎡`);
+		}
+		if (reinfolib.referencePriceRange) {
+			reinfolibParts.push(`参考価格レンジ: ${reinfolib.referencePriceRange}（売買価格確定ではない）`);
+		}
+		if (reinfolib.zoning?.useArea) reinfolibParts.push(`用途地域: ${reinfolib.zoning.useArea}`);
+		if (reinfolib.zoning?.buildingCoverageRatio) reinfolibParts.push(`建蔽率: ${reinfolib.zoning.buildingCoverageRatio}`);
+		if (reinfolib.zoning?.floorAreaRatio) reinfolibParts.push(`容積率: ${reinfolib.zoning.floorAreaRatio}`);
+		if (reinfolib.hazards.length > 0) {
+			reinfolibParts.push(`防災一次確認: ${reinfolib.hazards.map((risk) => risk.label).join(" / ")}`);
+		}
+		if (reinfolib.transactionSummary) {
+			reinfolibParts.push(`同一市区町村の取引事例候補: ${reinfolib.transactionSummary.count}件`);
+		}
+		parts.push(reinfolibParts.join(" / "));
+	}
+	return parts.join(" / ");
+}
+
+async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 	const missing: string[] = [];
 	if (!land.address) missing.push("所在地");
 	if (!land.areaTsubo || land.areaTsubo <= 0) missing.push("面積（坪）");
 
 	const area = land.areaTsubo ?? 0;
-	let score = 42;
-	if (land.address) score += 10;
-	if (area >= 5000) score += 22;
-	else if (area >= 2400) score += 18;
-	else if (area >= 1500) score += 14;
-	else if (area >= 600) score += 9;
-	else if (area >= 300) score += 4;
-	else if (area > 0) score -= 6;
-	if (land.powerArea) score += 6;
-	if (land.landUse) score += 4;
-	if (land.road) score += 5;
-	if (land.farmland) score += 4;
-	if (land.substationDistance) score += 7;
-	if (missing.length > 0) score = Math.min(score, 45);
-
-	score = Math.max(0, Math.min(100, score));
-
-	const overallGrade = score >= 80 ? "A" : score >= 65 ? "B" : "C";
-	const bucket =
-		missing.length > 0
-			? "要確認"
-			: score >= 80
-				? "案件化候補"
-				: score >= 65
-					? "優先確認"
-					: score >= 50
-						? "追加確認"
-						: "見送り候補";
-	const actionBucket = chooseLandActionBucket(land, score, missing.length > 0);
-	const caseStatus =
-		missing.length > 0 || score < 50 ? "未案件化" : "案件化保留";
-	const projectType =
-		area >= 1500
-			? "高圧系統用"
-			: area >= 300
-				? "低圧バルク"
-				: "未判定";
 	const powerArea = land.powerArea || inferPowerAreaFromAddress(land.address) || "未確認";
 	const areaLabel = area > 0 ? `${Math.round(area).toLocaleString("ja-JP")}坪` : "面積未確認";
-	const landRating = score >= 80 ? "◎" : score >= 65 ? "○" : score >= 50 ? "△" : "×";
-	const powerRating =
-		missing.length > 0
-			? "×"
-			: land.substationDistance
-				? score >= 65
-					? "○"
-					: "△"
-				: area >= 1500
-					? "△"
-					: "×";
+	if (missing.length === 0) {
+		const mapContext = await resolveLandMapContext(land);
+		const latitude = land.latitude ?? mapContext.latitude;
+		const longitude = land.longitude ?? mapContext.longitude;
+		const road = land.road || mapContext.roadAccess;
+		const farmlandNavi = mapContext.farmlandNavi;
+		const nearestFarmland = farmlandNavi.nearest;
+		const farmlandNaviText = farmlandNaviEvidence(farmlandNavi);
+		const reinfolibText = reinfolibEvidence(mapContext.reinfolib);
+		const parcelCadastreText = parcelCadastreEvidence(mapContext.parcelCadastre);
+		const gsiRoadText = gsiRoadEvidence(mapContext.gsiRoad, land.address);
+		const gridCapacityText = gridCapacityEvidence(mapContext.gridCapacity);
+		const surroundingPlacesText = surroundingPlacesEvidence(mapContext.surroundingPlaces);
+		const quickEvidence = buildLandQuickEvidence(mapContext, land.address);
+		const farmland = land.farmland || nearestFarmland?.agriculturalClassification || "";
+		const farmlandType = land.farmlandType || nearestFarmland?.landCategory || "";
+		const landUse =
+			land.landUse ||
+			mapContext.reinfolib.zoning?.useArea ||
+			nearestFarmland?.cityPlanningClassification ||
+			"";
+		const treasure: LandTreasureEvaluation = evaluateLandTreasure({
+			name: land.name,
+			address: land.address,
+			areaTsubo: land.areaTsubo,
+			powerArea,
+			landUse,
+			road,
+			farmland,
+			farmlandType,
+			registry: land.registry,
+			nearbyResidentialDistanceM: land.nearbyResidentialDistanceM,
+			nearbyResidentialCheck: land.nearbyResidentialCheck,
+			transmissionLine: land.transmissionLine,
+			latitude,
+			longitude,
+			substationDistanceKm: land.substationDistanceKm,
+		});
+		const mapEvidence = [
+			mapContext.googleMapsUrl ? `Google Maps: ${mapContext.googleMapsUrl}` : "",
+			mapContext.geocodeSource ? `座標取得: ${mapContext.geocodeSource}` : "",
+			mapContext.roadAccess ? `Google道路アクセス: ${mapContext.roadAccess}` : "",
+			surroundingPlacesText,
+			gridCapacityText,
+			gsiRoadText,
+			parcelCadastreText,
+			reinfolibText,
+			farmlandNaviText,
+		].filter(Boolean).join("\n");
+		const investigationGaps = landInvestigationGaps(treasure.blockers);
+		if (investigationGaps.length > 0) {
+			const scout = buildLandScoutReport({
+				land,
+				treasure,
+				mapEvidence,
+				quickEvidence,
+				investigationGaps,
+			});
+			return {
+				overallGrade: "C",
+				score: Math.min(treasure.score, 45),
+				bucket: "要確認",
+				requiresInvestigation: true,
+				investigationGaps,
+				actionBucket: "継続監視",
+				caseStatus: "未案件化",
+				projectType: treasure.projectType,
+				powerArea: treasure.powerArea,
+				landRating: "△",
+				powerRating: treasure.powerRating,
+				roadRating: treasure.roadRating,
+				subsidyRating: "要確認",
+				demandRating: treasure.demandRating,
+				landEvaluation: scout.landEvaluation,
+				powerEvaluation: treasure.powerEvaluation,
+				roadEvaluation: treasure.roadEvaluation,
+				subsidyEvaluation: treasure.subsidyEvaluation,
+				demandEvaluation: treasure.demandEvaluation,
+				nextAction: scout.nextAction,
+				reviewMemo: scout.reviewMemo,
+				nearestSubstationName: treasure.nearestSubstationName,
+				nearestSubstationDistanceKm: treasure.nearestSubstationDistanceKm,
+				nearestSubstationOperator: treasure.nearestSubstationOperator,
+				nearestSubstationGridStatus: treasure.nearestSubstationGridStatus,
+				substationCandidates: treasure.substationCandidates,
+				physicalAiScore: treasure.physicalAiScore,
+				salesAiScore: treasure.salesAiScore,
+				sabcReason: treasure.sabcReason,
+			};
+		}
+		return {
+			overallGrade: treasure.overallGrade,
+			score: treasure.score,
+			bucket: treasure.bucket,
+			actionBucket: treasure.actionBucket,
+			caseStatus: treasure.caseStatus,
+			projectType: treasure.projectType,
+			powerArea: treasure.powerArea,
+			landRating: treasure.landRating,
+			powerRating: treasure.powerRating,
+			roadRating: treasure.roadRating,
+			subsidyRating: treasure.subsidyRating,
+			demandRating: treasure.demandRating,
+			landEvaluation: mapEvidence ? `${treasure.landEvaluation}\n${mapEvidence}` : treasure.landEvaluation,
+			powerEvaluation: mapEvidence ? `${treasure.powerEvaluation}\n${mapEvidence}` : treasure.powerEvaluation,
+			roadEvaluation: mapEvidence ? `${treasure.roadEvaluation}\n${mapEvidence}` : treasure.roadEvaluation,
+			subsidyEvaluation: treasure.subsidyEvaluation,
+			demandEvaluation: treasure.demandEvaluation,
+			nextAction: treasure.nextAction,
+			reviewMemo: mapEvidence ? `${treasure.reviewMemo} / ${mapEvidence.replace(/\n/g, " / ")}` : treasure.reviewMemo,
+			nearestSubstationName: treasure.nearestSubstationName,
+			nearestSubstationDistanceKm: treasure.nearestSubstationDistanceKm,
+			nearestSubstationOperator: treasure.nearestSubstationOperator,
+			nearestSubstationGridStatus: treasure.nearestSubstationGridStatus,
+			substationCandidates: treasure.substationCandidates,
+			physicalAiScore: treasure.physicalAiScore,
+			salesAiScore: treasure.salesAiScore,
+			sabcReason: treasure.sabcReason,
+		};
+	}
+
+	const score = Math.min(45, Math.max(0, 28 + (land.address ? 8 : 0) + (area > 0 ? 8 : 0)));
+	const overallGrade = "C";
+	const bucket = "要確認";
+	const actionBucket = chooseLandActionBucket(land, score, true);
+	const caseStatus = "未案件化";
+	const projectType = area >= 1500 ? "高圧系統用" : area >= 300 ? "低圧バルク" : "未判定";
+	const landRating = "×";
+	const powerRating = "×";
 	const roadRating = chooseRoadRating(land.road);
 	const subsidyRating = "要確認";
 	const demandRating = area >= 1500 ? "あり" : area >= 300 ? "不明" : "なし";
-	const reviewMemo =
-		missing.length > 0
-			? `${missing.join("、")}が不足。評価前に入力を確認してください。`
-			: "AI/Workerによる第一評価。系統、接道、農転、登記は人間確認が前提。";
+	const reviewMemo = `${missing.join("、")}が不足。評価前に入力を確認してください。`;
 
 	return {
 		overallGrade,
@@ -15602,6 +17584,146 @@ function buildLandEvaluation(land: LandInfo): LandEvaluation {
 					: "不足条件を整理し、接道・用途地域・農転/登記・需要地距離を確認してから再評価してください。",
 		reviewMemo,
 	};
+}
+
+function landInvestigationGaps(blockers: string[]): string[] {
+	const gaps: string[] = [];
+	const text = blockers.join("\n");
+	if (/変電所距離/.test(text)) gaps.push("変電所距離・系統空き");
+	if (/接道|大型車|道路/.test(text)) gaps.push("接道幅員・大型車搬入");
+	if (/農地|農転/.test(text)) gaps.push("農地・農転");
+	if (/登記|所有者/.test(text)) gaps.push("登記・所有者");
+	if (/近隣住宅/.test(text)) gaps.push("近隣住宅距離");
+	return uniqueStrings(gaps);
+}
+
+function buildLandScoutReport(input: {
+	land: LandInfo;
+	treasure: LandTreasureEvaluation;
+	mapEvidence: string;
+	quickEvidence: string;
+	investigationGaps: string[];
+}): { landEvaluation: string; nextAction: string; reviewMemo: string } {
+	const { land, treasure, mapEvidence, quickEvidence, investigationGaps } = input;
+	const areaText =
+		land.areaTsubo && land.areaTsubo > 0
+			? `${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪`
+			: "面積未確認";
+	const distanceText =
+		treasure.nearestSubstationDistanceKm !== null
+			? `最寄り変電所まで約${Math.round(treasure.nearestSubstationDistanceKm * 10) / 10}km`
+			: "変電所距離は未確認";
+	const substationText = treasure.nearestSubstationName
+		? `${treasure.nearestSubstationName}（${treasure.nearestSubstationOperator || "電力会社未確認"}）`
+		: "未特定";
+	const substationCandidatesText =
+		treasure.substationCandidates.length > 0
+			? [
+				"変電所候補3件:",
+				...treasure.substationCandidates.map((candidate, index) =>
+					[
+						`${index + 1}. ${candidate.name}`,
+						`${Math.round(candidate.distanceKm * 10) / 10}km`,
+						candidate.operator,
+						`系統=${candidate.gridStatus || "未確認"}`,
+						candidate.voltageKv !== null ? `${candidate.voltageKv}kV` : "電圧未確認",
+						`確認リンク=${candidate.confirmationUrl}`,
+					].join(" / "),
+				),
+			].join("\n")
+			: "変電所候補3件: 未特定（緯度経度なし）";
+	const conclusion =
+		(land.areaTsubo ?? 0) >= 1500
+			? "蓄電池一次候補。ただし本評価前。"
+			: "土地一次候補。ただし本評価前。";
+	const substationCandidateStatus =
+		treasure.substationCandidates.length > 0 ? "変電所候補あり。" : "変電所候補未特定。";
+	const uncheckedStatus = "農地・登記・接道・系統空きは未確認。";
+	const todayActionSummary =
+		"今日やることは、地番確認、農業委員会確認、道路台帳確認、空き容量マップ確認、所有者への売却意向確認。";
+	const rejectionReasons = [
+		"地番・登記・所有者が確認できない",
+		"農業委員会で農地区分または転用見込みを確認できない",
+		"道路台帳で幅員・道路種別・大型車搬入が成立しない",
+		"送配電会社の空き容量・接続検討の前提が合わない",
+		"近隣説明リスクが高く、合意形成の見込みが立たない",
+	];
+	const nextAction = [
+		todayActionSummary,
+		"",
+		"今日やること:",
+		"1. 地番を確認する",
+		"2. 登記情報提供サービスで所有者・地目・地積・権利部を確認する",
+		"3. 農業委員会へ農地区分と転用見込みを確認する",
+		"4. 道路台帳で幅員、道路種別、大型車搬入可否を確認する",
+		"5. 送配電会社の空き容量マップまたは接続検討窓口で系統空きを確認する",
+		"6. Google Places APIの周辺施設候補と現地確認で、学校・病院・駅・住宅密集を含む近隣説明リスクを確認する（住宅密集判定ではない）",
+		"7. 所有者へ売却意向、希望価格、引渡条件を確認する",
+		"",
+		"見送り理由候補:",
+		...rejectionReasons.map((reason) => `- ${reason}`),
+		"",
+		"営業トーク:",
+		"「系統用地として検討できる可能性があるため、地番と売却意向だけ先に確認させてください。」",
+	].join("\n");
+	const confirmationGuide = buildLandOfficialConfirmationGuide(treasure.powerArea);
+	const landEvaluation = [
+		"土地スカウト一次評価",
+		`結論: ${conclusion}`,
+		substationCandidateStatus,
+		uncheckedStatus,
+		todayActionSummary,
+		"",
+		"根拠:",
+		`- 所在地: ${land.address || "未確認"}`,
+		`- 面積: ${areaText}`,
+		`- 電力会社エリア: ${treasure.powerArea || "未確認"}`,
+		`- 変電所候補: ${substationText}`,
+		substationCandidatesText,
+		`- 距離: ${distanceText}`,
+		"",
+		"詰まり:",
+		"- 安全判定: 変電所だけでは案件化・S評価にしない。",
+		`- 本評価不可: ${investigationGaps.join(" / ")} が未確認です。`,
+		`- 未確認詳細: ${treasure.blockers.join(" / ")}`,
+		"- 農転確認済み、登記確認済み、接道成立、系統空きあり、価格確定とは言いません。",
+		quickEvidence ? `- 取得済み要約: ${quickEvidence}` : "",
+		mapEvidence ? `- 取得済み参考情報: ${mapEvidence.replace(/\n/g, " / ")}` : "",
+		"",
+		confirmationGuide,
+		"",
+		nextAction,
+	].filter(Boolean).join("\n");
+	const reviewMemo = [
+		`本評価不可。公的確認または人間確認が必要: ${investigationGaps.join(" / ")}`,
+		`調査指示: 地番、登記、農地・農転、道路台帳、系統空き、所有者意向を確認してから本評価へ進める。`,
+		`見送り理由候補: ${rejectionReasons.join(" / ")}`,
+		confirmationGuide,
+		quickEvidence ? `取得済み要約: ${quickEvidence}` : "",
+		mapEvidence ? `取得済み参考情報: ${mapEvidence.replace(/\n/g, " / ")}` : "",
+		treasure.sabcReason ? `一次スコア根拠: ${treasure.sabcReason}` : "",
+	].filter(Boolean).join("\n");
+	return { landEvaluation, nextAction, reviewMemo };
+}
+
+function buildLandOfficialConfirmationGuide(powerArea: string): string {
+	const gridLabel = powerArea && powerArea !== "未確認" ? `${powerArea}エリア` : "該当電力エリア";
+	return [
+		"確認先:",
+		"- 不動産情報ライブラリ: https://www.reinfolib.mlit.go.jp/ （地価公示、地価調査、都市計画、防災、周辺施設の一次確認）",
+		"- eMAFF農地ナビ: https://map.maff.go.jp/ （農地台帳、地目、農振法区分、都市計画法区分の確認。農地の所在・地番は住居住所と異なる点に注意）",
+		"- 登記情報提供サービス: https://www1.touki.or.jp/ （所有者、地目、地積、権利部の確認）",
+		"- 登記所備付地図: https://www.moj.go.jp/MINJI/minji05_00494.html （法務省/G空間情報センターの地図データ。証明用途は法務局または登記情報提供サービスで確認）",
+		"- 資源エネルギー庁 系統情報公表ページ: https://www.enecho.meti.go.jp/category/saving_and_new/saiene/grid/07_map.html （系統情報の公表元・リンク確認）",
+		"- 空き容量マップ: https://www.occto.or.jp/access/link/mapping.html （OCCTO/電力広域的運営推進機関のリンク集から送配電会社の系統連系制約マップを確認）",
+		...(powerArea && /中部/.test(powerArea)
+			? [
+				"- 中部電力パワーグリッド 系統空容量・予想潮流マッピング: https://powergrid.chuden.co.jp/goannai/hatsuden_kouri/takuso_kyokyu/rule/map/ （公表値候補。接続可否確定ではない）",
+			]
+			: []),
+		`- 送配電会社窓口: ${gridLabel}の接続検討、連系制約、空き容量、受電地点を確認`,
+		"- 道路台帳・建築指導課・土木事務所: 幅員、道路種別、大型車搬入、接道義務を確認",
+	].join("\n");
 }
 
 function chooseLandActionBucket(
@@ -15650,12 +17772,15 @@ async function markLandNeedsReview(
 	land: LandInfo,
 	evaluation: LandEvaluation,
 ): Promise<void> {
-	await safeUpdateExistingProperties(notion, land.page, {
+	const patches: Record<string, SafePatch> = {
 		処理ステータス: { kind: "select", value: "要確認" },
 		案件化状態: { kind: "select", value: "未案件化" },
 		AIアクションバケット: { kind: "select", value: "継続監視" },
+		総合評価: { kind: "select", value: evaluation.overallGrade },
+		AI総合スコア: { kind: "number", value: evaluation.score },
 		土地評価: { kind: "select", value: evaluation.landRating },
 		"電力評価（仮説）": { kind: "select", value: evaluation.powerRating },
+		電力評価: { kind: "select", value: evaluation.powerRating },
 		AI案件種別: { kind: "select", value: evaluation.projectType },
 		AI接道評価: { kind: "select", value: evaluation.roadRating },
 		AI補助金評価: { kind: "select", value: evaluation.subsidyRating },
@@ -15663,10 +17788,18 @@ async function markLandNeedsReview(
 		案件化メモ: { kind: "text", value: evaluation.landEvaluation },
 		次アクション: { kind: "text", value: evaluation.nextAction },
 		一次AI受付メモ: { kind: "text", value: evaluation.reviewMemo },
+		AI更新日時: { kind: "date", value: new Date().toISOString() },
 		設計上の弱点: { kind: "text", value: evaluation.reviewMemo },
 		Webhook引き継ぎステータス: { kind: "select", value: "要確認で停止" },
 		Webhook引き継ぎメモ: { kind: "text", value: evaluation.reviewMemo },
-	});
+	};
+	if (evaluation.nearestSubstationDistanceKm !== undefined && evaluation.nearestSubstationDistanceKm !== null) {
+		patches["変電所距離（km）"] = {
+			kind: "number",
+			value: Math.round(evaluation.nearestSubstationDistanceKm * 100) / 100,
+		};
+	}
+	await safeUpdateExistingProperties(notion, land.page, patches);
 }
 
 async function markLandFailure(
@@ -15691,7 +17824,7 @@ async function writeLandEvaluation(
 	land: LandInfo,
 	evaluation: LandEvaluation,
 ): Promise<void> {
-	await safeUpdateExistingProperties(notion, land.page, {
+	const patches: Record<string, SafePatch> = {
 		処理ステータス: { kind: "select", value: "完了" },
 		案件化状態: { kind: "select", value: evaluation.caseStatus },
 		AIアクションバケット: { kind: "select", value: evaluation.actionBucket },
@@ -15710,7 +17843,7 @@ async function writeLandEvaluation(
 			value: [
 				evaluation.landEvaluation,
 				evaluation.powerEvaluation,
-				`接道: ${evaluation.roadEvaluation}`,
+				evaluation.roadEvaluation,
 				`補助金: ${evaluation.subsidyEvaluation}`,
 				`需要: ${evaluation.demandEvaluation}`,
 			].join("\n"),
@@ -15724,7 +17857,37 @@ async function writeLandEvaluation(
 			value: "Notion Workerが土地詳細評価を返却。案件化判断は人間確認前提。",
 		},
 		設計上の弱点: { kind: "text", value: evaluation.reviewMemo },
-	});
+	};
+
+	const farmlandStatus = land.farmland.trim();
+	if (farmlandStatus) {
+		patches["農地転用可否"] = { kind: "select", value: farmlandStatus };
+	}
+	const registryStatus = land.registry.trim();
+	if (registryStatus) {
+		patches["登記確認状況"] = { kind: "select", value: registryStatus };
+	}
+	const nearbyResidentialCheck = land.nearbyResidentialCheck.trim();
+	if (nearbyResidentialCheck) {
+		patches["近隣住宅確認"] = { kind: "select", value: nearbyResidentialCheck };
+	}
+	if (land.nearbyResidentialDistanceM !== null && Number.isFinite(land.nearbyResidentialDistanceM)) {
+		patches["近隣住宅距離（m）"] = {
+			kind: "number",
+			value: land.nearbyResidentialDistanceM,
+		};
+	}
+	if (evaluation.nearestSubstationDistanceKm !== undefined && evaluation.nearestSubstationDistanceKm !== null) {
+		patches["変電所距離（km）"] = {
+			kind: "number",
+			value: Math.round(evaluation.nearestSubstationDistanceKm * 100) / 100,
+		};
+	}
+	if (evaluation.nearestSubstationName) {
+		patches["最寄り変電所"] = { kind: "text", value: evaluation.nearestSubstationName };
+		patches["最寄り変電所名"] = { kind: "text", value: evaluation.nearestSubstationName };
+	}
+	await safeUpdateExistingProperties(notion, land.page, patches);
 }
 
 async function createLandEvaluationLearningLog(
@@ -15732,13 +17895,23 @@ async function createLandEvaluationLearningLog(
 	land: LandInfo,
 	evaluation: LandEvaluation,
 ): Promise<void> {
-	const distanceKm = numberFromText(land.substationDistance);
+	const distanceKm =
+		evaluation.nearestSubstationDistanceKm !== undefined
+			? evaluation.nearestSubstationDistanceKm
+			: distanceKmFromText(land.substationDistance);
 	const titleText = `土地評価｜${land.name}｜${evaluation.overallGrade}｜${evaluation.score}点`;
 	const reason = [
 		`土地名: ${land.name}`,
 		`所在地: ${land.address || "未確認"}`,
 		land.areaTsubo ? `面積: ${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪` : "",
-		land.substationDistance ? `変電所距離: ${land.substationDistance}` : "変電所距離: 未確認",
+		evaluation.nearestSubstationName ? `最寄り変電所: ${evaluation.nearestSubstationName}` : "",
+		distanceKm !== null ? `変電所距離: ${distanceKm}km` : "変電所距離: 未確認",
+		evaluation.substationCandidates && evaluation.substationCandidates.length > 0
+			? `変電所候補3件: ${evaluation.substationCandidates
+				.map((candidate, index) => `${index + 1}. ${candidate.name} ${Math.round(candidate.distanceKm * 10) / 10}km`)
+				.join(" / ")}`
+			: "",
+		evaluation.sabcReason ? `SABC/2AI根拠: ${evaluation.sabcReason}` : "",
 		`AIアクション: ${evaluation.actionBucket}`,
 		`案件化状態予測: ${evaluation.caseStatus}`,
 		evaluation.landEvaluation,
@@ -15751,7 +17924,7 @@ async function createLandEvaluationLearningLog(
 		対象領域: select("土地"),
 		判定日時: { date: { start: new Date().toISOString() } },
 		"AI/Worker名": richText("processLandEvaluation"),
-		判定バージョン: richText("land-evaluation-v1"),
+		判定バージョン: richText("land-evaluation-v2-sabc-2ai"),
 		判定スコア: { number: evaluation.score },
 		判定ラベル: richText(`${evaluation.overallGrade} / ${evaluation.bucket}`),
 		判定根拠: richText(reason),
@@ -18279,8 +20452,27 @@ function numberValueAny(properties: Record<string, unknown>, names: string[]): n
 	return null;
 }
 
+function placeCoordinate(property: unknown, key: "lat" | "lon"): number | null {
+	if (!property || typeof property !== "object") return null;
+	const prop = property as Record<string, unknown>;
+	if (prop.type !== "place" || !prop.place || typeof prop.place !== "object") return null;
+	const place = prop.place as Record<string, unknown>;
+	return typeof place[key] === "number" && Number.isFinite(place[key]) ? place[key] : null;
+}
+
 function numberFromText(value: string): number | null {
 	const normalized = value.replace(/,/g, "");
+	const match = normalized.match(/\d+(?:\.\d+)?/);
+	return match ? Number(match[0]) : null;
+}
+
+function distanceKmFromText(value: string): number | null {
+	const normalized = normalizeDigits(value).replace(/[,，]/g, "");
+	if (!normalized.trim()) return null;
+	const kmMatch = normalized.match(/(\d+(?:\.\d+)?)\s*(?:km|㎞|キロメートル|キロ)/i);
+	if (kmMatch) return Number(kmMatch[1]);
+	const meterMatch = normalized.match(/(\d+(?:\.\d+)?)\s*(?:m|ｍ|メートル|メーター|米)/i);
+	if (meterMatch) return Number(meterMatch[1]) / 1000;
 	const match = normalized.match(/\d+(?:\.\d+)?/);
 	return match ? Number(match[0]) : null;
 }

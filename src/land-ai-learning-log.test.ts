@@ -35,7 +35,10 @@ function landPage() {
 			電力会社エリア: selectProp("関西電力"),
 			用途地域: richTextProp("市街化調整区域"),
 			接道: richTextProp("4m道路に接道"),
-			"農転/登記/近隣確認": richTextProp("要確認"),
+			農地転用可否: selectProp("不要"),
+			登記確認状況: selectProp("確認済み"),
+			"近隣住宅距離（m）": numberProp(80),
+			近隣住宅確認: selectProp("30m以上"),
 			変電所距離: richTextProp("3.2km"),
 			処理ステータス: selectProp("未処理"),
 			案件化状態: selectProp("未案件化"),
@@ -95,6 +98,20 @@ async function main() {
 	assert.ok(properties["土地面積（坪）"]);
 	assert.ok(properties.判定根拠);
 	assert.equal(updates.some((update) => update.page_id === "land-1"), true);
+	const update = updates.findLast((item) => item.page_id === "land-1");
+	assert.ok(update, "土地ページ更新が発生する");
+	const updateProperties = update.properties as Record<string, unknown>;
+	assert.deepEqual(updateProperties.農地転用可否 as { select: { name: string } }, {
+		select: { name: "不要" },
+	});
+	assert.deepEqual(updateProperties.登記確認状況 as { select: { name: string } }, {
+		select: { name: "確認済み" },
+	});
+	assert.deepEqual(updateProperties.近隣住宅確認 as { select: { name: string } }, {
+		select: { name: "30m以上" },
+	});
+	const nearbyDistance = updateProperties["近隣住宅距離（m）"] as { number: number };
+	assert.equal(nearbyDistance.number, 80);
 }
 
 main().catch((error) => {
