@@ -647,7 +647,12 @@ async function archiveExistingDossierBlocks(
 		startCursor = response.next_cursor;
 	}
 	for (const blockId of dossierBlockIdsToReplace(summaries)) {
-		await update({ block_id: blockId, archived: true });
+		try {
+			await update({ block_id: blockId, archived: true });
+		} catch (error) {
+			// 既に消えている等の単発失敗で新ドシエの追記まで止めない(検品レビュー指摘2c)
+			console.log("dossier archive skipped", blockId, String(error).slice(0, 120));
+		}
 	}
 }
 
