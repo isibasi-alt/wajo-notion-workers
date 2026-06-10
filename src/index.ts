@@ -760,6 +760,38 @@ async function archiveExistingDossierBlocks(
 	}
 }
 
+// 専用ページ(商談準備レポート等)の本文を全アーカイブ(再生成時の重ね書き防止)。
+// 本文は全てWorker生成物である前提のページにだけ使うこと。
+async function archiveAllPageBodyBlocks(
+	notion: NotionClient,
+	pageId: string,
+): Promise<void> {
+	const list = notion.blocks?.children?.list;
+	const update = notion.blocks?.update;
+	if (!list || !update) return;
+	const ids: string[] = [];
+	let startCursor: string | null | undefined;
+	for (let i = 0; i < 10; i += 1) {
+		const response = await list({
+			block_id: pageId,
+			page_size: 100,
+			start_cursor: startCursor,
+		});
+		for (const block of response.results) {
+			if (typeof block.id === "string" && block.id) ids.push(block.id);
+		}
+		if (!response.has_more || !response.next_cursor) break;
+		startCursor = response.next_cursor;
+	}
+	for (const blockId of ids) {
+		try {
+			await update({ block_id: blockId, archived: true });
+		} catch (error) {
+			console.log("report body archive skipped", blockId, String(error).slice(0, 120));
+		}
+	}
+}
+
 // 旧ドシエをアーカイブして、紙面ブロック(コールアウト/表/区切り/折りたたみ)を追記する。
 async function appendCompanyDossierBlocks(
 	notion: NotionClient,
@@ -1191,6 +1223,7 @@ type MeetingPrepInput = {
 	companyPageId: string;
 	reportPageId?: string;
 	dryRun?: boolean;
+	force?: boolean;
 };
 
 type ResidentDocumentInput = {
@@ -1423,7 +1456,7 @@ type MeetingPrepResult = {
 	companyId: string;
 	reportId: string | null;
 	reportUrl: string | null;
-	action: "updated-report" | "created-report" | "dry-run";
+	action: "updated-report" | "created-report" | "dry-run" | "skipped-fresh";
 	message: string;
 };
 
@@ -2682,8 +2715,11 @@ worker.tool("processMeetingPrepReportByCompanyId", {
 		companyPageId: j.string().describe("企業マスターDBのページID"),
 		reportPageId: j
 			.string()
-			.describe("既存の商談準備レポートページID。空なら最新の空レポートを探します"),
+			.describe("既存の商談準備レポートページID。空なら同企業の既存レポートを再利用します(1社1枚)"),
 		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+		force: j
+			.boolean()
+			.describe("trueなら鮮度ゲートを無視して作り直す。通常はfalse(30日以内の再生成は止まる)"),
 	}),
 	outputSchema: j.object({
 		companyId: j.string(),
@@ -2692,9 +2728,9 @@ worker.tool("processMeetingPrepReportByCompanyId", {
 		action: j.string(),
 		message: j.string(),
 	}),
-	execute: async ({ companyPageId, reportPageId, dryRun }, { notion }) => {
+	execute: async ({ companyPageId, reportPageId, dryRun, force }, { notion }) => {
 		return processMeetingPrepReport(
-			{ companyPageId, reportPageId: reportPageId || undefined, dryRun },
+			{ companyPageId, reportPageId: reportPageId || undefined, dryRun, force },
 			notion as unknown as NotionClient,
 		);
 	},
@@ -10049,9 +10085,34 @@ async function processMeetingPrepReport(
 		page_id: input.companyPageId,
 	});
 	const baseCompany = readCompany(companyPage);
+	// 1社1枚の解決はenrich(Gemini課金)より前に行う(検品指摘: ゲートの前に課金が走っていた)
+	const report = await resolveMeetingPrepReport(notion, baseCompany, input.reportPageId);
+	const reportIsBlank = !report || isBlankMeetingPrepReport(report);
+
+	// 鮮度ゲート(連打防止・1社1枚): 中身のある既存レポートが新しい間は再生成しない。
+	// 会社の情報は決算等が動かない限り大きく変わらない=同内容の量産はコストと見た目の両方で損。
+	// enrich/LLMより前に止めるので、このreturnは完全無料。
+	if (report && !reportIsBlank && !input.force && !input.dryRun) {
+		const lastEdited = String(
+			(report as unknown as Record<string, unknown>).last_edited_time ?? "",
+		);
+		const refreshDays = Number(process.env.REPORT_REFRESH_DAYS) || 30;
+		if (
+			lastEdited &&
+			isTdbSurveyFresh(lastEdited, new Date().toISOString(), refreshDays)
+		) {
+			return {
+				companyId: baseCompany.page.id,
+				reportId: report.id,
+				reportUrl: report.url ?? null,
+				action: "skipped-fresh",
+				message: `商談準備レポートは作成済みです（最終更新 ${lastEdited.slice(0, 10)}）。会社の情報が大きく動くまで、もう少しタイミングを待ってください。決算発表や大きなニュースの後に再実行すると新しい中身になります（どうしても今作り直す場合は force 指定）。`,
+			};
+		}
+	}
+
+	// ゲート通過後にだけ補完(Gemini)を行う
 	const company = await enrichCompanyForMeetingPrep(baseCompany);
-	const report = await resolveMeetingPrepReport(notion, company, input.reportPageId);
-	const shouldAppendBody = !report || isBlankMeetingPrepReport(report);
 	const prep = await buildMeetingPrepReportWithAI(company);
 	const quality = assessMeetingPrepQuality(company, prep);
 	const finalPrep = {
@@ -10091,11 +10152,15 @@ async function processMeetingPrepReport(
 	});
 	await addMeetingPrepRelationToCompany(notion, company.page.id, targetReport.id);
 
-	// 商太ブリーフは本文を書く時だけ生成(検品指摘: 捨てる結果のためにLLMを呼ばない)。
-	// 材料(A実データ/和上の手がかり)がゼロの時も呼ばない=数字の創作圧力をかけない。
+	// 本文: 既存レポートの作り直し(鮮度切れ/force)の場合は旧本文をアーカイブしてから書く。
+	// 1社1枚ルール=本文も常に最新1セットだけ(重ね書きで縦に伸びない)。
+	if (!reportIsBlank) {
+		await archiveAllPageBodyBlocks(notion, targetReport.id);
+	}
+	// 商太ブリーフ: 材料(A実データ/和上の手がかり)がゼロの時は呼ばない=数字の創作圧力をかけない。
 	// クオリティ優先(2026-06-11): 企業ページ本文(Aドシエ全文)まで食わせ、検品AI(4体目)を通してから書く。
 	let briefWritten = false;
-	if (shouldAppendBody) {
+	{
 		const shoutaInput = buildShoutaInput(
 			company.name,
 			companyPage.properties ?? {},
@@ -17997,7 +18062,14 @@ async function resolveMeetingPrepReport(
 		},
 		sorts: [{ timestamp: "created_time", direction: "descending" }],
 	});
-	return response.results.find((page) => isBlankMeetingPrepReport(page)) ?? null;
+	// 1社1枚ルール(2026-06-11 大ちゃん指摘=同内容レポートが3枚4枚と並ぶのはチープ):
+	// 空レポート(ボタンで先に作られた箱)があればそれを優先し、無ければ最新の既存レポートを
+	// 再利用する。中身入りでも新規作成はしない=重複が構造的に生まれない。
+	return (
+		response.results.find((page) => isBlankMeetingPrepReport(page)) ??
+		response.results[0] ??
+		null
+	);
 }
 
 async function createMeetingPrepReportPage(
