@@ -619,59 +619,92 @@ function tdbToPatches(tdb: TdbProfile): Record<string, SafePatch> {
 
 export { tdbToPatches as tdbToPatchesForTest };
 
-function buildDossierMarkdown(
+// ── ドシエの「紙面」ビルダー(2026-06-11 大ちゃん指摘=継ぎ接ぎ表示の解消) ──
+// 素の段落の羅列をやめ、コールアウト/表組み/区切り線/折りたたみで新聞の紙面のように組む。
+// 先頭のheading_1「…商談ドシエ」は旧ドシエ置き換え検出(dossierBlockIdsToReplace)の鍵なので変えない。
+function buildDossierBlocks(
 	companyName: string,
 	r: DeepResearch,
 	score: CreditScore,
-): string {
-	const section = (h: string, body: string) =>
-		body && body.trim() ? `## ${h}\n${body}\n` : "";
-	const lines = [
-		`# ${companyName} 商談ドシエ`,
-		`**与信判定**: 信頼度 ${score.信頼度} / 提案可否 ${score.提案可否}（${score.根拠}）`,
-		"",
-		section("会社概要", r.summary),
-		section(
-			"基本情報",
-			[
-				r.industry && `業種: ${r.industry}`,
-				r.capital && `資本金: ${r.capital}`,
-				r.revenue && `売上: ${r.revenue}`,
-				r.employees && `従業員: ${r.employees}`,
-				r.founded && `設立: ${r.founded}`,
-				r.listingStatus && `上場: ${r.listingStatus}`,
-			]
-				.filter(Boolean)
-				.join(" / "),
+): Array<Record<string, unknown>> {
+	const blocks: Array<Record<string, unknown>> = [];
+	const section = (h: string, body: string) => {
+		if (!body || !body.trim()) return;
+		blocks.push(headingBlock(h, 2));
+		for (const para of body.split("\n").map((s) => s.trim()).filter(Boolean)) {
+			blocks.push(paragraphBlock(para));
+		}
+	};
+
+	blocks.push(headingBlock(`${companyName} 商談ドシエ`, 1));
+	const scoreColor =
+		score.信頼度 === "高"
+			? "green_background"
+			: score.信頼度 === "低"
+				? "red_background"
+				: "yellow_background";
+	blocks.push(
+		calloutBlock(
+			`与信判定: 信頼度 ${score.信頼度} ／ 提案可否 ${score.提案可否}\n${score.根拠}`,
+			"🛡️",
+			scoreColor,
 		),
-		section(
-			"経営陣・キーパーソン",
-			[r.representative && `代表者: ${r.representative}`, r.executives]
-				.filter(Boolean)
-				.join("\n"),
-		),
-		section("役員・会社のSNS発信", r.executiveSns),
-		section("直近の動き", r.recentNews),
-		section("再エネ/蓄電池の接点", r.renewableSignals),
-		section("現在の課題仮説", r.currentIssue),
-		section("将来の課題仮説", r.futureIssue),
-		section("3C：顧客・市場", r.customerMarket3c),
-		section("3C：競合", r.competitor3c),
-		section("3C：和上との関係性", r.wajoRelation3c),
-		section("営業切り口", r.salesAngle),
-		section("和上解決策の適合", r.fit),
-		section("想定決裁者", r.decisionMaker),
-		section("想定反論・切り返し", r.objections),
-		r.citations.length
-			? `## 出典\n${r.citations.map((c) => `- ${c}`).join("\n")}`
-			: "",
-	];
-	return lines.filter((l) => l !== "").join("\n");
+	);
+
+	// 第1面: 会社の素顔
+	section("会社概要", r.summary);
+	const facts: Array<[string, string]> = (
+		[
+			["業種", r.industry],
+			["資本金", r.capital],
+			["売上", r.revenue],
+			["従業員", r.employees],
+			["設立", r.founded],
+			["上場", r.listingStatus],
+			["代表者", r.representative],
+		] as Array<[string, string]>
+	).filter((row) => Boolean(row[1] && row[1].trim()));
+	if (facts.length > 0) {
+		blocks.push(headingBlock("基本情報", 2));
+		blocks.push(tableBlock(facts));
+	}
+	section("経営陣・キーパーソン", r.executives);
+	section("役員・会社のSNS発信", r.executiveSns);
+
+	// 第2面: いま動いている信号
+	blocks.push(dividerBlock());
+	section("直近の動き", r.recentNews);
+	section("再エネ/蓄電池の接点", r.renewableSignals);
+	section("現在の課題仮説", r.currentIssue);
+	section("将来の課題仮説", r.futureIssue);
+
+	// 第3面: 3C分析
+	blocks.push(dividerBlock());
+	section("3C：顧客・市場", r.customerMarket3c);
+	section("3C：競合", r.competitor3c);
+	section("3C：和上との関係性", r.wajoRelation3c);
+
+	// 第4面: 攻め方
+	blocks.push(dividerBlock());
+	section("営業切り口", r.salesAngle);
+	section("和上解決策の適合", r.fit);
+	section("想定決裁者", r.decisionMaker);
+	section("想定反論・切り返し", r.objections);
+
+	// 出典は折りたたみ(普段は1行・開けば全部)
+	if (r.citations.length > 0) {
+		blocks.push(dividerBlock());
+		blocks.push(
+			toggleBlock(
+				`出典（${r.citations.length}件・クリックで展開）`,
+				r.citations.slice(0, 80),
+			),
+		);
+	}
+	return blocks;
 }
+export { buildDossierBlocks as buildDossierBlocksForTest };
 
-export { buildDossierMarkdown as buildDossierMarkdownForTest };
-
-// ドシエMarkdownを本文ブロックへ追記（既存 appendMeetingPrepReportBody と同じ作法）
 // 旧ドシエ区画の特定(純関数・オフラインでテスト可能)。
 // ドシエはページ末尾に追記される運用のため、最初の「…商談ドシエ」heading_1から
 // 末尾までを旧ドシエ(と過去の複製)とみなして置き換え対象にする。
@@ -727,19 +760,14 @@ async function archiveExistingDossierBlocks(
 	}
 }
 
-async function appendCompanyDossierBody(
+// 旧ドシエをアーカイブして、紙面ブロック(コールアウト/表/区切り/折りたたみ)を追記する。
+async function appendCompanyDossierBlocks(
 	notion: NotionClient,
 	pageId: string,
-	markdown: string,
+	blocks: Array<Record<string, unknown>>,
 ): Promise<void> {
 	if (!notion.blocks?.children?.append) return;
 	await archiveExistingDossierBlocks(notion, pageId);
-	const lines = markdown.split("\n").filter((line) => line.trim().length > 0);
-	const blocks = lines.map((line) => {
-		if (line.startsWith("## ")) return headingBlock(line.slice(3), 2);
-		if (line.startsWith("# ")) return headingBlock(line.slice(2), 1);
-		return paragraphBlock(line);
-	});
 	for (let i = 0; i < blocks.length; i += 90) {
 		await notion.blocks.children.append({
 			block_id: pageId,
@@ -6792,8 +6820,8 @@ async function processCompanyResearch(
 	await safeUpdateExistingProperties(notion, companyPage, patches);
 
 	// 5. 本文ドシエ
-	const dossier = buildDossierMarkdown(company.name, merged, score);
-	await appendCompanyDossierBody(notion, company.page.id, dossier);
+	const dossierBlocks = buildDossierBlocks(company.name, merged, score);
+	await appendCompanyDossierBlocks(notion, company.page.id, dossierBlocks);
 
 	return {
 		companyId: company.page.id,
@@ -7645,6 +7673,14 @@ function blockPlainText(block: Record<string, unknown>): string {
 	}
 	if (type === "child_page" && typeof typed.title === "string") {
 		parts.push(typed.title);
+	}
+	// 表の行(table_row): cells=リッチテキスト配列の配列。「項目: 内容」形に直す
+	// (基本情報の表組み化でドシエ全文抽出から数字が消えないように。検品レビュー反映)
+	if (type === "table_row" && Array.isArray(typed.cells)) {
+		const cellTexts = (typed.cells as unknown[])
+			.map((cell) => (Array.isArray(cell) ? plain(cell) : ""))
+			.filter(Boolean);
+		if (cellTexts.length > 0) parts.push(cellTexts.join(": "));
 	}
 	return parts.join("\n").trim();
 }
@@ -18436,17 +18472,17 @@ async function appendMeetingPrepReportBody(
 	shoutaBrief?: string,
 ): Promise<void> {
 	if (!notion.blocks?.children?.append) return;
-	const briefBlocks = (shoutaBrief ?? "")
-		.split("\n")
-		.map((line) => line.trim())
-		.filter(Boolean)
-		.slice(0, 60)
-		.map((line) => paragraphBlock(line));
+	// 商太ブリーフは紙面ブロック(検品判定=コールアウト/▼=見出し/つかみ=引用)で組む
+	const briefBlocks = shoutaBrief?.trim() ? shoutaBriefToBlocks(shoutaBrief) : [];
 	await notion.blocks.children.append({
 		block_id: reportId,
 		children: [
 			...(briefBlocks.length > 0
-				? [headingBlock("商太の商談前ブリーフ(そのまま喋れる)", 2), ...briefBlocks]
+				? [
+						headingBlock("商太の商談前ブリーフ(そのまま喋れる)", 2),
+						...briefBlocks,
+						dividerBlock(),
+					]
 				: []),
 			headingBlock("商談前準備サマリー", 2),
 			paragraphBlock(prep.profile),
@@ -18480,6 +18516,110 @@ function paragraphBlock(content: string): Record<string, unknown> {
 		},
 	};
 }
+
+// ── 紙面用ブロック部品(2026-06-11 継ぎ接ぎ表示の解消) ──
+function calloutBlock(
+	content: string,
+	emoji: string,
+	color: string,
+): Record<string, unknown> {
+	return {
+		object: "block",
+		type: "callout",
+		callout: {
+			rich_text: [{ type: "text", text: { content: content.slice(0, 1900) } }],
+			icon: { type: "emoji", emoji },
+			color,
+		},
+	};
+}
+
+function dividerBlock(): Record<string, unknown> {
+	return { object: "block", type: "divider", divider: {} };
+}
+
+function quoteBlock(content: string): Record<string, unknown> {
+	return {
+		object: "block",
+		type: "quote",
+		quote: {
+			rich_text: [{ type: "text", text: { content: content.slice(0, 1900) } }],
+		},
+	};
+}
+
+// 2列の表(項目|内容)。1行目を行ヘッダにして「基本情報」を一覧化する。
+function tableBlock(rows: Array<[string, string]>): Record<string, unknown> {
+	const cell = (s: string) => [{ type: "text", text: { content: s.slice(0, 1900) } }];
+	return {
+		object: "block",
+		type: "table",
+		table: {
+			table_width: 2,
+			has_column_header: false,
+			has_row_header: true,
+			children: rows.slice(0, 30).map(([k, v]) => ({
+				object: "block",
+				type: "table_row",
+				table_row: { cells: [cell(k), cell(v)] },
+			})),
+		},
+	};
+}
+
+// 折りたたみ(タイトル＋中身の箇条書き)。出典の山を普段は1行に畳む。
+function toggleBlock(title: string, items: string[]): Record<string, unknown> {
+	return {
+		object: "block",
+		type: "toggle",
+		toggle: {
+			rich_text: [{ type: "text", text: { content: title.slice(0, 1900) } }],
+			children: items.map((item) => ({
+				object: "block",
+				type: "bulleted_list_item",
+				bulleted_list_item: {
+					rich_text: [{ type: "text", text: { content: item.slice(0, 1900) } }],
+				},
+			})),
+		},
+	};
+}
+
+// 商太ブリーフを紙面ブロックへ(純関数)。
+// 1行目の検品判定(✅/⚠️/ℹ️)→コールアウト、▼見出し→heading_3、
+// 「つかみの一言」セクションの台詞→引用ブロック、他→段落。
+function shoutaBriefToBlocks(brief: string): Array<Record<string, unknown>> {
+	const blocks: Array<Record<string, unknown>> = [];
+	let inTsukami = false;
+	for (const raw of brief.split("\n")) {
+		const line = raw.trim();
+		if (!line) continue;
+		if (line.startsWith("✅")) {
+			blocks.push(calloutBlock(line, "✅", "green_background"));
+			continue;
+		}
+		if (line.startsWith("⚠️") || line.startsWith("⚠")) {
+			blocks.push(calloutBlock(line, "⚠️", "yellow_background"));
+			continue;
+		}
+		if (line.startsWith("ℹ️") || line.startsWith("ℹ")) {
+			blocks.push(calloutBlock(line, "ℹ️", "gray_background"));
+			continue;
+		}
+		if (line.startsWith("▼")) {
+			inTsukami = line.includes("つかみ");
+			blocks.push(headingBlock(line.replace(/^▼\s*/, "▼ "), 3));
+			continue;
+		}
+		if (inTsukami) {
+			blocks.push(quoteBlock(line));
+			continue;
+		}
+		blocks.push(paragraphBlock(line));
+	}
+	return blocks.slice(0, 70);
+}
+export { shoutaBriefToBlocks as shoutaBriefToBlocksForTest };
 
 async function findPendingCards(
 	notion: NotionClient,
