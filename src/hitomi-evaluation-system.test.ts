@@ -65,6 +65,10 @@ function people(ids: string[]) {
 	return { type: "people", people: ids.map((id) => ({ id })) };
 }
 
+function createdBy(id: string) {
+	return { id, object: "user" };
+}
+
 function rollupNumber(value: number) {
 	return { type: "rollup", rollup: { type: "number", number: value } };
 }
@@ -278,6 +282,106 @@ async function main() {
 	assert.match(genericActivitySource, /定性評価（活動ログ）｜35点/);
 	assert.match(genericActivitySource, /対象3ログ外/);
 	assert.doesNotMatch(genericActivitySource, /汎用活動ログ|評価対象チェックだけ/);
+
+	const engagementQueries: Array<Record<string, unknown>> = [];
+	const engagementNotion = {
+		pages: notion.pages,
+		dataSources: {
+			query: async (args: Record<string, unknown>) => {
+				engagementQueries.push(args);
+				if (args.data_source_id === "28c78664-8b8c-419d-9488-ef991d60ab98") {
+					return {
+						results: [
+							{
+								id: "ai-consultation-1",
+								created_time: "2026-05-05T09:00:00.000Z",
+								created_by: createdBy("sales-1"),
+								properties: {
+									"相談内容 1": title("商談前の論点整理"),
+									処理状態: status("完了"),
+									相談者: people([]),
+								},
+							},
+							{
+								id: "ai-consultation-2",
+								created_time: "2026-05-06T09:00:00.000Z",
+								created_by: createdBy("other-user"),
+								properties: {
+									"相談内容 1": title("他者相談"),
+									処理状態: status("完了"),
+									相談者: people(["other-user"]),
+								},
+							},
+						],
+					};
+				}
+				if (args.data_source_id === "8ffd91e0-2f44-4915-926a-d410bcb04e95") {
+					return {
+						results: [
+							{
+								id: "knowledge-candidate-1",
+								created_time: "2026-05-10T09:00:00.000Z",
+								created_by: createdBy("sales-1"),
+								properties: {
+									ナレッジタイトル: title("蓄電池の価格反論トーク"),
+									候補判定: select("新規候補"),
+									関連スタッフ: relation([]),
+								},
+							},
+							{
+								id: "knowledge-adopted-1",
+								created_time: "2026-05-12T09:00:00.000Z",
+								created_by: createdBy("manager-1"),
+								properties: {
+									ナレッジタイトル: title("現地確認の切り返し"),
+									候補判定: select("採用"),
+									関連スタッフ: relation(["sales-1"]),
+								},
+							},
+							{
+								id: "knowledge-other-1",
+								created_time: "2026-05-13T09:00:00.000Z",
+								created_by: createdBy("other-user"),
+								properties: {
+									ナレッジタイトル: title("他者ナレッジ"),
+									候補判定: select("採用"),
+									関連スタッフ: relation([]),
+								},
+							},
+						],
+					};
+				}
+				return { results: [] };
+			},
+		},
+	};
+	const engagementSource = await buildSalesPerformanceRelatedSourceForTest(
+		engagementNotion as never,
+		{
+			対象営業ユーザー: people(["sales-1"]),
+			開始日: date("2026-05-01"),
+			終了日: date("2026-05-31"),
+			関連活動ログ: relation(["activity-1"]),
+		},
+	);
+	assert.match(engagementSource, /AI活用度・ナレッジ貢献/);
+	assert.match(engagementSource, /AI相談回数: 1/);
+	assert.match(engagementSource, /AI活用度目安: 最大3点内/);
+	assert.match(engagementSource, /ナレッジ候補登録数: 1/);
+	assert.match(engagementSource, /ナレッジ採用数: 1/);
+	assert.match(engagementSource, /登録者判定: 関連スタッフ優先、空ならcreated_by/);
+	assert.ok(
+		engagementQueries.some((args) =>
+			JSON.stringify(args).includes("28c78664-8b8c-419d-9488-ef991d60ab98")
+		),
+		"AI相談受付DBを月次評価材料として照会する",
+	);
+	assert.ok(
+		engagementQueries.some((args) =>
+			JSON.stringify(args).includes("8ffd91e0-2f44-4915-926a-d410bcb04e95")
+		),
+		"社内ナレッジDBを月次評価材料として照会する",
+	);
 
 	const evaluationSource = buildSalesPerformanceEvaluationSourceForTest({
 		quotaSource: draftQuotaSource.source,

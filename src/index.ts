@@ -9183,8 +9183,8 @@ function buildSalesPerformanceEvaluationSource(input: {
 
 function buildSalesPerformanceDryRunPreview(source: string): string[] {
 	const importantLinePattern =
-		/^(売上目標|実績売上額|粗利目標|実績粗利額|粗利達成率|商談件数|成約件数|案件化件数|仕入れ件数|仕入れ金額|専売許可件数):/;
-	return source
+		/^(売上目標|実績売上額|粗利目標|実績粗利額|粗利達成率|商談件数|成約件数|案件化件数|仕入れ件数|仕入れ金額|専売許可件数|AI相談回数|AI活用度目安|ナレッジ候補登録数|ナレッジ採用数|登録者判定):/;
+	const lines = source
 		.split(/\n+/)
 		.map((line) => line.trim())
 		.filter(Boolean)
@@ -9198,6 +9198,7 @@ function buildSalesPerformanceDryRunPreview(source: string): string[] {
 			line.startsWith("ノルマ申請承認警告:") ||
 			line.startsWith("粗利目標:") ||
 			line.includes("定性評価（活動ログ）｜35点") ||
+			line.includes("AI活用度・ナレッジ貢献") ||
 			line.includes("補助確認事項（採点対象外）") ||
 			line.includes("採点対象: false") ||
 			line.includes("活動ログ未接続") ||
@@ -9206,7 +9207,9 @@ function buildSalesPerformanceDryRunPreview(source: string): string[] {
 			line.startsWith("URL:") ||
 			importantLinePattern.test(line),
 		)
-		.slice(0, 20);
+	const nonUrlLines = lines.filter((line) => !line.startsWith("URL:"));
+	const urlLines = lines.filter((line) => line.startsWith("URL:")).slice(0, 6);
+	return uniqueStrings([...nonUrlLines, ...urlLines]).slice(0, 20);
 }
 
 type SalesPerformanceQuotaSource = {
@@ -9387,6 +9390,10 @@ async function buildSalesPerformanceRelatedSource(
 	} else {
 		sections.push("【定性評価（活動ログ）｜35点】\n活動ログ未接続: 営業マンパフォーマンスDBに関連活動ログがありません。");
 	}
+	const engagementSource = await buildSalesPerformanceEngagementSource(notion, properties);
+	if (engagementSource) {
+		sections.push(engagementSource);
+	}
 	const legacyDirectCount = legacyDirectMap.reduce((sum, [, ids]) => sum + ids.length, 0);
 	if (legacyDirectCount > 0) {
 		sections.push(
@@ -9394,6 +9401,124 @@ async function buildSalesPerformanceRelatedSource(
 		);
 	}
 	return sections.join("\n\n").slice(0, 10000);
+}
+
+async function buildSalesPerformanceEngagementSource(
+	notion: NotionClient,
+	properties: Record<string, unknown>,
+): Promise<string> {
+	if (!notion.dataSources?.query) return "";
+	const targetUserIds = uniqueIds(personIdsFromProperty(properties["対象営業ユーザー"]));
+	const startDate = dateStartFromProperty(properties["開始日"]).slice(0, 10);
+	const endDate = dateStartFromProperty(properties["終了日"]).slice(0, 10);
+	const endExclusive = nextDateString(endDate);
+	if (targetUserIds.length === 0 || !startDate || !endExclusive) return "";
+
+	const [aiConsultations, knowledgePages] = await Promise.all([
+		queryCompletedAiConsultationsForPeriod(notion, startDate, endExclusive),
+		queryKnowledgePagesForPeriod(notion, startDate, endExclusive),
+	]);
+	const aiConsultationCount = aiConsultations.filter((page) =>
+		pageMatchesAiConsultationTargetUser(page, targetUserIds),
+	).length;
+	const matchedKnowledgePages = knowledgePages.filter((page) =>
+		pageMatchesKnowledgeTargetUser(page, targetUserIds),
+	);
+	const knowledgeCandidateCount = matchedKnowledgePages.filter((page) =>
+		isKnowledgeCandidateStatus(text(page.properties?.["候補判定"])),
+	).length;
+	const knowledgeAdoptedCount = matchedKnowledgePages.filter(
+		(page) => text(page.properties?.["候補判定"]) === "採用",
+	).length;
+	const aiPointGuide = Math.min(3, Math.round(aiConsultationCount * 0.3 * 10) / 10);
+	return [
+		"【定性評価（AI活用度・ナレッジ貢献）｜35点内】",
+		"AI相談本文とAI回答本文は採点根拠にせず、月内の相談回数だけを低ハードルのAI活用度として見る。",
+		"ナレッジは候補登録を小さく見て、採用済みは組織貢献として上乗せ確認する。",
+		`AI相談回数: ${aiConsultationCount}`,
+		`AI活用度目安: 最大3点内（現時点の回数目安 ${aiPointGuide}点、詳細式は営業向けに非開示）`,
+		`ナレッジ候補登録数: ${knowledgeCandidateCount}`,
+		`ナレッジ採用数: ${knowledgeAdoptedCount}`,
+		"登録者判定: 関連スタッフ優先、空ならcreated_by",
+	].join("\n");
+}
+
+async function queryCompletedAiConsultationsForPeriod(
+	notion: NotionClient,
+	startDate: string,
+	endExclusive: string,
+): Promise<Page[]> {
+	try {
+		const response = await notion.dataSources.query({
+			data_source_id: AI_CONSULTATION_DATA_SOURCE_ID,
+			page_size: 100,
+			filter: {
+				and: [
+					{ property: "受付日時", created_time: { on_or_after: startDate } },
+					{ property: "受付日時", created_time: { before: endExclusive } },
+					{ property: "処理状態", status: { equals: "完了" } },
+				],
+			},
+		});
+		return response.results;
+	} catch (error) {
+		console.log("sales performance ai consultation source skipped", String(error).slice(0, 160));
+		return [];
+	}
+}
+
+async function queryKnowledgePagesForPeriod(
+	notion: NotionClient,
+	startDate: string,
+	endExclusive: string,
+): Promise<Page[]> {
+	try {
+		const response = await notion.dataSources.query({
+			data_source_id: KNOWLEDGE_DATA_SOURCE_ID,
+			page_size: 100,
+			filter: {
+				and: [
+					{ property: "作成日", created_time: { on_or_after: startDate } },
+					{ property: "作成日", created_time: { before: endExclusive } },
+				],
+			},
+		});
+		return response.results;
+	} catch (error) {
+		console.log("sales performance knowledge source skipped", String(error).slice(0, 160));
+		return [];
+	}
+}
+
+function pageMatchesAiConsultationTargetUser(page: Page, targetUserIds: string[]): boolean {
+	const properties = page.properties ?? {};
+	const consultationUserIds = personIdsFromProperty(properties["相談者"]);
+	const attributionIds =
+		consultationUserIds.length > 0 ? consultationUserIds : createdByUserIdsFromPage(page);
+	return hasAnyId(attributionIds, targetUserIds);
+}
+
+function pageMatchesKnowledgeTargetUser(page: Page, targetUserIds: string[]): boolean {
+	const properties = page.properties ?? {};
+	const relatedStaffIds = relationIdsFromProperty(properties["関連スタッフ"]);
+	const attributionIds =
+		relatedStaffIds.length > 0 ? relatedStaffIds : createdByUserIdsFromPage(page);
+	return hasAnyId(attributionIds, targetUserIds);
+}
+
+function hasAnyId(values: string[], candidates: string[]): boolean {
+	const candidateSet = new Set(candidates);
+	return values.some((value) => candidateSet.has(value));
+}
+
+function isKnowledgeCandidateStatus(status: string): boolean {
+	return status === "新規候補" || status === "AI整理済" || status === "保留";
+}
+
+function nextDateString(dateText: string): string {
+	const date = Date.parse(`${dateText.slice(0, 10)}T00:00:00.000Z`);
+	if (!Number.isFinite(date)) return "";
+	return new Date(date + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
 type SalesActivityEvidenceSummary = {
@@ -9720,8 +9845,10 @@ async function callOpenAISalesPerformanceReview(input: {
 		"出力方針:",
 		"- 評価は二軸で見る。定量評価（実績）65点、定性評価（活動ログ）35点を基本配分にする",
 		"- 定量評価は営業の実績数字だけを見る。売上、粗利、達成率、商談件数、成約件数、案件化件数、仕入れ件数、仕入れ金額など",
-		"- 定性評価は活動ログDBに集約された貢献ログ、顧客接点ログ、発言ログだけを見る",
-		"- AI活用ポイント、人見さんメモ、ワニポメモリー、本人コメント、マネージャーメモは主たる採点根拠にしない",
+		"- 定性評価は活動ログDBに集約された貢献ログ、顧客接点ログ、発言ログを主軸にし、AI相談回数とナレッジ登録/採用数を35点内の補助的な行動シグナルとして見る",
+		"- AI相談本文とAI回答本文は採点根拠にしない。AI相談回数だけを低ハードルのAI活用度として扱い、最大3点内の軽い加点目安に留める",
+		"- ナレッジ候補登録は小さく評価し、採用済みナレッジは組織貢献として上乗せ確認する",
+		"- 人見さんメモ、ワニポメモリー、本人コメント、マネージャーメモは主たる採点根拠にしない",
 		"- 月次ページ本文、自由記述、本人コメント、マネージャーメモは採点根拠にしない",
 		"- 既存の数値やスコアは、変更ではなく読み解きとして説明する",
 		"- 行動評価と貢献評価は、定性評価の確認論点としてマネージャー面談に落とす",
