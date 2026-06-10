@@ -35,12 +35,30 @@ const PROPOSAL_REQUEST_DATA_SOURCE_ID =
 const MEETING_DATA_SOURCE_ID =
 	process.env.MEETING_DATA_SOURCE_ID ??
 	"c22e58f6-42c9-4a2f-b24d-e65e889d59e9";
+const MEETING_PRIMARY_TYPES = ["ミーティング", "商談"] as const;
+type MeetingPrimaryType = (typeof MEETING_PRIMARY_TYPES)[number];
+const KNOWLEDGE_MEETING_RELATION_ALIASES = ["元ミーティング", "元会議議事録"] as const;
 const ACTIVITY_LOG_DATA_SOURCE_ID =
 	process.env.ACTIVITY_LOG_DATA_SOURCE_ID ??
 	"a58a107d-92e3-43f3-887d-5e3acf72e9ec";
 const CUSTOMER_CONTACT_LOG_DATA_SOURCE_ID =
 	process.env.CUSTOMER_CONTACT_LOG_DATA_SOURCE_ID ??
 	"b65c13b4-1a72-4c58-8d2d-305c3e04a561";
+const SPEECH_LOG_DATA_SOURCE_ID =
+	process.env.SPEECH_LOG_DATA_SOURCE_ID ??
+	"86f5693c-db36-4356-aec1-210495f6032a";
+const SALES_CONTRIBUTION_LOG_DATA_SOURCE_ID =
+	process.env.SALES_CONTRIBUTION_LOG_DATA_SOURCE_ID ??
+	"f88056da-3052-418e-8cf4-e9b4197cd7ba";
+const HITOMI_MEMO_DATA_SOURCE_ID =
+	process.env.HITOMI_MEMO_DATA_SOURCE_ID ??
+	"a1118ded-21b2-4636-94fb-a868aefb5168";
+const WANIPO_MEMORY_DATA_SOURCE_ID =
+	process.env.WANIPO_MEMORY_DATA_SOURCE_ID ??
+	"b8b06036-4f7e-4efe-a242-2df47ff29b1e";
+const AI_CONSULTATION_DATA_SOURCE_ID =
+	process.env.AI_CONSULTATION_DATA_SOURCE_ID ??
+	"28c78664-8b8c-419d-9488-ef991d60ab98";
 const MANAGER_REVIEW_DATA_SOURCE_ID =
 	process.env.MANAGER_REVIEW_DATA_SOURCE_ID ??
 	"3574d017-81e7-8084-bbfb-000b9afc3ecc";
@@ -59,6 +77,9 @@ const NEWS_DATA_SOURCE_ID =
 const SALES_TALK_DATA_SOURCE_ID =
 	process.env.SALES_TALK_DATA_SOURCE_ID ??
 	"e0b4877f-ec35-46ee-a274-e4f926f2e622";
+const KNOWLEDGE_DATA_SOURCE_ID =
+	process.env.KNOWLEDGE_DATA_SOURCE_ID ??
+	"8ffd91e0-2f44-4915-926a-d410bcb04e95";
 const DAILY_REPORT_REQUEST_DATA_SOURCE_ID =
 	process.env.DAILY_REPORT_REQUEST_DATA_SOURCE_ID ??
 	"990cdd37-1217-4424-9a24-dadf64f9baa0";
@@ -72,7 +93,21 @@ const CLOSING_REPORT_DATA_SOURCE_ID =
 	process.env.CLOSING_REPORT_DATA_SOURCE_ID ??
 	"8d5a506b-59b8-4e50-bc77-d5412774048d";
 const CLOSING_REPORT_TEMPLATE_ID = process.env.CLOSING_REPORT_TEMPLATE_ID;
-const PROJECT_TEMPLATE_ID = process.env.PROJECT_TEMPLATE_ID;
+const INQUIRY_TEMPLATE_ID =
+	process.env.INQUIRY_TEMPLATE_ID ??
+	"cda2757f-fc36-4ec8-9de6-53478196c7c5";
+const PROJECT_TEMPLATE_ID =
+	process.env.PROJECT_TEMPLATE_ID ??
+	"0b9815a4-37c4-4e4c-90b6-1d54fd9664a3";
+const PROJECT_COVER_FILE_UPLOAD_ID =
+	process.env.PROJECT_COVER_FILE_UPLOAD_ID ??
+	"3714d017-81e7-8185-8498-00b21fcffbe1";
+const MEETING_TEMPLATE_ID =
+	process.env.MEETING_TEMPLATE_ID ??
+	"22adce6c-9249-4806-8f91-14fec2753fb1";
+const DEAL_TEMPLATE_ID =
+	process.env.DEAL_TEMPLATE_ID ??
+	"e6bb4094-52c0-4fca-b6be-1230b467c781";
 const AI_LEARNING_LOG_DATA_SOURCE_ID =
 	process.env.AI_LEARNING_LOG_DATA_SOURCE_ID ??
 	"0577bcac-f09d-42f6-98e4-84062956abba";
@@ -401,12 +436,74 @@ export {
 	isDeepResearchComplete as isDeepResearchCompleteForTest,
 };
 
-// 暫定: TDBアクセスは未接続。プラン1B(COSMOSNet自動取得)でここを差し替える。
-async function fetchTdbProfile(_company: CompanyInfo): Promise<TdbProfile | null> {
-	void _company;
-	// TODO(plan-1B): COSMOSNet取得部品から TdbProfile を返すよう接続する。
-	return null;
+// TDB取得部品(会社Mac mini上のPlaywrightサービス)をHTTPで叩く。
+// TDB_FETCHER_URL 未設定なら null=従来通り暫定与信にフォールバック(本番に影響ゼロ)。
+// I/F契約: docs/superpowers/specs/2026-06-07-tdb-fetcher-interface.md
+async function fetchTdbProfile(company: CompanyInfo): Promise<TdbProfile | null> {
+	const url = process.env.TDB_FETCHER_URL?.trim();
+	if (!url) return null;
+	try {
+		const res = await fetch(url, {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				authorization: `Bearer ${process.env.TDB_FETCHER_TOKEN ?? ""}`,
+			},
+			body: JSON.stringify({
+				企業名: company.name,
+				ヒント: { website: company.website, 住所: company.address },
+			}),
+		});
+		if (!res.ok) return null;
+		const data: unknown = await res.json();
+		return normalizeTdbProfile(data);
+	} catch {
+		return null; // 取得部品が落ちていても本体リサーチは止めない
+	}
 }
+
+// 取得部品の生JSONを TdbProfile に正規化・検証する純関数。
+// status!=="found"や非オブジェクトはnull。評点/倒産確率は数値以外をnullに丸め、
+// 文字項目はtrimして欠損は空文字(評点が壊れていても他の事実は捨てない)。
+function normalizeTdbProfile(data: unknown): TdbProfile | null {
+	if (typeof data !== "object" || data === null) return null;
+	const d = data as Record<string, unknown>;
+	if (d.status !== "found") return null;
+	const num = (v: unknown): number | null =>
+		typeof v === "number" && Number.isFinite(v) ? v : null;
+	const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+	return {
+		企業評点: num(d.企業評点),
+		倒産確率Pct: num(d.倒産確率Pct),
+		年商: str(d.年商),
+		資本金: str(d.資本金),
+		従業員数: str(d.従業員数),
+		設立: str(d.設立),
+		業種: str(d.業種),
+		代表者: str(d.代表者),
+		法人番号: str(d.法人番号),
+		調査年月日: str(d.調査年月日),
+		raw: str(d.raw),
+	};
+}
+
+export {
+	fetchTdbProfile as fetchTdbProfileForTest,
+	normalizeTdbProfile as normalizeTdbProfileForTest,
+};
+
+// 短い事実列(代表者/資本金/設立年月/売上規模/従業員規模/業種)を営業がそのまま読める
+// ベタ値にする。出典番号[1][3]/【1】/［１］と末尾の丁寧語「です。」を落とす。
+// 文章列(3C/サマリー/直近ニュース等)には使わない=出典を残す。
+function cleanStructuredFact(value: string): string {
+	if (!value) return "";
+	const out = value
+		.replace(/\s*[\[【［]\s*[0-9０-９]+(?:\s*[,，、]\s*[0-9０-９]+)*\s*[\]】］]/g, "")
+		.replace(/[ \t　]{2,}/g, " ")
+		.trim();
+	return out.replace(/(?:です。|です|。)\s*$/, "").trim();
+}
+export { cleanStructuredFact as cleanStructuredFactForTest };
 
 function tdbToPatches(tdb: TdbProfile): Record<string, SafePatch> {
 	const patches: Record<string, SafePatch> = {};
@@ -618,7 +715,9 @@ type NotionClient = {
 	pages: {
 		create: (args: Record<string, unknown>) => Promise<Page>;
 		retrieve: (args: Record<string, unknown>) => Promise<Page>;
+		retrieveMarkdown?: (args: Record<string, unknown>) => Promise<{ markdown?: string }>;
 		update: (args: Record<string, unknown>) => Promise<Page>;
+		updateMarkdown?: (args: Record<string, unknown>) => Promise<unknown>;
 	};
 	fileUploads?: {
 		create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
@@ -1034,6 +1133,50 @@ type MeetingTaskResult = {
 	message: string;
 };
 
+type MeetingKnowledgeInput = {
+	meetingPageId: string;
+	dryRun?: boolean;
+};
+
+type MeetingKnowledgeResult = {
+	meetingPageId: string;
+	action: "created-knowledge" | "skipped-duplicate" | "needs-review" | "dry-run" | "error";
+	created: number;
+	candidates: number;
+	knowledgePageId: string | null;
+	message: string;
+};
+
+type MeetingQuickStartInput = {
+	meetingType: string;
+	dryRun?: boolean;
+	now?: Date;
+};
+
+type MeetingQuickStartResult = {
+	meetingPageId: string | null;
+	meetingUrl: string | null;
+	action: "created-meeting" | "dry-run" | "use-deal-quick-start";
+	meetingType: MeetingPrimaryType;
+	meetingDate: string;
+	title: string;
+	message: string;
+};
+
+type DealQuickStartInput = {
+	dryRun?: boolean;
+	now?: Date;
+};
+
+type DealQuickStartResult = {
+	dealPageId: string | null;
+	dealUrl: string | null;
+	action: "created-deal" | "dry-run";
+	dealDate: string;
+	title: string;
+	message: string;
+};
+
 type ManagerReviewInput = {
 	managerReviewPageId: string;
 	dryRun?: boolean;
@@ -1056,6 +1199,7 @@ type SalesPerformanceReviewResult = {
 	action: "reviewed" | "needs-review" | "dry-run" | "error";
 	status: string;
 	message: string;
+	sourcePreview: string[];
 };
 
 type DailyReportReceiptSyncInput = {
@@ -2067,6 +2211,166 @@ worker.tool("createCustomerContactLog", {
 	},
 });
 
+worker.tool("reflectCustomerContactLogsToActivityLogs", {
+	title: "WAJO 顧客接点ログ→活動ログ反映",
+	description:
+		"顧客接点ログDBの未反映/反映候補を活動ログDBへ集約し、元ログを反映済みにします。評価確定や点数変更は行いません。",
+	schema: j.object({
+		limit: j.integer().describe("一度に確認する最大件数。1から100。空なら20件"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+		workerRunId: j.string().describe("任意の実行ID。空ならWorker側で生成します"),
+	}),
+	outputSchema: j.object({
+		scanned: j.integer(),
+		created: j.integer(),
+		skipped: j.integer(),
+		errors: j.integer(),
+	}),
+	execute: async ({ limit, dryRun, workerRunId }, { notion }) => {
+		return reflectCustomerContactLogsToActivityLogs(
+			{ limit, dryRun, workerRunId },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("reflectSpeechLogsToActivityLogs", {
+	title: "WAJO 発言ログ→活動ログ反映",
+	description:
+		"発言ログDBの未集約レコードを活動ログDBへ集約します。評価確定や点数変更は行いません。",
+	schema: j.object({
+		limit: j.integer().describe("一度に確認する最大件数。1から100。空なら20件"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+		workerRunId: j.string().describe("任意の実行ID。空なら元発言ページIDから生成します"),
+	}),
+	outputSchema: j.object({
+		scanned: j.integer(),
+		created: j.integer(),
+		skipped: j.integer(),
+		errors: j.integer(),
+	}),
+	execute: async ({ limit, dryRun, workerRunId }, { notion }) => {
+		return reflectSpeechLogsToActivityLogs(
+			{ limit, dryRun, workerRunId },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("reflectSalesContributionLogsToActivityLogs", {
+	title: "WAJO 営業貢献ログ→活動ログ反映",
+	description:
+		"営業貢献ログDBの未反映/反映候補を活動ログDBへ集約し、元ログを反映済みにします。評価確定や点数変更は行いません。",
+	schema: j.object({
+		limit: j.integer().describe("一度に確認する最大件数。1から100。空なら20件"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+		workerRunId: j.string().describe("任意の実行ID。空なら元貢献ページIDから生成します"),
+	}),
+	outputSchema: j.object({
+		scanned: j.integer(),
+		created: j.integer(),
+		skipped: j.integer(),
+		errors: j.integer(),
+	}),
+	execute: async ({ limit, dryRun, workerRunId }, { notion }) => {
+		return reflectSalesContributionLogsToActivityLogs(
+			{ limit, dryRun, workerRunId },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("reflectHitomiMemosToActivityLogs", {
+	title: "WAJO 人見さんメモ→補助ログ反映",
+	description:
+		"人見さんメモDBの月次確認候補を活動ログDBへ補助文脈として集約します。評価対象にはせず、評価確定や点数変更は行いません。",
+	schema: j.object({
+		limit: j.integer().describe("一度に確認する最大件数。1から100。空なら20件"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+		workerRunId: j.string().describe("任意の実行ID。空なら元メモページIDから生成します"),
+	}),
+	outputSchema: j.object({
+		scanned: j.integer(),
+		created: j.integer(),
+		skipped: j.integer(),
+		errors: j.integer(),
+	}),
+	execute: async ({ limit, dryRun, workerRunId }, { notion }) => {
+		return reflectHitomiMemosToActivityLogs(
+			{ limit, dryRun, workerRunId },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("reflectWaniPoMemoriesToActivityLogs", {
+	title: "WAJO ワニポメモリー→補助ログ反映",
+	description:
+		"ワニポメモリーDBの本人共有済み/反映候補を活動ログDBへ補助文脈として集約します。評価対象にはせず、評価確定や点数変更は行いません。",
+	schema: j.object({
+		limit: j.integer().describe("一度に確認する最大件数。1から100。空なら20件"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+		workerRunId: j.string().describe("任意の実行ID。空なら元メモページIDから生成します"),
+	}),
+	outputSchema: j.object({
+		scanned: j.integer(),
+		created: j.integer(),
+		skipped: j.integer(),
+		errors: j.integer(),
+	}),
+	execute: async ({ limit, dryRun, workerRunId }, { notion }) => {
+		return reflectWaniPoMemoriesToActivityLogs(
+			{ limit, dryRun, workerRunId },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("reflectAiConsultationsToActivityLogs", {
+	title: "WAJO AI相談受付→補助ログ反映",
+	description:
+		"AI相談受付DBの完了相談を活動ログDBへ補助文脈として集約します。評価対象にはせず、評価確定や点数変更は行いません。",
+	schema: j.object({
+		limit: j.integer().describe("一度に確認する最大件数。1から100。空なら20件"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+		workerRunId: j.string().describe("任意の実行ID。空なら元相談ページIDから生成します"),
+	}),
+	outputSchema: j.object({
+		scanned: j.integer(),
+		created: j.integer(),
+		skipped: j.integer(),
+		errors: j.integer(),
+	}),
+	execute: async ({ limit, dryRun, workerRunId }, { notion }) => {
+		return reflectAiConsultationsToActivityLogs(
+			{ limit, dryRun, workerRunId },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("linkActivityLogsToSalesPerformance", {
+	title: "WAJO 活動ログ→月次営業評価リンク",
+	description:
+		"活動ログDBの評価対象ログを、活動者と活動日時から該当する営業マンパフォーマンス月次ページへ紐づけます。点数、ランク、評価ステータスは変更しません。",
+	schema: j.object({
+		limit: j.integer().describe("一度に確認する最大件数。1から100。空なら20件"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		scanned: j.integer(),
+		linked: j.integer(),
+		skipped: j.integer(),
+		errors: j.integer(),
+	}),
+	execute: async ({ limit, dryRun }, { notion }) => {
+		return linkActivityLogsToSalesPerformance(
+			{ limit, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
 worker.tool("refreshSalesPipelineSignal", {
 	title: "WAJO 案件化/成約 温度計更新",
 	description:
@@ -2324,11 +2628,11 @@ worker.tool("processCompanyResearchById", {
 });
 
 worker.tool("processMeetingMemoFormatById", {
-	title: "WAJO 会議メモ整形",
+	title: "WAJO ミーティングメモ整形",
 	description:
-		"会議議事録DBのページIDから、Meeting Notes本文または既存本文を読み、要約・議事内容・決定事項・アクション項目へ整理します。タスク作成や商談更新は行いません。",
+		"ミーティングデータベースのページIDから、Meeting Notes本文または既存本文を読み、要約・議事内容・決定事項・アクション項目へ整理します。タスク作成や商談更新は行いません。",
 	schema: j.object({
-		meetingPageId: j.string().describe("会議議事録DBのページID"),
+		meetingPageId: j.string().describe("ミーティングデータベースのページID"),
 		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
 	}),
 	outputSchema: j.object({
@@ -2346,11 +2650,11 @@ worker.tool("processMeetingMemoFormatById", {
 });
 
 worker.tool("processMeetingFeedbackById", {
-	title: "WAJO 会議フィードバック",
+	title: "WAJO ミーティングフィードバック",
 	description:
-		"会議議事録DBのページIDから、整形済み会議内容を読み、次が良くなる率直フィードバックを返します。タスク作成や商談更新、評価確定は行いません。",
+		"ミーティングデータベースのページIDから、整形済み内容を読み、次が良くなる率直フィードバックを返します。タスク作成や商談更新、評価確定は行いません。",
 	schema: j.object({
-		meetingPageId: j.string().describe("会議議事録DBのページID"),
+		meetingPageId: j.string().describe("ミーティングデータベースのページID"),
 		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
 	}),
 	outputSchema: j.object({
@@ -2368,11 +2672,11 @@ worker.tool("processMeetingFeedbackById", {
 });
 
 worker.tool("processMeetingDealLinkById", {
-	title: "WAJO 会議→商談連携",
+	title: "WAJO ミーティング→商談連携",
 	description:
-		"会議議事録DBの商談会議を商談管理DBへ紐づけます。関連企業1社の商談会議だけを対象にし、既存商談がある場合は新規作成しません。",
+		"ミーティングデータベースのうち、種別またはタグが商談のページだけを商談管理DBへ紐づけます。関連企業1社の商談だけを対象にし、既存商談がある場合は新規作成しません。",
 	schema: j.object({
-		meetingPageId: j.string().describe("会議議事録DBのページID"),
+		meetingPageId: j.string().describe("ミーティングデータベースのページID"),
 		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
 	}),
 	outputSchema: j.object({
@@ -2390,11 +2694,11 @@ worker.tool("processMeetingDealLinkById", {
 });
 
 worker.tool("processMeetingTasksById", {
-	title: "WAJO 会議タスク振り分け",
+	title: "WAJO ミーティングタスク振り分け",
 	description:
-		"会議議事録DBのアクション項目からチームトラッカーへタスクを作成します。関連会議議事録で既存タスクを確認し、二重作成を防ぎます。",
+		"ミーティングデータベースのアクション項目からチームトラッカーへタスクを作成します。関連ミーティングで既存タスクを確認し、二重作成を防ぎます。",
 	schema: j.object({
-		meetingPageId: j.string().describe("会議議事録DBのページID"),
+		meetingPageId: j.string().describe("ミーティングデータベースのページID"),
 		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
 	}),
 	outputSchema: j.object({
@@ -2407,6 +2711,80 @@ worker.tool("processMeetingTasksById", {
 	execute: async ({ meetingPageId, dryRun }, { notion }) => {
 		return processMeetingTasks(
 			{ meetingPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processMeetingKnowledgeById", {
+	title: "WAJO ミーティングナレッジ候補化",
+	description:
+		"ミーティングデータベースの内容から社内ナレッジDBへ未承認候補を作成します。既存の元ミーティングrelationで二重作成を防ぎます。",
+	schema: j.object({
+		meetingPageId: j.string().describe("ミーティングデータベースのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		meetingPageId: j.string(),
+		action: j.string(),
+		created: j.integer(),
+		candidates: j.integer(),
+		knowledgePageId: j.string().nullable(),
+		message: j.string(),
+	}),
+	execute: async ({ meetingPageId, dryRun }, { notion }) => {
+		return processMeetingKnowledge(
+			{ meetingPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("quickStartMeetingByType", {
+	title: "WAJO ミーティング開始",
+	description:
+		"ミーティングデータベースに、本日のミーティングページを作成します。商談はquickStartDealで商談データベースへ作成します。",
+	schema: j.object({
+		meetingType: j
+			.string()
+			.describe("ミーティング、営業会議、1on1など。旧値はタグ候補としてミーティングへ寄せます。商談はquickStartDealを使います。"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		meetingPageId: j.string().nullable(),
+		meetingUrl: j.string().nullable(),
+		action: j.string(),
+		meetingType: j.string(),
+		meetingDate: j.string(),
+		title: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ meetingType, dryRun }, { notion }) => {
+		return processMeetingQuickStart(
+			{ meetingType, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("quickStartDeal", {
+	title: "WAJO 商談を作る",
+	description:
+		"商談データベースに本日の商談ページを作成します。会議/ミーティングDBには作成しません。関連企業未設定のため要確認で止めます。",
+	schema: j.object({
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		dealPageId: j.string().nullable(),
+		dealUrl: j.string().nullable(),
+		action: j.string(),
+		dealDate: j.string(),
+		title: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ dryRun }, { notion }) => {
+		return processDealQuickStart(
+			{ dryRun },
 			notion as unknown as NotionClient,
 		);
 	},
@@ -2447,6 +2825,7 @@ worker.tool("processSalesPerformanceReviewById", {
 		action: j.string(),
 		status: j.string(),
 		message: j.string(),
+		sourcePreview: j.array(j.string()),
 	}),
 	execute: async ({ salesPerformancePageId, dryRun }, { notion }) => {
 		return processSalesPerformanceReview(
@@ -2855,12 +3234,12 @@ worker.webhook("processCompanyResearchWebhook", {
 });
 
 worker.webhook("processMeetingMemoFormatWebhook", {
-	title: "WAJO 会議メモ整形Webhook",
+	title: "WAJO ミーティングメモ整形Webhook",
 	description:
-		"会議議事録DBのページIDを受け取り、Meeting Notes本文または既存本文をDBプロパティへ整理します。チームトラッカーや商談管理DBは更新しません。",
+		"ミーティングデータベースのページIDを受け取り、Meeting Notes本文または既存本文をDBプロパティへ整理します。チームトラッカーや商談管理DBは更新しません。",
 	execute: async (events, { notion }) => {
+		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
 		for (const event of events) {
-			verifyWebhookSecret(event.headers, event.body);
 			const body = event.body as Record<string, unknown>;
 			const meetingPageId = extractMeetingPageIdFromWebhook(body);
 			if (!meetingPageId) {
@@ -2877,12 +3256,12 @@ worker.webhook("processMeetingMemoFormatWebhook", {
 });
 
 worker.webhook("processMeetingFeedbackWebhook", {
-	title: "WAJO 会議フィードバックWebhook",
+	title: "WAJO ミーティングフィードバックWebhook",
 	description:
-		"会議議事録DBのページIDを受け取り、整形済み会議内容から率直フィードバックを返します。タスク作成、商談更新、評価確定は行いません。",
+		"ミーティングデータベースのページIDを受け取り、整形済み内容から率直フィードバックを返します。タスク作成、商談更新、評価確定は行いません。",
 	execute: async (events, { notion }) => {
+		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
 		for (const event of events) {
-			verifyWebhookSecret(event.headers, event.body);
 			const body = event.body as Record<string, unknown>;
 			const meetingPageId = extractMeetingPageIdFromWebhook(body);
 			if (!meetingPageId) {
@@ -2899,12 +3278,12 @@ worker.webhook("processMeetingFeedbackWebhook", {
 });
 
 worker.webhook("processMeetingDealLinkWebhook", {
-	title: "WAJO 会議→商談連携Webhook",
+	title: "WAJO ミーティング→商談連携Webhook",
 	description:
-		"会議議事録DBのページIDを受け取り、商談会議だけを商談管理DBへ紐づけます。関連企業が一意でない場合は要確認で停止します。",
+		"ミーティングデータベースのページIDを受け取り、種別またはタグが商談のページだけを商談管理DBへ紐づけます。関連企業が一意でない場合は要確認で停止します。",
 	execute: async (events, { notion }) => {
+		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
 		for (const event of events) {
-			verifyWebhookSecret(event.headers, event.body);
 			const body = event.body as Record<string, unknown>;
 			const meetingPageId = extractMeetingPageIdFromWebhook(body);
 			if (!meetingPageId) {
@@ -2921,12 +3300,12 @@ worker.webhook("processMeetingDealLinkWebhook", {
 });
 
 worker.webhook("processMeetingTasksWebhook", {
-	title: "WAJO 会議タスク振り分けWebhook",
+	title: "WAJO ミーティングタスク振り分けWebhook",
 	description:
-		"会議議事録DBのページIDを受け取り、アクション項目からチームトラッカーへタスクを作成します。既存関連タスクがある場合は二重作成しません。",
+		"ミーティングデータベースのページIDを受け取り、アクション項目からチームトラッカーへタスクを作成します。既存関連タスクがある場合は二重作成しません。",
 	execute: async (events, { notion }) => {
+		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
 		for (const event of events) {
-			verifyWebhookSecret(event.headers, event.body);
 			const body = event.body as Record<string, unknown>;
 			const meetingPageId = extractMeetingPageIdFromWebhook(body);
 			if (!meetingPageId) {
@@ -2941,6 +3320,42 @@ worker.webhook("processMeetingTasksWebhook", {
 		}
 	},
 });
+
+worker.webhook("processMeetingKnowledgeWebhook", {
+	title: "WAJO ミーティングナレッジ候補化Webhook",
+	description:
+		"ミーティングデータベースのページIDを受け取り、社内ナレッジDBへ未承認候補を作成します。既存候補がある場合は二重作成しません。",
+	execute: async (events, { notion }) => {
+		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const meetingPageId = extractMeetingPageIdFromWebhook(body);
+			if (!meetingPageId) {
+				throw new Error(
+					"meetingPageId / pageId / entity.id のいずれからも会議ページIDを特定できませんでした。",
+				);
+			}
+			await processMeetingKnowledge(
+				{ meetingPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+registerMeetingQuickStartWebhook(
+	"quickStartMeetingWebhook",
+	"WAJO ミーティングを始めるWebhook",
+	"ミーティング",
+);
+registerDealQuickStartWebhook(
+	"quickStartDealMeetingWebhook",
+	"WAJO 商談を作るWebhook",
+);
+registerDealQuickStartWebhook(
+	"quickStartDealWebhook",
+	"WAJO 商談を作るWebhook",
+);
 
 worker.webhook("processManagerReviewWebhook", {
 	title: "WAJO 人見さん壁打ち補助Webhook",
@@ -3912,12 +4327,949 @@ async function createCustomerContactLog(
 		contactLogPageId: created.id,
 		action: "created-log",
 		message:
-			"顧客接点ログDBへ1件作成しました。活動ログハブへは未反映のまま、ステータス・評価点は変更していません。",
+			"顧客接点ログDBへ1件作成しました。活動ログへは未反映のまま、ステータス・評価点は変更していません。",
 	};
+}
+
+function buildActivityLogFromContactLog(
+	contactLogPage: Page,
+	_workerRunId = `customer-contact-reflect-${new Date().toISOString()}`,
+): Record<string, unknown> | null {
+	const properties = contactLogPage.properties ?? {};
+	const titleText =
+		text(properties["接点タイトル"]) ||
+		text(properties["活動表示"]) ||
+		text(properties["活動ログ"]);
+	const activityContent = text(properties["活動内容"]);
+	const nextAction = text(properties["次回アクション"]);
+	const activityLog = text(properties["活動ログ"]);
+	const activityDisplay = text(properties["活動表示"]);
+	const activityKind = text(properties["活動種別"]);
+	const usefulNextAction = nextAction && !isLowSignalContactActivityText(nextAction) ? nextAction : "";
+	if (!activityContent && !usefulNextAction && isTitleOnlyContactLog(titleText, activityLog, activityDisplay)) {
+		return null;
+	}
+	if (!activityContent && !usefulNextAction && !activityLog) return null;
+	if (!activityContent && !usefulNextAction && !activityKind) return null;
+	const joinedForAuditCheck = [
+		titleText,
+		activityContent,
+		usefulNextAction,
+		activityLog,
+		activityDisplay,
+	].join(" ");
+	if (isInternalTestOrAuditText(joinedForAuditCheck)) {
+		return null;
+	}
+	const contactActivityBody = [
+		activityContent,
+		usefulNextAction,
+		activityLog,
+		activityDisplay,
+	].join(" ");
+	if (isLowSignalContactActivityText(contactActivityBody)) {
+		return null;
+	}
+	if (!activityContent && !nextAction && !activityLog && !activityDisplay) return null;
+	const body = [
+		titleText ? `接点: ${titleText}` : "",
+		activityContent ? `活動内容: ${activityContent}` : "",
+		activityLog ? `活動ログ: ${activityLog}` : "",
+		activityDisplay ? `活動表示: ${activityDisplay}` : "",
+		usefulNextAction ? `次回アクション: ${usefulNextAction}` : "",
+		contactLogPage.url ? `元ログ: ${contactLogPage.url}` : "",
+	]
+		.filter(Boolean)
+		.join("\n");
+	const activityDate =
+		dateStartFromProperty(properties["接点日時"]) ||
+		dateStartFromProperty(properties["活動日時"]);
+	const assignedUserIds = uniqueIds([
+		...personIdsFromProperty(properties["担当営業ユーザー"]),
+		...personIdsFromProperty(properties["担当者"]),
+	]);
+	const relatedCompanyIds = uniqueIds(relationIdsFromProperty(properties["関連企業"]));
+	const relatedDealIds = uniqueIds(relationIdsFromProperty(properties["関連商談"]));
+	const createProperties: Record<string, unknown> = {
+		活動タイトル: title(titleText || "顧客接点ログ"),
+		活動ログ: richText(body),
+		AIサマリ: richText(body),
+		活動種別: select("社外打合せ"),
+		活動処理状態: select("完了"),
+		評価対象: { checkbox: true },
+		Worker処理ID: richText(_workerRunId),
+		関連顧客接点ログ: relationIds([contactLogPage.id]),
+	};
+	if (activityDate) createProperties["活動日時"] = { date: { start: activityDate } };
+	if (assignedUserIds.length > 0) {
+		createProperties["活動者"] = {
+			people: assignedUserIds.map((id) => ({ object: "user", id })),
+		};
+	}
+	if (relatedCompanyIds.length > 0) createProperties["関連企業"] = relationIds(relatedCompanyIds);
+	if (relatedDealIds.length > 0) createProperties["関連商談"] = relationIds(relatedDealIds);
+	return {
+		parent: { data_source_id: ACTIVITY_LOG_DATA_SOURCE_ID },
+		properties: createProperties,
+	};
+}
+
+function buildActivityLogFromSpeechLog(
+	speechLogPage: Page,
+	workerRunId?: string,
+): Record<string, unknown> | null {
+	const properties = speechLogPage.properties ?? {};
+	const titleText = text(properties["発言タイトル"]);
+	const speechContent = text(properties["発言内容"]);
+	const category = text(properties["発言カテゴリ"]);
+	const importance = text(properties["重要度"]);
+	const processingMemo = text(properties["発言処理メモ"]);
+	const joinedForAuditCheck = [
+		titleText,
+		speechContent,
+		category,
+		importance,
+		processingMemo,
+	].join(" ");
+	if (isInternalTestOrAuditText(joinedForAuditCheck)) return null;
+	if (!speechContent) return null;
+	const body = [
+		titleText ? `発言: ${titleText}` : "",
+		category ? `発言カテゴリ: ${category}` : "",
+		importance ? `重要度: ${importance}` : "",
+		`発言内容: ${speechContent}`,
+		processingMemo ? `処理メモ: ${processingMemo}` : "",
+		speechLogPage.url ? `元発言ログ: ${speechLogPage.url}` : "",
+	]
+		.filter(Boolean)
+		.join("\n");
+	const activityDate =
+		dateStartFromProperty(properties["発言日時"]) ||
+		createdDateFromPage(speechLogPage);
+	const speakerIds = uniqueIds([
+		...personIdsFromProperty(properties["発言者"]),
+		...createdByUserIdsFromPage(speechLogPage),
+	]);
+	const relatedCompanyIds = uniqueIds(relationIdsFromProperty(properties["関連企業"]));
+	const relatedMeetingIds = uniqueIds(relationIdsFromProperty(properties["関連会議"]));
+	const workerProcessId = workerRunId || `speech-log-${speechLogPage.id}`;
+	const createProperties: Record<string, unknown> = {
+		活動タイトル: title(titleText || "発言ログ"),
+		活動ログ: richText(body),
+		AIサマリ: richText(body),
+		活動種別: select("その他"),
+		活動処理状態: select("完了"),
+		評価対象: { checkbox: true },
+		Worker処理ID: richText(workerProcessId),
+		関連発言: relationIds([speechLogPage.id]),
+	};
+	if (activityDate) createProperties["活動日時"] = { date: { start: activityDate } };
+	if (speakerIds.length > 0) {
+		createProperties["活動者"] = {
+			people: speakerIds.map((id) => ({ object: "user", id })),
+		};
+	}
+	if (relatedCompanyIds.length > 0) createProperties["関連企業"] = relationIds(relatedCompanyIds);
+	if (relatedMeetingIds.length > 0) createProperties["関連ミーティング"] = relationIds(relatedMeetingIds);
+	return {
+		parent: { data_source_id: ACTIVITY_LOG_DATA_SOURCE_ID },
+		properties: createProperties,
+	};
+}
+
+function buildActivityLogFromSalesContributionLog(
+	contributionLogPage: Page,
+	workerRunId?: string,
+): Record<string, unknown> | null {
+	const properties = contributionLogPage.properties ?? {};
+	const titleText = text(properties["貢献タイトル"]);
+	const contributionType = text(properties["種別"]);
+	const category = text(properties["貢献カテゴリ"]);
+	const impact = text(properties["貢献インパクト"]);
+	const approvalStatus = text(properties["承認ステータス"]);
+	const reflectionStatus = text(properties["評価反映状態"]);
+	const aiComment = text(properties["AIコメント"]);
+	const visibleComment = text(properties["本人への見える化コメント"]);
+	const comment = text(properties["コメント"]);
+	const managerMemo = text(properties["マネージャーメモ"]);
+	const points = numberValue(properties["ポイント"]) ?? numberValue(properties["ポイント手入力"]);
+	const joinedForAuditCheck = [
+		titleText,
+		contributionType,
+		category,
+		impact,
+		aiComment,
+		visibleComment,
+		comment,
+		managerMemo,
+	].join(" ");
+	if (isInternalTestOrAuditText(joinedForAuditCheck)) return null;
+	if (approvalStatus && approvalStatus !== "承認" && reflectionStatus !== "反映候補") return null;
+	if (!aiComment && !visibleComment && !comment && !managerMemo) return null;
+	const body = [
+		titleText ? `貢献: ${titleText}` : "",
+		contributionType ? `種別: ${contributionType}` : "",
+		category ? `貢献カテゴリ: ${category}` : "",
+		impact ? `貢献インパクト: ${impact}` : "",
+		typeof points === "number" ? `ポイント: ${points}` : "",
+		aiComment ? `AIコメント: ${aiComment}` : "",
+		visibleComment ? `本人への見える化コメント: ${visibleComment}` : "",
+		comment ? `コメント: ${comment}` : "",
+		managerMemo ? `マネージャーメモ: ${managerMemo}` : "",
+		contributionLogPage.url ? `元営業貢献ログ: ${contributionLogPage.url}` : "",
+	]
+		.filter(Boolean)
+		.join("\n");
+	const activityDate =
+		dateStartFromProperty(properties["日付"]) ||
+		dateStartFromProperty(properties["確認日"]) ||
+		createdDateFromPage(contributionLogPage);
+	const activityUserIds = uniqueIds([
+		...personIdsFromProperty(properties["対象営業ユーザー"]),
+		...createdByUserIdsFromPage(contributionLogPage),
+	]);
+	const relatedDealIds = uniqueIds(relationIdsFromProperty(properties["関連商談"]));
+	const workerProcessId = workerRunId || `sales-contribution-${contributionLogPage.id}`;
+	const createProperties: Record<string, unknown> = {
+		活動タイトル: title(titleText || "営業貢献ログ"),
+		活動ログ: richText(body),
+		AIサマリ: richText(body),
+		活動種別: select("その他"),
+		活動処理状態: select("完了"),
+		評価対象: { checkbox: true },
+		Worker処理ID: richText(workerProcessId),
+		関連営業貢献ログ: relationIds([contributionLogPage.id]),
+	};
+	if (activityDate) createProperties["活動日時"] = { date: { start: activityDate } };
+	if (activityUserIds.length > 0) {
+		createProperties["活動者"] = {
+			people: activityUserIds.map((id) => ({ object: "user", id })),
+		};
+	}
+	if (relatedDealIds.length > 0) createProperties["関連商談"] = relationIds(relatedDealIds);
+	return {
+		parent: { data_source_id: ACTIVITY_LOG_DATA_SOURCE_ID },
+		properties: createProperties,
+	};
+}
+
+function buildActivityLogFromHitomiMemo(
+	hitomiMemoPage: Page,
+	workerRunId?: string,
+): Record<string, unknown> | null {
+	const properties = hitomiMemoPage.properties ?? {};
+	if (!isHitomiMemoEvaluationEvidence(properties)) return null;
+	const titleText = text(properties["メモ名"]);
+	const originalMemo = text(properties["ひとこと原文"]);
+	const organizedMemo = text(properties["人見さん整理メモ"]);
+	const memoType = text(properties["メモ種別"]);
+	const materialStatus = text(properties["評価材料化状態"]);
+	const monthlyStatus = text(properties["月次評価反映状態"]);
+	const aiCategory = text(properties["AI活用カテゴリ"]);
+	const aiPointStatus = text(properties["AI活用ポイント状態"]);
+	const aiPointReason = text(properties["AI活用ポイント理由"]);
+	const nextAction = text(properties["次アクション"]);
+	const aiPoints = numberValue(properties["AI活用ポイント"]);
+	const joinedForAuditCheck = [
+		titleText,
+		originalMemo,
+		organizedMemo,
+		memoType,
+		aiCategory,
+		aiPointReason,
+		nextAction,
+	].join(" ");
+	if (isInternalTestOrAuditText(joinedForAuditCheck)) return null;
+	if (!originalMemo && !organizedMemo && !aiPointReason && !nextAction) return null;
+	const body = [
+		titleText ? `人見さんメモ: ${titleText}` : "",
+		memoType ? `メモ種別: ${memoType}` : "",
+		materialStatus ? `評価材料化状態: ${materialStatus}` : "",
+		monthlyStatus ? `月次評価反映状態: ${monthlyStatus}` : "",
+		originalMemo ? `ひとこと原文: ${originalMemo}` : "",
+		organizedMemo ? `人見さん整理メモ: ${organizedMemo}` : "",
+		aiCategory ? `AI活用カテゴリ: ${aiCategory}` : "",
+		typeof aiPoints === "number" ? `AI活用ポイント: ${aiPoints}` : "",
+		aiPointStatus ? `AI活用ポイント状態: ${aiPointStatus}` : "",
+		aiPointReason ? `AI活用ポイント理由: ${aiPointReason}` : "",
+		nextAction ? `次アクション: ${nextAction}` : "",
+		hitomiMemoPage.url ? `元人見さんメモ: ${hitomiMemoPage.url}` : "",
+	]
+		.filter(Boolean)
+		.join("\n");
+	const activityDate =
+		dateStartFromProperty(properties["報告日"]) ||
+		dateStartFromProperty(properties["関連月"]) ||
+		createdDateFromPage(hitomiMemoPage);
+	const activityUserIds = uniqueIds([
+		...personIdsFromProperty(properties["対象スタッフ"]),
+		...createdByUserIdsFromPage(hitomiMemoPage),
+	]);
+	const workerProcessId = workerRunId || `hitomi-memo-${hitomiMemoPage.id}`;
+	const createProperties: Record<string, unknown> = {
+		活動タイトル: title(titleText || "人見さんメモ"),
+		活動ログ: richText(body),
+		AIサマリ: richText(body),
+		活動種別: select("その他"),
+		活動処理状態: select("完了"),
+		評価対象: { checkbox: false },
+		Worker処理ID: richText(workerProcessId),
+		関連人見さんメモ: relationIds([hitomiMemoPage.id]),
+	};
+	if (activityDate) createProperties["活動日時"] = { date: { start: activityDate } };
+	if (activityUserIds.length > 0) {
+		createProperties["活動者"] = {
+			people: activityUserIds.map((id) => ({ object: "user", id })),
+		};
+	}
+	return {
+		parent: { data_source_id: ACTIVITY_LOG_DATA_SOURCE_ID },
+		properties: createProperties,
+	};
+}
+
+function buildActivityLogFromWaniPoMemory(
+	waniPoMemoryPage: Page,
+	workerRunId?: string,
+): Record<string, unknown> | null {
+	const properties = waniPoMemoryPage.properties ?? {};
+	if (!isWaniPoMemoryEvaluationEvidence(properties)) return null;
+	const titleText = text(properties["メモ名"]);
+	const originalMemo = text(properties["原文メモ"]);
+	const organizedMemo = text(properties["ワニポ整理メモ"]);
+	const memoType = text(properties["メモ種別"]);
+	const visibility = text(properties["公開範囲"]);
+	const useStatus = text(properties["評価利用可否"]);
+	const monthlyStatus = text(properties["月次評価反映状態"]);
+	const aiCategory = text(properties["AI活用カテゴリ"]);
+	const aiPointStatus = text(properties["AI活用ポイント状態"]);
+	const aiPointReason = text(properties["AI活用ポイント理由"]);
+	const nextPrompt = text(properties["次の声かけ"]);
+	const aiPoints = numberValue(properties["AI活用ポイント"]);
+	const joinedForAuditCheck = [
+		titleText,
+		originalMemo,
+		organizedMemo,
+		memoType,
+		aiCategory,
+		aiPointReason,
+		nextPrompt,
+	].join(" ");
+	if (isInternalTestOrAuditText(joinedForAuditCheck)) return null;
+	if (!originalMemo && !organizedMemo && !aiPointReason && !nextPrompt) return null;
+	const body = [
+		titleText ? `ワニポメモリー: ${titleText}` : "",
+		memoType ? `メモ種別: ${memoType}` : "",
+		visibility ? `公開範囲: ${visibility}` : "",
+		useStatus ? `評価利用可否: ${useStatus}` : "",
+		monthlyStatus ? `月次評価反映状態: ${monthlyStatus}` : "",
+		originalMemo ? `原文メモ: ${originalMemo}` : "",
+		organizedMemo ? `ワニポ整理メモ: ${organizedMemo}` : "",
+		aiCategory ? `AI活用カテゴリ: ${aiCategory}` : "",
+		typeof aiPoints === "number" ? `AI活用ポイント: ${aiPoints}` : "",
+		aiPointStatus ? `AI活用ポイント状態: ${aiPointStatus}` : "",
+		aiPointReason ? `AI活用ポイント理由: ${aiPointReason}` : "",
+		nextPrompt ? `次の声かけ: ${nextPrompt}` : "",
+		waniPoMemoryPage.url ? `元ワニポメモリー: ${waniPoMemoryPage.url}` : "",
+	]
+		.filter(Boolean)
+		.join("\n");
+	const activityDate =
+		dateStartFromProperty(properties["記録日"]) ||
+		createdDateFromPage(waniPoMemoryPage);
+	const activityUserIds = uniqueIds([
+		...personIdsFromProperty(properties["対象スタッフ"]),
+		...createdByUserIdsFromPage(waniPoMemoryPage),
+	]);
+	const workerProcessId = workerRunId || `wanipo-memory-${waniPoMemoryPage.id}`;
+	const createProperties: Record<string, unknown> = {
+		活動タイトル: title(titleText || "ワニポメモリー"),
+		活動ログ: richText(body),
+		AIサマリ: richText(body),
+		活動種別: select("その他"),
+		活動処理状態: select("完了"),
+		評価対象: { checkbox: false },
+		Worker処理ID: richText(workerProcessId),
+		関連ワニポメモリー: relationIds([waniPoMemoryPage.id]),
+	};
+	if (activityDate) createProperties["活動日時"] = { date: { start: activityDate } };
+	if (activityUserIds.length > 0) {
+		createProperties["活動者"] = {
+			people: activityUserIds.map((id) => ({ object: "user", id })),
+		};
+	}
+	return {
+		parent: { data_source_id: ACTIVITY_LOG_DATA_SOURCE_ID },
+		properties: createProperties,
+	};
+}
+
+function buildActivityLogFromAiConsultation(
+	aiConsultationPage: Page,
+	workerRunId?: string,
+): Record<string, unknown> | null {
+	const properties = aiConsultationPage.properties ?? {};
+	const titleText = text(properties["相談内容 1"]);
+	const agent = text(properties["相談先エージェント"]);
+	const processingStatus = text(properties["処理状態"]);
+	const aiAnswer = text(properties["AI回答"]);
+	const joinedForAuditCheck = [titleText, agent, aiAnswer].join(" ");
+	if (isInternalTestOrAuditText(joinedForAuditCheck)) return null;
+	if (processingStatus && processingStatus !== "完了") return null;
+	if (!titleText && !aiAnswer) return null;
+	const body = [
+		titleText ? `AI相談受付: ${titleText}` : "",
+		agent ? `相談先エージェント: ${agent}` : "",
+		processingStatus ? `処理状態: ${processingStatus}` : "",
+		aiAnswer ? `AI回答: ${aiAnswer}` : "",
+		aiConsultationPage.url ? `元AI相談受付: ${aiConsultationPage.url}` : "",
+	]
+		.filter(Boolean)
+		.join("\n");
+	const activityDate = createdDateFromPage(aiConsultationPage);
+	const activityUserIds = uniqueIds([
+		...personIdsFromProperty(properties["相談者"]),
+		...createdByUserIdsFromPage(aiConsultationPage),
+	]);
+	const workerProcessId = workerRunId || `ai-consultation-${aiConsultationPage.id}`;
+	const createProperties: Record<string, unknown> = {
+		活動タイトル: title(titleText || "AI相談受付"),
+		活動ログ: richText(body),
+		AIサマリ: richText(body),
+		活動種別: select("その他"),
+		活動処理状態: select("完了"),
+		評価対象: { checkbox: false },
+		Worker処理ID: richText(workerProcessId),
+	};
+	if (activityDate) createProperties["活動日時"] = { date: { start: activityDate } };
+	if (activityUserIds.length > 0) {
+		createProperties["活動者"] = {
+			people: activityUserIds.map((id) => ({ object: "user", id })),
+		};
+	}
+	return {
+		parent: { data_source_id: ACTIVITY_LOG_DATA_SOURCE_ID },
+		properties: createProperties,
+	};
+}
+
+async function reflectCustomerContactLogsToActivityLogs(
+	input: { limit?: number; dryRun?: boolean; workerRunId?: string },
+	notion: NotionClient,
+): Promise<{ scanned: number; created: number; skipped: number; errors: number }> {
+	const limit = Math.max(1, Math.min(input.limit ?? 20, 100));
+	const response = await notion.dataSources.query({
+		data_source_id: CUSTOMER_CONTACT_LOG_DATA_SOURCE_ID,
+		page_size: limit,
+		filter: {
+			or: [
+				{ property: "活動ログ反映状態", select: { equals: "未反映" } },
+				{ property: "活動ログ反映状態", select: { equals: "反映候補" } },
+			],
+		},
+	});
+	let created = 0;
+	let skipped = 0;
+	let errors = 0;
+	for (const page of response.results) {
+		const createArgs = buildActivityLogFromContactLog(
+			page,
+			input.workerRunId,
+		);
+		if (!createArgs) {
+			skipped += 1;
+			if (!input.dryRun) {
+				try {
+					await notion.pages.update({
+						page_id: page.id,
+						properties: {
+							活動ログ反映状態: select("対象外"),
+						},
+					});
+				} catch (error) {
+					errors += 1;
+					console.log("customer contact skip status update failed", String(error));
+				}
+			}
+			continue;
+		}
+		if (input.dryRun) {
+			created += 1;
+			continue;
+		}
+		try {
+			const activityPage = await notion.pages.create(createArgs);
+			await notion.pages.update({
+				page_id: page.id,
+				properties: {
+					活動ログ反映状態: select("反映済み"),
+					関連活動ログ: relationIds([activityPage.id]),
+				},
+			});
+			created += 1;
+		} catch (error) {
+			errors += 1;
+			console.log("customer contact activity reflection failed", String(error));
+		}
+	}
+	return {
+		scanned: response.results.length,
+		created,
+		skipped,
+		errors,
+	};
+}
+
+async function reflectSpeechLogsToActivityLogs(
+	input: { limit?: number; dryRun?: boolean; workerRunId?: string },
+	notion: NotionClient,
+): Promise<{ scanned: number; created: number; skipped: number; errors: number }> {
+	const limit = Math.max(1, Math.min(input.limit ?? 20, 100));
+	const response = await notion.dataSources.query({
+		data_source_id: SPEECH_LOG_DATA_SOURCE_ID,
+		page_size: limit,
+		filter: {
+			property: "関連活動",
+			relation: { is_empty: true },
+		},
+	});
+	let created = 0;
+	let skipped = 0;
+	let errors = 0;
+	for (const page of response.results) {
+		const workerProcessId = input.workerRunId || `speech-log-${page.id}`;
+		const createArgs = buildActivityLogFromSpeechLog(
+			page,
+			workerProcessId,
+		);
+		if (!createArgs) {
+			skipped += 1;
+			continue;
+		}
+		if (input.dryRun) {
+			created += 1;
+			continue;
+		}
+		try {
+			await notion.pages.create(createArgs);
+			await notion.pages.update({
+				page_id: page.id,
+				properties: {
+					Worker処理ID: richText(workerProcessId),
+				},
+			});
+			created += 1;
+		} catch (error) {
+			errors += 1;
+			console.log("speech activity reflection failed", String(error));
+		}
+	}
+	return {
+		scanned: response.results.length,
+		created,
+		skipped,
+		errors,
+	};
+}
+
+async function reflectSalesContributionLogsToActivityLogs(
+	input: { limit?: number; dryRun?: boolean; workerRunId?: string },
+	notion: NotionClient,
+): Promise<{ scanned: number; created: number; skipped: number; errors: number }> {
+	const limit = Math.max(1, Math.min(input.limit ?? 20, 100));
+	const response = await notion.dataSources.query({
+		data_source_id: SALES_CONTRIBUTION_LOG_DATA_SOURCE_ID,
+		page_size: limit,
+		filter: {
+			and: [
+				{
+					or: [
+						{ property: "評価反映状態", select: { equals: "未反映" } },
+						{ property: "評価反映状態", select: { equals: "反映候補" } },
+					],
+				},
+				{
+					or: [
+						{ property: "承認ステータス", select: { equals: "承認" } },
+						{ property: "評価反映状態", select: { equals: "反映候補" } },
+					],
+				},
+			],
+		},
+	});
+	let created = 0;
+	let skipped = 0;
+	let errors = 0;
+	for (const page of response.results) {
+		const createArgs = buildActivityLogFromSalesContributionLog(
+			page,
+			input.workerRunId,
+		);
+		if (!createArgs) {
+			skipped += 1;
+			if (!input.dryRun) {
+				try {
+					await notion.pages.update({
+						page_id: page.id,
+						properties: {
+							評価反映状態: select("対象外"),
+						},
+					});
+				} catch (error) {
+					errors += 1;
+					console.log("sales contribution skip status update failed", String(error));
+				}
+			}
+			continue;
+		}
+		if (input.dryRun) {
+			created += 1;
+			continue;
+		}
+		try {
+			await notion.pages.create(createArgs);
+			await notion.pages.update({
+				page_id: page.id,
+				properties: {
+					評価反映状態: select("反映済み"),
+				},
+			});
+			created += 1;
+		} catch (error) {
+			errors += 1;
+			console.log("sales contribution activity reflection failed", String(error));
+		}
+	}
+	return {
+		scanned: response.results.length,
+		created,
+		skipped,
+		errors,
+	};
+}
+
+async function reflectHitomiMemosToActivityLogs(
+	input: { limit?: number; dryRun?: boolean; workerRunId?: string },
+	notion: NotionClient,
+): Promise<{ scanned: number; created: number; skipped: number; errors: number }> {
+	const limit = Math.max(1, Math.min(input.limit ?? 20, 100));
+	const response = await notion.dataSources.query({
+		data_source_id: HITOMI_MEMO_DATA_SOURCE_ID,
+		page_size: limit,
+		filter: {
+			or: [
+				{ property: "評価材料化状態", select: { equals: "月次評価で確認" } },
+				{ property: "評価材料化状態", select: { equals: "営業貢献ログへ反映" } },
+				{ property: "月次評価反映状態", select: { equals: "反映候補" } },
+			],
+		},
+	});
+	let created = 0;
+	let skipped = 0;
+	let errors = 0;
+	for (const page of response.results) {
+		const createArgs = buildActivityLogFromHitomiMemo(
+			page,
+			input.workerRunId,
+		);
+		if (!createArgs) {
+			skipped += 1;
+			if (!input.dryRun) {
+				try {
+					await notion.pages.update({
+						page_id: page.id,
+						properties: {
+							月次評価反映状態: select("見送り"),
+						},
+					});
+				} catch (error) {
+					errors += 1;
+					console.log("hitomi memo skip status update failed", String(error));
+				}
+			}
+			continue;
+		}
+		if (input.dryRun) {
+			created += 1;
+			continue;
+		}
+		try {
+			await notion.pages.create(createArgs);
+			await notion.pages.update({
+				page_id: page.id,
+				properties: {
+					月次評価反映状態: select("反映済み"),
+				},
+			});
+			created += 1;
+		} catch (error) {
+			errors += 1;
+			console.log("hitomi memo activity reflection failed", String(error));
+		}
+	}
+	return {
+		scanned: response.results.length,
+		created,
+		skipped,
+		errors,
+	};
+}
+
+async function reflectWaniPoMemoriesToActivityLogs(
+	input: { limit?: number; dryRun?: boolean; workerRunId?: string },
+	notion: NotionClient,
+): Promise<{ scanned: number; created: number; skipped: number; errors: number }> {
+	const limit = Math.max(1, Math.min(input.limit ?? 20, 100));
+	const response = await notion.dataSources.query({
+		data_source_id: WANIPO_MEMORY_DATA_SOURCE_ID,
+		page_size: limit,
+		filter: {
+			and: [
+				{
+					or: [
+						{ property: "評価利用可否", select: { equals: "本人が許可したら使う" } },
+						{ property: "評価利用可否", select: { equals: "本人共有済み" } },
+					],
+				},
+				{ property: "月次評価反映状態", select: { equals: "反映候補" } },
+				{ property: "公開範囲", select: { does_not_equal: "本人のみ" } },
+			],
+		},
+	});
+	let created = 0;
+	let skipped = 0;
+	let errors = 0;
+	for (const page of response.results) {
+		const createArgs = buildActivityLogFromWaniPoMemory(
+			page,
+			input.workerRunId,
+		);
+		if (!createArgs) {
+			skipped += 1;
+			if (!input.dryRun) {
+				try {
+					await notion.pages.update({
+						page_id: page.id,
+						properties: {
+							月次評価反映状態: select("見送り"),
+						},
+					});
+				} catch (error) {
+					errors += 1;
+					console.log("wanipo memory skip status update failed", String(error));
+				}
+			}
+			continue;
+		}
+		if (input.dryRun) {
+			created += 1;
+			continue;
+		}
+		try {
+			await notion.pages.create(createArgs);
+			await notion.pages.update({
+				page_id: page.id,
+				properties: {
+					月次評価反映状態: select("反映済み"),
+				},
+			});
+			created += 1;
+		} catch (error) {
+			errors += 1;
+			console.log("wanipo memory activity reflection failed", String(error));
+		}
+	}
+	return {
+		scanned: response.results.length,
+		created,
+		skipped,
+		errors,
+	};
+}
+
+async function activityLogExistsByWorkerProcessId(
+	notion: NotionClient,
+	workerProcessId: string,
+): Promise<boolean> {
+	const response = await notion.dataSources.query({
+		data_source_id: ACTIVITY_LOG_DATA_SOURCE_ID,
+		page_size: 1,
+		filter: {
+			property: "Worker処理ID",
+			rich_text: { equals: workerProcessId },
+		},
+	});
+	return response.results.length > 0;
+}
+
+async function reflectAiConsultationsToActivityLogs(
+	input: { limit?: number; dryRun?: boolean; workerRunId?: string },
+	notion: NotionClient,
+): Promise<{ scanned: number; created: number; skipped: number; errors: number }> {
+	const limit = Math.max(1, Math.min(input.limit ?? 20, 100));
+	const response = await notion.dataSources.query({
+		data_source_id: AI_CONSULTATION_DATA_SOURCE_ID,
+		page_size: limit,
+		filter: {
+			property: "処理状態",
+			status: { equals: "完了" },
+		},
+	});
+	let created = 0;
+	let skipped = 0;
+	let errors = 0;
+	for (const page of response.results) {
+		const workerProcessId = input.workerRunId
+			? `${input.workerRunId}-${page.id}`
+			: `ai-consultation-${page.id}`;
+		let exists = false;
+		try {
+			exists = await activityLogExistsByWorkerProcessId(notion, workerProcessId);
+		} catch (error) {
+			errors += 1;
+			console.log("ai consultation activity idempotency check failed", String(error));
+			continue;
+		}
+		if (exists) {
+			skipped += 1;
+			continue;
+		}
+		const createArgs = buildActivityLogFromAiConsultation(
+			page,
+			workerProcessId,
+		);
+		if (!createArgs) {
+			skipped += 1;
+			continue;
+		}
+		if (input.dryRun) {
+			created += 1;
+			continue;
+		}
+		try {
+			await notion.pages.create(createArgs);
+			created += 1;
+		} catch (error) {
+			errors += 1;
+			console.log("ai consultation activity reflection failed", String(error));
+		}
+	}
+	return {
+		scanned: response.results.length,
+		created,
+		skipped,
+		errors,
+	};
+}
+
+async function linkActivityLogsToSalesPerformance(
+	input: { limit?: number; dryRun?: boolean },
+	notion: NotionClient,
+): Promise<{ scanned: number; linked: number; skipped: number; errors: number }> {
+	const limit = Math.max(1, Math.min(input.limit ?? 20, 100));
+	const response = await notion.dataSources.query({
+		data_source_id: ACTIVITY_LOG_DATA_SOURCE_ID,
+		page_size: limit,
+		filter: {
+			and: [
+				{ property: "評価対象", checkbox: { equals: true } },
+				{ property: "関連営業パフォーマンス", relation: { is_empty: true } },
+			],
+		},
+	});
+	let linked = 0;
+	let skipped = 0;
+	let errors = 0;
+	for (const activityPage of response.results) {
+		const activityDate = dateStartFromProperty(activityPage.properties?.["活動日時"]);
+		const activityUserIds = personIdsFromProperty(activityPage.properties?.["活動者"]);
+		if (!activityDate || activityUserIds.length === 0) {
+			skipped += 1;
+			continue;
+		}
+		try {
+			const performancePage = await findSalesPerformanceForActivity(
+				notion,
+				activityDate,
+				activityUserIds,
+			);
+			if (!performancePage) {
+				skipped += 1;
+				continue;
+			}
+			if (!input.dryRun) {
+				await notion.pages.update({
+					page_id: activityPage.id,
+					properties: {
+						関連営業パフォーマンス: relationIds([performancePage.id]),
+					},
+				});
+				const currentActivityIds = relationIdsFromProperty(
+					performancePage.properties?.["関連活動ログ"],
+				);
+				await notion.pages.update({
+					page_id: performancePage.id,
+					properties: {
+						関連活動ログ: relationIds(
+							uniqueIds([...currentActivityIds, activityPage.id]),
+						),
+					},
+				});
+			}
+			linked += 1;
+		} catch (error) {
+			errors += 1;
+			console.log("activity performance link failed", String(error));
+		}
+	}
+	return {
+		scanned: response.results.length,
+		linked,
+		skipped,
+		errors,
+	};
+}
+
+async function findSalesPerformanceForActivity(
+	notion: NotionClient,
+	activityDate: string,
+	activityUserIds: string[],
+): Promise<Page | null> {
+	for (const userId of activityUserIds) {
+		const response = await notion.dataSources.query({
+			data_source_id: SALES_PERFORMANCE_DATA_SOURCE_ID,
+			page_size: 5,
+			filter: {
+				and: [
+					{ property: "対象営業ユーザー", people: { contains: userId } },
+					{ property: "開始日", date: { on_or_before: activityDate } },
+					{ property: "終了日", date: { on_or_after: activityDate } },
+				],
+			},
+		});
+		const monthly = response.results.find(
+			(page) => text(page.properties?.["期間種別"]) === "月次",
+		);
+		return monthly ?? response.results[0] ?? null;
+	}
+	return null;
 }
 
 export {
 	createCustomerContactLog as createCustomerContactLogForTest,
+	buildActivityLogFromContactLog as buildActivityLogFromContactLogForTest,
+	buildActivityLogFromSpeechLog as buildActivityLogFromSpeechLogForTest,
+	buildActivityLogFromSalesContributionLog as buildActivityLogFromSalesContributionLogForTest,
+	buildActivityLogFromHitomiMemo as buildActivityLogFromHitomiMemoForTest,
+	buildActivityLogFromWaniPoMemory as buildActivityLogFromWaniPoMemoryForTest,
+	buildActivityLogFromAiConsultation as buildActivityLogFromAiConsultationForTest,
+	reflectCustomerContactLogsToActivityLogs as reflectCustomerContactLogsToActivityLogsForTest,
+	reflectSpeechLogsToActivityLogs as reflectSpeechLogsToActivityLogsForTest,
+	reflectSalesContributionLogsToActivityLogs as reflectSalesContributionLogsToActivityLogsForTest,
+	reflectHitomiMemosToActivityLogs as reflectHitomiMemosToActivityLogsForTest,
+	reflectWaniPoMemoriesToActivityLogs as reflectWaniPoMemoriesToActivityLogsForTest,
+	reflectAiConsultationsToActivityLogs as reflectAiConsultationsToActivityLogsForTest,
+	linkActivityLogsToSalesPerformance as linkActivityLogsToSalesPerformanceForTest,
 	buildInquiryDisplayTitle as buildInquiryDisplayTitleForTest,
 	buildNumberedInquiryDisplayTitle as buildNumberedInquiryDisplayTitleForTest,
 	buildInquiryAttentionMemo as buildInquiryAttentionMemoForTest,
@@ -4571,6 +5923,68 @@ function labelsFromProperty(property: unknown): string[] {
 		.filter(Boolean);
 }
 
+function normalizeMeetingPrimaryType(value: string): {
+	primaryType: MeetingPrimaryType;
+	tags: string[];
+} {
+	const raw = value.trim();
+	if (/商談|提案|顧客|取引先/.test(raw)) {
+		return { primaryType: "商談", tags: raw === "商談" ? ["商談"] : ["商談", raw] };
+	}
+	if (!raw || raw === "ミーティング" || raw === "会議") {
+		return { primaryType: "ミーティング", tags: [] };
+	}
+	const tag = legacyMeetingTypeToTag(raw);
+	return { primaryType: "ミーティング", tags: tag ? [tag] : [raw] };
+}
+
+function readMeetingPrimaryType(properties: Record<string, unknown>): MeetingPrimaryType | "" {
+	const explicit = firstString(
+		text(properties["種別"]),
+		text(properties["ミーティング種別"]),
+		text(properties["会議種別"]),
+	) ?? "";
+	const tags = readMeetingTagLabels(properties);
+	if (explicit) return normalizeMeetingPrimaryType(explicit).primaryType;
+	return tags.some((tag) => /商談|提案|顧客|取引先/.test(tag)) ? "商談" : "";
+}
+
+function readMeetingTagLabels(properties: Record<string, unknown>): string[] {
+	const explicitTags = labelsFromProperty(properties["タグ"]);
+	const legacyType = firstString(
+		text(properties["ミーティング種別"]),
+		text(properties["会議種別"]),
+	) ?? "";
+	const legacyTag = legacyMeetingTypeToTag(legacyType);
+	return uniqueStrings([
+		...explicitTags,
+		legacyTag,
+	]).filter((tag) => tag !== "ミーティング" && tag !== "商談");
+}
+
+function readMeetingKindForPrompt(properties: Record<string, unknown>): string {
+	const primaryType = readMeetingPrimaryType(properties) || "未設定";
+	const tags = readMeetingTagLabels(properties);
+	return tags.length > 0
+		? `${primaryType} / タグ: ${tags.join("、")}`
+		: primaryType;
+}
+
+function legacyMeetingTypeToTag(value: string): string {
+	const raw = value.trim();
+	if (!raw || raw === "ミーティング" || raw === "商談") return "";
+	const map: Record<string, string> = {
+		"1on1": "1on1",
+		経営会議: "経営",
+		役員会議: "役員",
+		全体会議: "全体会議",
+		営業会議: "営業",
+		社内ミーティング: "社内",
+		その他: "その他",
+	};
+	return map[raw] ?? raw;
+}
+
 function scorePipelineTags(
 	tags: string[],
 	rules: Array<{ pattern: RegExp; score: number; label: string }>,
@@ -5106,13 +6520,14 @@ async function processCompanyResearch(
 	patches["提案可否"] = { kind: "select", value: score.提案可否 };
 	patches["企業調査ステータス"] = { kind: "select", value: status };
 	const properties = companyPage.properties ?? {};
-	addPatchIfBlank(patches, properties, "代表者", merged.representative);
+	// 短い事実列はベタ値化(出典番号・末尾「です。」を除去)。経営陣は文章なので除外。
+	addPatchIfBlank(patches, properties, "代表者", cleanStructuredFact(merged.representative));
 	addPatchIfBlank(patches, properties, "経営陣", merged.executives);
-	addPatchIfBlank(patches, properties, "業種", merged.industry);
-	addPatchIfBlank(patches, properties, "資本金", merged.capital);
-	addPatchIfBlank(patches, properties, "設立年月", merged.founded);
-	addPatchIfBlank(patches, properties, "売上規模", merged.revenue);
-	addPatchIfBlank(patches, properties, "従業員規模", merged.employees);
+	addPatchIfBlank(patches, properties, "業種", cleanStructuredFact(merged.industry));
+	addPatchIfBlank(patches, properties, "資本金", cleanStructuredFact(merged.capital));
+	addPatchIfBlank(patches, properties, "設立年月", cleanStructuredFact(merged.founded));
+	addPatchIfBlank(patches, properties, "売上規模", cleanStructuredFact(merged.revenue));
+	addPatchIfBlank(patches, properties, "従業員規模", cleanStructuredFact(merged.employees));
 	addPatchIfBlank(patches, properties, "役員SNS発信メモ", merged.executiveSns);
 	addPatchIfBlank(patches, properties, "直近ニュース", merged.recentNews);
 	addPatchIfBlank(patches, properties, "再エネ接点シグナル", merged.renewableSignals);
@@ -5144,6 +6559,424 @@ async function processCompanyResearch(
 	};
 }
 
+function registerMeetingQuickStartWebhook(
+	name: string,
+	titleText: string,
+	meetingType: MeetingPrimaryType,
+): void {
+	worker.webhook(name, {
+		title: titleText,
+		description:
+			"ミーティングデータベースに、本日のミーティングページを作成します。商談は商談専用Webhookで商談データベースへ作成します。",
+		execute: async (events, { notion }) => {
+			// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
+			for (const event of events) {
+				await processMeetingQuickStart(
+					{ meetingType, dryRun: false },
+					notion as unknown as NotionClient,
+				);
+			}
+		},
+	});
+}
+
+function registerDealQuickStartWebhook(
+	name: string,
+	titleText: string,
+): void {
+	worker.webhook(name, {
+		title: titleText,
+		description:
+			"商談データベースに本日の商談ページを作成します。関連企業未設定のため要確認で止めます。",
+		execute: async (events, { notion }) => {
+			// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
+			for (const event of events) {
+				await processDealQuickStart(
+					{ dryRun: false },
+					notion as unknown as NotionClient,
+				);
+			}
+		},
+	});
+}
+
+async function processMeetingQuickStart(
+	input: MeetingQuickStartInput,
+	notion: NotionClient,
+): Promise<MeetingQuickStartResult> {
+	const normalized = normalizeMeetingPrimaryType(input.meetingType);
+	if (normalized.primaryType === "商談") {
+		const now = input.now ?? new Date();
+		const { date } = meetingQuickStartDateTimeJST(now);
+		return {
+			meetingPageId: null,
+			meetingUrl: null,
+			action: "use-deal-quick-start",
+			meetingType: "商談",
+			meetingDate: date,
+			title: "商談",
+			message:
+				"商談はミーティングデータベースへ作成しません。quickStartDeal / quickStartDealWebhook で商談データベースへ作成してください。",
+		};
+	}
+	const meetingType = normalized.primaryType;
+	const now = input.now ?? new Date();
+	const { date, time } = meetingQuickStartDateTimeJST(now);
+	const titleText = buildMeetingQuickStartTitle(meetingType, now);
+	const createArgs = buildMeetingQuickStartCreateArgs({
+		meetingType,
+		now,
+		tags: normalized.tags,
+	});
+	const children = buildMeetingQuickStartChildren(meetingType, date, time);
+	const markdown = await buildMeetingQuickStartMarkdown(notion);
+
+	if (input.dryRun) {
+		return {
+			meetingPageId: null,
+			meetingUrl: null,
+			action: "dry-run",
+			meetingType,
+			meetingDate: date,
+			title: titleText,
+			message: `dry-run: ${titleText} をミーティングデータベースへ作成できます。`,
+		};
+	}
+
+	const created = await notion.pages.create(createArgs);
+	await replacePageMarkdownOrAppendFallback(notion, created.id, markdown, children);
+	return {
+		meetingPageId: created.id,
+		meetingUrl: created.url ?? null,
+		action: "created-meeting",
+		meetingType,
+		meetingDate: date,
+		title: titleText,
+		message: `${titleText} をミーティングデータベースへ作成しました。Notion標準ボタン側では作成後にページを開く設定にしてください。`,
+	};
+}
+
+async function buildMeetingQuickStartMarkdown(notion: NotionClient): Promise<string> {
+	return retrieveTemplateMarkdown(notion, MEETING_TEMPLATE_ID);
+}
+
+async function processDealQuickStart(
+	input: DealQuickStartInput,
+	notion: NotionClient,
+): Promise<DealQuickStartResult> {
+	const now = input.now ?? new Date();
+	const { date } = meetingQuickStartDateTimeJST(now);
+	const titleText = buildDealQuickStartTitle(now);
+	const createArgs = buildDealQuickStartCreateArgs({ now });
+	const children = buildDealQuickStartChildren();
+	const markdown = await buildDealQuickStartMarkdown(notion);
+
+	if (input.dryRun) {
+		return {
+			dealPageId: null,
+			dealUrl: null,
+			action: "dry-run",
+			dealDate: date,
+			title: titleText,
+			message: `dry-run: ${titleText} を商談データベースへ作成できます。関連企業未設定のため要確認で止めます。`,
+		};
+	}
+
+	const created = await notion.pages.create(createArgs);
+	await replacePageMarkdownOrAppendFallback(notion, created.id, markdown, children);
+	const fullPage = await notion.pages.retrieve({ page_id: created.id });
+	await safeUpdateExistingProperties(notion, fullPage, {
+		商談ステータス: { kind: "select", value: "要確認" },
+		商談概要: {
+			kind: "text",
+			value:
+				"関連企業未設定のため要確認。企業ページまたは案件ページ起点で作る場合は、関連企業を自動引き継ぎする。",
+		},
+		商談日: { kind: "date", value: date },
+	});
+
+	return {
+		dealPageId: created.id,
+		dealUrl: created.url ?? null,
+		action: "created-deal",
+		dealDate: date,
+		title: titleText,
+		message:
+			`${titleText} を商談データベースへ作成しました。関連企業未設定のため要確認で止めています。`,
+	};
+}
+
+function buildMeetingQuickStartCreateArgs(input: {
+	meetingType: MeetingPrimaryType;
+	now?: Date;
+	tags?: string[];
+}): Record<string, unknown> {
+	const now = input.now ?? new Date();
+	const { dateTime } = meetingQuickStartDateTimeJST(now);
+	const titleText = buildMeetingQuickStartTitle(input.meetingType, now);
+	return {
+		parent: { data_source_id: MEETING_DATA_SOURCE_ID },
+		properties: {
+			ミーティング名: title(titleText),
+			ミーティング日: { date: { start: dateTime } },
+			ミーティング種別: select(input.meetingType),
+			タグ: multiSelect(buildMeetingQuickStartTags(input.meetingType, input.tags ?? [])),
+		},
+		template: pageTemplate(MEETING_TEMPLATE_ID),
+	};
+}
+
+function buildDealQuickStartCreateArgs(input: {
+	now?: Date;
+}): Record<string, unknown> {
+	const now = input.now ?? new Date();
+	const titleText = buildDealQuickStartTitle(now);
+	return {
+		parent: { data_source_id: DEAL_DATA_SOURCE_ID },
+		properties: {
+			商談名: title(titleText),
+		},
+	};
+}
+
+async function buildDealQuickStartMarkdown(notion: NotionClient): Promise<string> {
+	const templateMarkdown = await retrieveTemplateMarkdown(notion, DEAL_TEMPLATE_ID);
+	if (templateMarkdown) {
+		return appendDealRequiredCompanyWarning(templateMarkdown);
+	}
+	return appendDealRequiredCompanyWarning([
+		'<meeting-notes>',
+		"\t商談",
+		"\t<notes>",
+		"\t</notes>",
+		"</meeting-notes>",
+		'<callout icon="🎤" color="orange_bg">',
+		"\t**まずは上の ▶️ ボタンで録音スタート**",
+		"\tAIが自動で文字起こし・要約・アクション項目を抽出します。",
+		"</callout>",
+		"---",
+		'<callout icon="🤝" color="green_bg">',
+		"\t**商談の定義**：明確な相手（対象企業）がいて、売買に関する行為が発生している集まり。原則として**見積書を持参する段階から**が商談。**関連企業は必須入力。**",
+		"</callout>",
+		"### 基本情報を入力",
+		'<table header-row="true" header-column="true">',
+		"<tr>",
+		"<td>項目</td>",
+		"<td>入力方法</td>",
+		"</tr>",
+		"<tr>",
+		"<td>📅 商談日（必須）</td>",
+		"<td>← プロパティ「商談日」を選択</td>",
+		"</tr>",
+		"<tr>",
+		"<td>🏢 関連企業（必須）</td>",
+		"<td>← プロパティ「関連企業」を選択</td>",
+		"</tr>",
+		"<tr>",
+		"<td>📁 関連案件</td>",
+		"<td>← プロパティ「関連案件」を選択</td>",
+		"</tr>",
+		"<tr>",
+		"<td>🧑‍💼 担当営業（必須）</td>",
+		"<td>← プロパティ「担当営業ユーザー」を選択</td>",
+		"</tr>",
+		"</table>",
+		"---",
+		"## 決定事項 / 合意事項",
+		"-",
+		"## 次アクション（誰が・いつまで）",
+		"- [ ]",
+		"## 懸念・宿題",
+		"-",
+		"## 商談メモ",
+		"-",
+		"## 次回の一手",
+		"-",
+	].join("\n"));
+}
+
+async function retrieveTemplateMarkdown(
+	notion: NotionClient,
+	templateId: string | undefined,
+): Promise<string> {
+	const clean = (templateId ?? "").trim();
+	if (!clean || !notion.pages.retrieveMarkdown) return "";
+	try {
+		const response = await notion.pages.retrieveMarkdown({ page_id: clean });
+		return typeof response.markdown === "string" ? response.markdown.trim() : "";
+	} catch (error) {
+		console.log(`template markdown retrieval skipped: ${String(error).slice(0, 180)}`);
+		return "";
+	}
+}
+
+function appendDealRequiredCompanyWarning(markdown: string): string {
+	const warning =
+		'<callout icon="⚠️" color="red_bg">\n\t関連企業が未設定です。商談は必ず企業を紐づけてください。企業未設定のまま完成扱いにはしません。\n</callout>';
+	if (markdown.includes("関連企業が未設定です")) return markdown;
+	return `${markdown.trim()}\n---\n${warning}`;
+}
+
+function buildDealQuickStartChildren(): Record<string, unknown>[] {
+	return [
+		{
+			type: "callout",
+			callout: {
+				icon: { type: "emoji", emoji: "▶️" },
+				rich_text: blockRichText(
+					"この商談ページで Notion AI Meeting Notes の録音を開始してください。録音後、商談フィードバック、次回アクション、勝ち筋、成約/失注兆候をWAJO側AIで返します。",
+				),
+			},
+		},
+		{
+			type: "callout",
+			callout: {
+				icon: { type: "emoji", emoji: "⚠️" },
+				rich_text: blockRichText(
+					"関連企業が未設定です。商談は必ず企業を紐づけてください。企業未設定のまま完成扱いにはしません。",
+				),
+			},
+		},
+	];
+}
+
+async function replacePageMarkdownOrAppendFallback(
+	notion: NotionClient,
+	pageId: string,
+	markdown: string,
+	fallbackChildren: Record<string, unknown>[],
+): Promise<void> {
+	if (!notion.pages.updateMarkdown || !markdown.trim()) {
+		await appendBlocksIfAny(notion, pageId, fallbackChildren);
+		return;
+	}
+	await notion.pages.updateMarkdown({
+		page_id: pageId,
+		type: "replace_content",
+		replace_content: {
+			new_str: markdown,
+		},
+	});
+}
+
+function buildMeetingQuickStartTags(
+	meetingType: MeetingPrimaryType,
+	tags: string[],
+): string[] {
+	return uniqueStrings([
+		...tags,
+		meetingType === "商談" ? "商談" : "",
+	]).slice(0, 8);
+}
+
+function buildMeetingQuickStartChildren(
+	meetingType: MeetingPrimaryType,
+	meetingDate: string,
+	meetingTime: string,
+): Record<string, unknown>[] {
+	const label = meetingType === "商談" ? "商談" : "ミーティング";
+	return [
+		{
+			type: "callout",
+			callout: {
+				icon: { type: "emoji", emoji: "▶️" },
+				rich_text: blockRichText(
+					"このページで Notion AI Meeting Notes の録音を開始してください。録音後、メモ整形・タスク化・ナレッジ候補化を必要に応じて実行します。",
+				),
+			},
+		},
+		{
+			type: "heading_2",
+			heading_2: { rich_text: blockRichText("ミーティング情報") },
+		},
+		{
+			type: "bulleted_list_item",
+			bulleted_list_item: { rich_text: blockRichText(`種別: ${label}`) },
+		},
+		{
+			type: "bulleted_list_item",
+			bulleted_list_item: {
+				rich_text: blockRichText(`開始時刻: ${meetingDate} ${meetingTime}`),
+			},
+		},
+		{
+			type: "heading_2",
+			heading_2: { rich_text: blockRichText("議題") },
+		},
+		{
+			type: "paragraph",
+			paragraph: { rich_text: blockRichText("") },
+		},
+		{
+			type: "heading_2",
+			heading_2: { rich_text: blockRichText("決定事項") },
+		},
+		{
+			type: "paragraph",
+			paragraph: { rich_text: blockRichText("") },
+		},
+		{
+			type: "heading_2",
+			heading_2: { rich_text: blockRichText("アクション項目") },
+		},
+		{
+			type: "paragraph",
+			paragraph: { rich_text: blockRichText("") },
+		},
+		{
+			type: "heading_2",
+			heading_2: { rich_text: blockRichText("ナレッジ候補") },
+		},
+		{
+			type: "paragraph",
+			paragraph: { rich_text: blockRichText("") },
+		},
+	];
+}
+
+function blockRichText(content: string): Array<Record<string, unknown>> {
+	return [{ type: "text", text: { content: content.slice(0, 1800) } }];
+}
+
+function buildMeetingQuickStartTitle(
+	meetingType: MeetingPrimaryType,
+	now = new Date(),
+): string {
+	const { date, time } = meetingQuickStartDateTimeJST(now);
+	return `${meetingType}｜${date} ${time}`;
+}
+
+function buildDealQuickStartTitle(now = new Date()): string {
+	const { date, time } = meetingQuickStartDateTimeJST(now);
+	return `商談｜${date} ${time}`;
+}
+
+function meetingQuickStartDateTimeJST(now: Date): {
+	date: string;
+	time: string;
+	dateTime: string;
+} {
+	const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+	const iso = jst.toISOString();
+	const date = iso.slice(0, 10);
+	const time = iso.slice(11, 16);
+	return {
+		date,
+		time,
+		dateTime: `${date}T${time}:00+09:00`,
+	};
+}
+
+export {
+	buildDealQuickStartCreateArgs as buildDealQuickStartCreateArgsForTest,
+	buildMeetingQuickStartCreateArgs as buildMeetingQuickStartCreateArgsForTest,
+	buildMeetingQuickStartTitle as buildMeetingQuickStartTitleForTest,
+	processDealQuickStart as processDealQuickStartForTest,
+	processMeetingDealLink as processMeetingDealLinkForTest,
+	processMeetingMemoFormat as processMeetingMemoFormatForTest,
+	processMeetingQuickStart as processMeetingQuickStartForTest,
+};
+
 async function processMeetingMemoFormat(
 	input: MeetingMemoFormatInput,
 	notion: NotionClient,
@@ -5152,8 +6985,8 @@ async function processMeetingMemoFormat(
 		page_id: input.meetingPageId,
 	});
 	const properties = meetingPage.properties ?? {};
-	const titleText = text(properties["日時"]) || text(properties["会議名AI"]) || "会議";
-	const meetingType = text(properties["会議種別"]) || "未設定";
+	const titleText = readMeetingTitleText(properties);
+	const meetingType = readMeetingKindForPrompt(properties);
 	const propertyText = buildMeetingPropertySource(properties);
 	const blockText = await fetchPageBlockPlainText(notion, meetingPage.id);
 	const source = [blockText, propertyText].filter(Boolean).join("\n\n").slice(0, 12000);
@@ -5208,13 +7041,14 @@ async function processMeetingMemoFormat(
 		};
 	}
 
+	const taskStatus = resolveMeetingMemoTaskStatus(properties, formatted.taskStatus);
 	const patches: Record<string, SafePatch> = {
 		メモ整形ステータス: { kind: "select", value: formatted.formatStatus },
 		メモ整形メモ: {
 			kind: "text",
-			value: buildMeetingMemoFormatMemo(formatted, properties),
+			value: buildMeetingMemoFormatMemo(formatted, properties, taskStatus),
 		},
-		タスク化ステータス: { kind: "select", value: formatted.taskStatus },
+		タスク化ステータス: { kind: "select", value: taskStatus },
 	};
 
 	addPatchIfBlank(patches, properties, "テキスト", formatted.text);
@@ -5228,8 +7062,20 @@ async function processMeetingMemoFormat(
 		meetingPageId: meetingPage.id,
 		action: formatted.formatStatus === "対象外" ? "target-out" : "formatted",
 		status: formatted.formatStatus,
-		message: `会議メモ整形完了。タスク化ステータス: ${formatted.taskStatus}。`,
+		message: `会議メモ整形完了。タスク化ステータス: ${taskStatus}。`,
 	};
+}
+
+function resolveMeetingMemoTaskStatus(
+	properties: Record<string, unknown>,
+	aiTaskStatus: MeetingMemoAIResponse["taskStatus"],
+): MeetingMemoAIResponse["taskStatus"] | "作成済" {
+	const currentTaskStatus = text(properties["タスク化ステータス"]);
+	const hasRelatedTasks =
+		relationIdsFromProperty(properties["関連チームタスク"]).length > 0 ||
+		relationIdsFromProperty(properties["関連タスク"]).length > 0;
+	if (currentTaskStatus === "作成済" || hasRelatedTasks) return "作成済";
+	return aiTaskStatus;
 }
 
 function buildMeetingPropertySource(properties: Record<string, unknown>): string {
@@ -5263,6 +7109,7 @@ function isTextPropertyBlank(property: unknown): boolean {
 function buildMeetingMemoFormatMemo(
 	formatted: MeetingMemoAIResponse,
 	properties: Record<string, unknown>,
+	taskStatus: string = formatted.taskStatus,
 ): string {
 	const skipped = ["テキスト", "要約", "議事内容", "決定事項", "アクション項目"].filter(
 		(name) => !isTextPropertyBlank(properties[name]),
@@ -5270,7 +7117,7 @@ function buildMeetingMemoFormatMemo(
 	const lines = [
 		`Worker整形: ${new Date().toISOString()}`,
 		`メモ整形ステータス: ${formatted.formatStatus}`,
-		`タスク化ステータス: ${formatted.taskStatus}`,
+		`タスク化ステータス: ${taskStatus}`,
 		formatted.memo ? `処理メモ: ${formatted.memo}` : "",
 		skipped.length > 0
 			? `既存入力があるため上書きしなかった項目: ${skipped.join(", ")}`
@@ -5284,16 +7131,15 @@ async function callOpenAIMeetingMemoFormat(input: {
 	meetingType: string;
 	source: string;
 }): Promise<MeetingMemoAIResponse> {
-	const apiKey = process.env.OPENAI_API_KEY;
-	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
-	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+	const { apiKey, model } = resolveWajoOpenAiConfig(process.env);
+	if (!apiKey) throw new Error("WAJO_OPENAI_API_KEY / OPENAI_API_KEY が未設定です");
 
 	const systemPrompt = [
-		"あなたは和上ホールディングスの会議メモ整形AIです。",
-		"Notion AI Meeting Notes本文または会議本文を読み、会議議事録DBのプロパティへ整理します。",
+		"あなたは和上ホールディングスのミーティングメモ整形AIです。",
+		"Notion AI Meeting Notes本文またはミーティング本文を読み、ミーティングデータベースのプロパティへ整理します。",
 		"",
 		"役割:",
-		"- 文字起こし/会議内容を読みやすい形に整理する",
+		"- 文字起こし/ミーティング内容を読みやすい形に整理する",
 		"- 要約、議事内容、決定事項、アクション項目を作る",
 		"- チームトラッカーにタスクを作らない",
 		"- 商談管理DB、関連チームタスク、商談連携状態を更新しない",
@@ -5317,9 +7163,9 @@ async function callOpenAIMeetingMemoFormat(input: {
 
 	const userPrompt = [
 		`会議名: ${input.title || "未設定"}`,
-		`会議種別: ${input.meetingType || "未設定"}`,
+		`種別・タグ: ${input.meetingType || "未設定"}`,
 		"",
-		"=== 会議本文 ===",
+		"=== ミーティング本文 ===",
 		input.source.slice(0, 12000),
 	].join("\n");
 
@@ -5455,8 +7301,8 @@ async function processMeetingFeedback(
 		page_id: input.meetingPageId,
 	});
 	const properties = meetingPage.properties ?? {};
-	const titleText = text(properties["日時"]) || text(properties["会議名AI"]) || "会議";
-	const meetingType = text(properties["会議種別"]) || "未設定";
+	const titleText = readMeetingTitleText(properties);
+	const meetingType = readMeetingKindForPrompt(properties);
 	const source = buildMeetingFeedbackSource(properties);
 
 	if (source.replace(/\s/g, "").length < 120) {
@@ -5549,7 +7395,7 @@ async function processMeetingFeedback(
 
 function buildMeetingFeedbackSource(properties: Record<string, unknown>): string {
 	return [
-		["会議種別", text(properties["会議種別"])],
+		["種別・タグ", readMeetingKindForPrompt(properties)],
 		["要約", text(properties["要約"])],
 		["議事内容", text(properties["議事内容"])],
 		["決定事項", text(properties["決定事項"])],
@@ -5582,12 +7428,17 @@ async function processMeetingDealLink(
 	const meeting = readMeetingDealLinkInfo(meetingPage);
 
 	if (meeting.meetingType !== "商談") {
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, meeting.page, {
+				商談連携状態: { kind: "select", value: "未処理" },
+			});
+		}
 		return {
 			meetingPageId: meeting.page.id,
 			dealPageId: null,
 			action: "target-out",
 			message:
-				"会議種別が商談ではないため、商談管理DBへの連携は行いませんでした。",
+				"種別またはタグが商談ではないため、商談管理DBへの連携は行いませんでした。",
 		};
 	}
 
@@ -5652,7 +7503,7 @@ async function processMeetingDealLink(
 			dealPageId: null,
 			action: "dry-run",
 			message:
-				"dry-run: 会議種別=商談、関連企業1社、既存関連商談なし。商談管理DBへ1件作成できます。",
+				"dry-run: 種別/タグ=商談、関連企業1社、既存関連商談なし。商談管理DBへ1件作成できます。",
 		};
 	}
 
@@ -5671,9 +7522,11 @@ function readMeetingDealLinkInfo(page: Page): MeetingDealLinkInfo {
 	const properties = page.properties ?? {};
 	return {
 		page,
-		titleText: text(properties["日時"]) || text(properties["会議名AI"]) || page.id,
-		meetingType: text(properties["会議種別"]),
-		meetingDate: dateStartFromProperty(properties["会議日"]),
+		titleText: readMeetingTitleText(properties),
+		meetingType: readMeetingPrimaryType(properties),
+		meetingDate:
+			dateStartFromProperty(properties["ミーティング日"]) ||
+			dateStartFromProperty(properties["会議日"]),
 		summary: text(properties["要約"]),
 		minutes: text(properties["議事内容"]),
 		decisions: text(properties["決定事項"]),
@@ -5802,7 +7655,7 @@ async function processMeetingTasks(
 		page_id: input.meetingPageId,
 	});
 	const properties = meetingPage.properties ?? {};
-	const titleText = text(properties["日時"]) || text(properties["会議名AI"]) || "会議";
+	const titleText = readMeetingTitleText(properties);
 	const actionItems = text(properties["アクション項目"]);
 	const taskStatus = text(properties["タスク化ステータス"]);
 	const assignedUserIds = personIdsFromProperty(properties["担当営業ユーザー"]);
@@ -5934,6 +7787,450 @@ async function processMeetingTasks(
 				? `会議アクション項目からチームトラッカーへ ${createdTaskIds.length} 件作成しました。重複スキップ ${skipped} 件。`
 				: `既存の関連会議タスクと重複したため新規作成は行いませんでした。重複スキップ ${skipped} 件。`,
 	};
+}
+
+export { processMeetingTasks as processMeetingTasksForTest };
+
+type MeetingKnowledgeCandidate = {
+	title: string;
+	knowledgeKind: string;
+	meetingKnowledgeKind: string;
+	summary: string;
+	source: string;
+	usage: string;
+	recommendedTalk: string;
+	confidence: string;
+	candidateLevel: string;
+	importance: string;
+	publicScope: string;
+	departments: string[];
+};
+
+async function processMeetingKnowledge(
+	input: MeetingKnowledgeInput,
+	notion: NotionClient,
+): Promise<MeetingKnowledgeResult> {
+	const meetingPage = await notion.pages.retrieve({
+		page_id: input.meetingPageId,
+	});
+	const properties = meetingPage.properties ?? {};
+	const titleText = readMeetingTitleText(properties);
+	const meetingType = readMeetingKindForPrompt(properties);
+	const blockText = await fetchPageBlockPlainText(notion, meetingPage.id);
+	const candidate = buildMeetingKnowledgeCandidate({
+		titleText,
+		meetingType,
+		properties,
+		blockText,
+	});
+
+	if (!candidate) {
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, meetingPage, {
+				ナレッジ化ステータス: { kind: "select", value: "要確認" },
+				ナレッジ化メモ: {
+					kind: "text",
+					value: `Worker会議ナレッジ化: ${new Date().toISOString()}\n会議材料が薄いため候補を作成しませんでした。要約、議事内容、決定事項、アクション項目のいずれかを補ってください。`,
+				},
+			});
+		}
+		return {
+			meetingPageId: meetingPage.id,
+			action: input.dryRun ? "dry-run" : "needs-review",
+			created: 0,
+			candidates: 0,
+			knowledgePageId: null,
+			message: `会議 ${titleText} はナレッジ候補化に必要な材料が不足しています。`,
+		};
+	}
+
+	const existing = sortKnowledgePagesForReuse(
+		await findKnowledgePagesByMeeting(notion, meetingPage.id),
+	);
+	if (existing.length > 0) {
+		if (!input.dryRun) {
+			await safeUpdateExistingProperties(notion, meetingPage, {
+				ナレッジ化ステータス: { kind: "select", value: "作成済" },
+				ナレッジ化メモ: {
+					kind: "text",
+					value: `Worker会議ナレッジ化: ${new Date().toISOString()}\n既に元会議議事録から社内ナレッジ候補が作成済みです。既存候補: ${existing.map((page) => page.id).join(", ")}`,
+				},
+				ナレッジ化依頼日: { kind: "date", value: todayDateJST() },
+				ナレッジ種別: { kind: "select", value: candidate.meetingKnowledgeKind },
+			});
+		}
+		return {
+			meetingPageId: meetingPage.id,
+			action: "skipped-duplicate",
+			created: 0,
+			candidates: 1,
+			knowledgePageId: existing[0]?.id ?? null,
+			message: `会議 ${titleText} は既に社内ナレッジ候補があります。重複作成は行いません。`,
+		};
+	}
+
+	if (input.dryRun) {
+		return {
+			meetingPageId: meetingPage.id,
+			action: "dry-run",
+			created: 0,
+			candidates: 1,
+			knowledgePageId: null,
+			message: `dry-run: ${titleText} から社内ナレッジ候補を1件作成できます。候補: ${candidate.title}`,
+		};
+	}
+
+	const knowledgePage = await createKnowledgePageFromMeeting(notion, {
+		meetingPage,
+		titleText,
+		meetingType,
+		candidate,
+		relatedCompanyIds: relationIdsFromProperty(properties["関連企業"]),
+		relatedDealIds: relationIdsFromProperty(properties["関連商談"]),
+	});
+	await safeUpdateExistingProperties(notion, meetingPage, {
+		ナレッジ化ステータス: { kind: "select", value: "作成済" },
+		ナレッジ化メモ: {
+			kind: "text",
+			value: buildMeetingKnowledgeResultMemo({
+				titleText,
+				knowledgePageId: knowledgePage.id,
+				candidate,
+			}),
+		},
+		ナレッジ化依頼日: { kind: "date", value: todayDateJST() },
+		ナレッジ種別: { kind: "select", value: candidate.meetingKnowledgeKind },
+	});
+
+	return {
+		meetingPageId: meetingPage.id,
+		action: "created-knowledge",
+		created: 1,
+		candidates: 1,
+		knowledgePageId: knowledgePage.id,
+		message: `会議 ${titleText} から社内ナレッジ候補を1件作成しました。`,
+	};
+}
+
+export { processMeetingKnowledge as processMeetingKnowledgeForTest };
+
+function buildMeetingKnowledgeCandidate(input: {
+	titleText: string;
+	meetingType: string;
+	properties: Record<string, unknown>;
+	blockText: string;
+}): MeetingKnowledgeCandidate | null {
+	const source = buildMeetingKnowledgeSource(input.properties, input.blockText);
+	if (source.replace(/\s/g, "").length < 60) return null;
+	const material = buildMeetingKnowledgeMaterial(input.properties, input.blockText);
+	if (!hasMeetingKnowledgeSignal(material)) return null;
+
+	const combined = [
+		input.titleText,
+		input.meetingType,
+		source,
+	].join("\n");
+	const knowledgeKind = inferMeetingKnowledgeKind(input.meetingType, combined);
+	const titleText =
+		pickMeetingKnowledgeTitle(input.properties, material) ||
+		`${input.titleText}からの学び`;
+	const publicScope = /1on1|評価|面談|人事|給与|退職|注意/.test(combined)
+		? "マネージャーのみ"
+		: "全員";
+	const departments = /1on1|評価|面談/.test(combined)
+		? ["マネージャー"]
+		: /経理|請求|契約|稟議|バックオフィス|管理部/.test(combined)
+			? ["バックオフィス", "共通"]
+			: ["営業", "共通"];
+
+	return {
+		title: titleText,
+		knowledgeKind,
+		meetingKnowledgeKind: meetingKnowledgeKindFromInternalKind(knowledgeKind),
+		summary: buildMeetingKnowledgeSummary(input.titleText, input.meetingType, source),
+		source,
+		usage: buildMeetingKnowledgeUsage(knowledgeKind, input.meetingType),
+		recommendedTalk: buildMeetingKnowledgeRecommendedTalk(knowledgeKind, titleText),
+		confidence: source.replace(/\s/g, "").length >= 180 ? "中" : "低",
+		candidateLevel: source.replace(/\s/g, "").length >= 180 ? "中" : "低",
+		importance: /クレーム|苦情|トラブル|謝罪|決定|ルール|再発防止/.test(combined)
+			? "高"
+			: "中",
+		publicScope,
+		departments,
+	};
+}
+
+function buildMeetingKnowledgeMaterial(
+	properties: Record<string, unknown>,
+	blockText: string,
+): string {
+	return [
+		text(properties["要約"]),
+		text(properties["議事内容"]),
+		text(properties["決定事項"]),
+		text(properties["アクション項目"]),
+		blockText,
+	]
+		.filter(Boolean)
+		.join("\n\n")
+		.slice(0, 4000);
+}
+
+function hasMeetingKnowledgeSignal(material: string): boolean {
+	const compact = material.replace(/\s/g, "");
+	if (compact.length < 60) return false;
+	const signalScore = countMeetingKnowledgeSignals(material);
+	const auditOrTest = /Codex|監査用|疎通確認|dry[-ー]?run|ドライラン|テスト|処理確認|ダミー/.test(material);
+	if (auditOrTest) return signalScore >= 2 && compact.length >= 140;
+	return signalScore >= 1;
+}
+
+function countMeetingKnowledgeSignals(material: string): number {
+	const signalPatterns = [
+		/クレーム|苦情|トラブル|謝罪|炎上|再発防止/,
+		/決定|ルール|運用|手順|方針|基準|スタンス/,
+		/価格|反論|保証|運用負荷|将来費用|初期費用|費用/,
+		/勝因|成約|失注|見送り|撤退|断念/,
+		/ヒアリング|提案|確認質問|反論処理|営業トーク/,
+		/対応|判断|顧客|お客様|取引先|競合/,
+		/従業員|社員|理念|存在価値|レゾンデートル/,
+		/案件|契約|請求|稟議|バックオフィス|管理部/,
+	];
+	return signalPatterns.filter((pattern) => pattern.test(material)).length;
+}
+
+function buildMeetingKnowledgeSource(
+	properties: Record<string, unknown>,
+	blockText: string,
+): string {
+	return [
+		["種別・タグ", readMeetingKindForPrompt(properties)],
+		["要約", text(properties["要約"])],
+		["議事内容", text(properties["議事内容"])],
+		["決定事項", text(properties["決定事項"])],
+		["アクション項目", text(properties["アクション項目"])],
+		["本文", blockText],
+	]
+		.filter(([, value]) => value)
+		.map(([label, value]) => `【${label}】\n${value}`)
+		.join("\n\n")
+		.slice(0, 4000);
+}
+
+function inferMeetingKnowledgeKind(meetingType: string, source: string): string {
+	if (/クレーム|苦情|トラブル|謝罪|炎上|再発防止/.test(source)) return "クレーム";
+	if (/失注|見送り|撤退|断念/.test(source)) return "失注学び";
+	if (/勝因|成約|刺さった|成功|受注/.test(source)) return "勝ちパターン";
+	if (/決定|ルール|運用|手順|方針|基準|スタンス/.test(source)) return "運用ルール";
+	if (/商談|営業|価格|反論|ヒアリング|提案/.test(source) || meetingType === "商談") {
+		return "営業トーク";
+	}
+	return "FAQ";
+}
+
+function meetingKnowledgeKindFromInternalKind(kind: string): string {
+	if (kind === "クレーム") return "クレーム対応";
+	if (kind === "勝ちパターン") return "成功事例";
+	if (kind === "運用ルール") return "マニュアル";
+	if (kind === "失注学び") return "その他";
+	if (kind === "営業トーク") return "営業トーク";
+	return "FAQ";
+}
+
+function pickMeetingKnowledgeTitle(
+	properties: Record<string, unknown>,
+	source: string,
+): string {
+	const candidates = [
+		text(properties["決定事項"]),
+		text(properties["要約"]),
+		text(properties["アクション項目"]),
+		source,
+	];
+	for (const candidate of candidates) {
+		const titleText = cleanMeetingKnowledgeTitle(firstKnowledgeSentence(candidate));
+		if (titleText.replace(/\s/g, "").length >= 8) return titleText.slice(0, 80);
+	}
+	return "";
+}
+
+function firstKnowledgeSentence(value: string): string {
+	const clean = value
+		.replace(/【[^】]+】/g, " ")
+		.replace(/^[-*・\s]+/, "")
+		.trim();
+	return clean.split(/[。！？!?]\s*/).find((part) => part.trim())?.trim() ?? "";
+}
+
+function cleanMeetingKnowledgeTitle(value: string): string {
+	return value
+		.replace(/^(決定事項|要約|アクション項目|議事内容|本文)[:：]\s*/, "")
+		.replace(/^[-*・\s]+/, "")
+		.replace(/^\d+[.．、)\s]+/, "")
+		.replace(/[。！？!?]+$/, "")
+		.trim();
+}
+
+function buildMeetingKnowledgeSummary(
+	titleText: string,
+	meetingType: string,
+	source: string,
+): string {
+	const excerpt = source
+		.replace(/【[^】]+】/g, " ")
+		.replace(/\s+/g, " ")
+		.trim()
+		.slice(0, 500);
+	return [
+		`会議: ${titleText}`,
+		`種別: ${meetingType || "未設定"}`,
+		`抽出要点: ${excerpt}`,
+	].join("\n");
+}
+
+function buildMeetingKnowledgeUsage(kind: string, meetingType: string): string {
+	if (kind === "クレーム") return "クレーム対応、謝罪、再発防止、顧客説明の場面";
+	if (kind === "勝ちパターン") return "似た案件の初回商談、提案前、営業ロールプレイ";
+	if (kind === "失注学び") return "失注予防、提案前チェック、マネージャー相談";
+	if (kind === "運用ルール") return "社内判断、会議後の運用整理、新人教育";
+	if (meetingType === "商談" || kind === "営業トーク") {
+		return "商談準備、反論処理、ヒアリング設計、フォロー連絡";
+	}
+	return "FAQ、新人教育、次回同種会議の事前確認";
+}
+
+function buildMeetingKnowledgeRecommendedTalk(kind: string, titleText: string): string {
+	if (kind === "営業トーク") {
+		return `${titleText}。次回の商談では、相手が何を比較軸にしているかを先に確認し、価格・保証・運用負荷・将来リスクを分けて説明する。`;
+	}
+	if (kind === "クレーム") {
+		return `${titleText}。対応時は、事実確認、謝罪、再発防止、次の期限を分けて伝える。`;
+	}
+	return `${titleText}。同じ状況では、会議で出た判断基準を先に確認してから次の行動を決める。`;
+}
+
+async function findKnowledgePagesByMeeting(
+	notion: NotionClient,
+	meetingPageId: string,
+): Promise<Page[]> {
+	const pages = new Map<string, Page>();
+	for (const propertyName of KNOWLEDGE_MEETING_RELATION_ALIASES) {
+		try {
+			const response = await notion.dataSources.query({
+				data_source_id: KNOWLEDGE_DATA_SOURCE_ID,
+				page_size: 10,
+				filter: {
+					property: propertyName,
+					relation: { contains: meetingPageId },
+				},
+			});
+			for (const page of response.results) pages.set(page.id, page);
+		} catch (error) {
+			console.log("meeting knowledge lookup skipped", {
+				propertyName,
+				error: String(error),
+			});
+		}
+	}
+	return [...pages.values()];
+}
+
+function sortKnowledgePagesForReuse(pages: Page[]): Page[] {
+	return [...pages].sort((a, b) => {
+		const aDuplicate = checkboxValue(a.properties?.["重複疑い"]) ? 1 : 0;
+		const bDuplicate = checkboxValue(b.properties?.["重複疑い"]) ? 1 : 0;
+		if (aDuplicate !== bDuplicate) return aDuplicate - bDuplicate;
+		return String((a as Record<string, unknown>).created_time ?? "").localeCompare(
+			String((b as Record<string, unknown>).created_time ?? ""),
+		);
+	});
+}
+
+async function createKnowledgePageFromMeeting(
+	notion: NotionClient,
+	input: {
+		meetingPage: Page;
+		titleText: string;
+		meetingType: string;
+		candidate: MeetingKnowledgeCandidate;
+		relatedCompanyIds: string[];
+		relatedDealIds: string[];
+	},
+): Promise<Page> {
+	const created = await notion.pages.create({
+		parent: { data_source_id: KNOWLEDGE_DATA_SOURCE_ID },
+		properties: {
+			ナレッジタイトル: title(input.candidate.title),
+		},
+	});
+	const fullPage = await notion.pages.retrieve({ page_id: created.id });
+	const patches: Record<string, SafePatch> = {
+		ナレッジ種別: { kind: "select", value: input.candidate.knowledgeKind },
+		候補判定: { kind: "select", value: "新規候補" },
+		元データ種別: { kind: "select", value: "議事録" },
+		元ミーティング: { kind: "relation", ids: [input.meetingPage.id] },
+		元会議議事録: { kind: "relation", ids: [input.meetingPage.id] },
+		要点: { kind: "text", value: input.candidate.summary },
+		入力テキスト: { kind: "text", value: input.candidate.source },
+		使いどころ: { kind: "text", value: input.candidate.usage },
+		根拠メモ: {
+			kind: "text",
+			value: `Worker会議ナレッジ化: ${new Date().toISOString()}\n会議: ${input.titleText}\n会議種別: ${input.meetingType}\n外部AIは未使用。会議DB内の要約/議事内容/決定事項/アクション項目/本文から抽出。`,
+		},
+		推奨トーク: { kind: "text", value: input.candidate.recommendedTalk },
+		AI候補度: { kind: "select", value: input.candidate.candidateLevel },
+		AI重要度: { kind: "select", value: input.candidate.importance },
+		確度: { kind: "select", value: input.candidate.confidence },
+		重複疑い: { kind: "checkbox", value: false },
+		公開範囲: { kind: "select", value: input.candidate.publicScope },
+		対象部門: { kind: "multi_select", values: input.candidate.departments },
+		生成ステータス: { kind: "select", value: "完了" },
+		運用ステータス: { kind: "select", value: "未着手" },
+		AI関係発見メモ: {
+			kind: "text",
+			value: "同じ元会議議事録relationの候補がある場合はWorker側で二重作成を止めます。",
+		},
+	};
+	if (input.relatedCompanyIds.length > 0) {
+		patches["元企業"] = {
+			kind: "relation",
+			ids: input.relatedCompanyIds.slice(0, 3),
+		};
+	}
+	if (input.relatedDealIds.length > 0) {
+		patches["元商談"] = {
+			kind: "relation",
+			ids: input.relatedDealIds.slice(0, 3),
+		};
+	}
+	await safeUpdateExistingProperties(notion, fullPage, patches);
+	return created;
+}
+
+function buildMeetingKnowledgeResultMemo(input: {
+	titleText: string;
+	knowledgePageId: string;
+	candidate: MeetingKnowledgeCandidate;
+}): string {
+	return [
+		`Worker会議ナレッジ化: ${new Date().toISOString()}`,
+		`会議: ${input.titleText}`,
+		`作成候補: ${input.candidate.title}`,
+		`社内ナレッジDBページ: ${input.knowledgePageId}`,
+		"候補判定は新規候補。採用/保留/不採用は人間が判断してください。",
+	].join("\n").slice(0, 1800);
+}
+
+function readMeetingTitleText(properties: Record<string, unknown>): string {
+	return readFirstTextByAliases(properties, [
+		"ミーティング名",
+		"会議名",
+		"ミーティング名AI",
+		"会議名AI",
+		"ミーティング名（自動）",
+		"会議名（自動）",
+	]) || "会議";
 }
 
 function parseMeetingTaskCandidates(actionItems: string): MeetingTaskCandidate[] {
@@ -6161,9 +8458,8 @@ async function callOpenAIMeetingFeedback(input: {
 	meetingType: string;
 	source: string;
 }): Promise<MeetingFeedbackAIResponse> {
-	const apiKey = process.env.OPENAI_API_KEY;
-	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
-	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+	const { apiKey, model } = resolveWajoOpenAiConfig(process.env);
+	if (!apiKey) throw new Error("WAJO_OPENAI_API_KEY / OPENAI_API_KEY が未設定です");
 
 	const systemPrompt = [
 		"あなたは和上ホールディングスの会議フィードバックAIです。",
@@ -6633,6 +8929,7 @@ async function processSalesPerformanceReview(
 			status: evaluationStatus,
 			message:
 				"評価ステータスが確定済みのため、人見さんWorkerはAI評価メモ、点数、ランク、評価ステータスを変更しませんでした。",
+			sourcePreview: [],
 		};
 	}
 
@@ -6643,15 +8940,10 @@ async function processSalesPerformanceReview(
 
 	const propertySource = buildSalesPerformanceReviewSource(properties);
 	const relatedSource = await buildSalesPerformanceRelatedSource(notion, properties);
-	const pageText = await fetchPageBlockPlainText(notion, performancePage.id);
-	const source = [
+	const source = buildSalesPerformanceEvaluationSource({
 		propertySource,
 		relatedSource,
-		pageText ? `【ページ本文】\n${pageText}` : "",
-	]
-		.filter(Boolean)
-		.join("\n\n")
-		.slice(0, 16000);
+	});
 
 	if (missing.length > 0 && !auditOrTest) {
 		const message = `評価の前提が不足しているため、点数・ランク・最終評価は変更せず要確認で停止しました。不足: ${missing.join(" / ")}`;
@@ -6669,6 +8961,7 @@ async function processSalesPerformanceReview(
 			action: "needs-review",
 			status: "要確認",
 			message,
+			sourcePreview: [],
 		};
 	}
 
@@ -6689,6 +8982,7 @@ async function processSalesPerformanceReview(
 			action: "needs-review",
 			status: "要確認",
 			message,
+			sourcePreview: [],
 		};
 	}
 
@@ -6698,6 +8992,7 @@ async function processSalesPerformanceReview(
 			action: "dry-run",
 			status: "dry-run",
 			message: `dry-run: ${titleText} を ${source.length} 文字の評価材料から一次評価案化できます。不足警告: ${missing.join(" / ") || "なし"}。監査/テスト扱い: ${auditOrTest ? "はい" : "いいえ"}。`,
+			sourcePreview: buildSalesPerformanceDryRunPreview(source),
 		};
 	}
 
@@ -6728,37 +9023,13 @@ async function processSalesPerformanceReview(
 			action: "error",
 			status: "要確認",
 			message: `OpenAI API呼び出し失敗: ${message}`,
+			sourcePreview: [],
 		};
 	}
 
 	const status =
 		review.recommendedStatus === "要確認" && !auditOrTest ? "要確認" : "処理済";
-	const patches: Record<string, SafePatch> = {
-		AI処理状態: { kind: "select", value: status },
-		AI評価メモ: {
-			kind: "text",
-			value: appendShortMemo(
-				text(properties["AI評価メモ"]),
-				buildSalesPerformanceReviewMemo(review, missing, auditOrTest),
-			),
-		},
-		上司確認事項: {
-			kind: "text",
-			value: appendShortMemo(
-				text(properties["上司確認事項"]),
-				buildSalesPerformanceConfirmationMemo(review, missing, auditOrTest),
-			),
-		},
-	};
-	addPatchIfBlank(
-		patches,
-		properties,
-		"次月改善ポイント",
-		review.nextMonthImprovements.map((item) => `・${item}`).join("\n"),
-	);
-	addPatchIfBlank(patches, properties, "改善ポイント", review.actionGuidance);
-	addPatchIfBlank(patches, properties, "成長ポイント", review.personComment);
-	addPatchIfBlank(patches, properties, "次月テーマ", review.nextMonthImprovements[0] ?? "");
+	const patches = buildSalesPerformanceReviewPatches(properties, review, missing, auditOrTest);
 
 	await safeUpdateExistingProperties(notion, performancePage, patches);
 
@@ -6770,6 +9041,7 @@ async function processSalesPerformanceReview(
 			status === "処理済"
 				? "人見さん営業評価案を返却しました。総合スコア、評価ランク、評価ステータス確定は変更していません。"
 				: "一次評価案は作成しましたが、不足情報があるため要確認で止めました。総合スコア、評価ランク、評価ステータス確定は変更していません。",
+		sourcePreview: [],
 	};
 }
 
@@ -6794,24 +9066,13 @@ function buildSalesPerformanceReviewSource(
 		["売上目標", numberValue(properties["売上目標"])],
 		["実績売上額", numberValue(properties["実績売上額"])],
 		["粗利目標", numberValue(properties["粗利目標"])],
-		["実績粗利額", numberValue(properties["実績粗利額"])],
+		["実績粗利額", numberValueAny(properties, ["実績粗利額（自動）", "実績粗利額"])],
 		["粗利達成率", numberValue(properties["粗利達成率"])],
 		["商談件数", numberValue(properties["商談件数"])],
-		["成約件数", numberValue(properties["成約件数"])],
+		["成約件数", numberValueAny(properties, ["成約件数（自動）", "成約件数"])],
 		["案件化件数", numberValue(properties["案件化件数"])],
-		["日報提出数", numberValue(properties["日報提出数"])],
-		["日報継続率", numberValue(properties["日報継続率"])],
-		["商談準備実施数", numberValue(properties["商談準備実施数"])],
-		["平均営業スコア", numberValue(properties["平均営業スコア"])],
-		["総合スコア", numberValue(properties["総合スコア"])],
-		["営業成果スコア", numberValue(properties["営業成果スコア"])],
-		["行動継続スコア", numberValue(properties["行動継続スコア"])],
-		["商談品質スコア", numberValue(properties["商談品質スコア"])],
-		["チーム貢献スコア", numberValue(properties["チーム貢献スコア"])],
-		["ナレッジ貢献スコア", numberValue(properties["ナレッジ貢献スコア"])],
 		["仕入れ件数", numberValue(properties["仕入れ件数"])],
 		["仕入れ金額", numberValue(properties["仕入れ金額"])],
-		["案件化件数", numberValue(properties["案件化件数"])],
 		["専売許可件数", numberValue(properties["専売許可件数"])],
 	]
 		.filter(([, value]) => typeof value === "number")
@@ -6824,15 +9085,6 @@ function buildSalesPerformanceReviewSource(
 		["評価ステータス", text(properties["評価ステータス"])],
 		["監査区分", text(properties["監査区分"])],
 		["AI処理状態", text(properties["AI処理状態"])],
-		["評価ランク", text(properties["評価ランク"])],
-		["本人コメント", text(properties["本人コメント"])],
-		["マネージャーコメント", text(properties["マネージャーコメント"])],
-		["AI評価メモ", text(properties["AI評価メモ"])],
-		["上司確認事項", text(properties["上司確認事項"])],
-		["次月改善ポイント", text(properties["次月改善ポイント"])],
-		["改善ポイント", text(properties["改善ポイント"])],
-		["成長ポイント", text(properties["成長ポイント"])],
-		["仕入れ評価メモ", text(properties["仕入れ評価メモ"])],
 	]
 		.filter(([, value]) => value)
 		.map(([label, value]) => `【${label}】\n${value}`);
@@ -6846,48 +9098,306 @@ function buildSalesPerformanceReviewSource(
 	].filter(Boolean);
 	return [
 		dates.join("\n"),
-		numberLines.length > 0 ? `【数値・スコア】\n${numberLines.join("\n")}` : "",
+		numberLines.length > 0
+			? `【定量評価（実績）｜65点】\n営業の実績数字のみを読む。\n${numberLines.join("\n")}`
+			: "",
 		textLines.join("\n\n"),
 	]
 		.filter(Boolean)
 		.join("\n\n");
 }
 
+function buildSalesPerformanceEvaluationSource(input: {
+	propertySource: string;
+	relatedSource: string;
+	pageText?: string;
+}): string {
+	void input.pageText;
+	return [input.propertySource, input.relatedSource]
+		.filter((part) => part.trim().length > 0)
+		.join("\n\n")
+		.slice(0, 16000);
+}
+
+function buildSalesPerformanceDryRunPreview(source: string): string[] {
+	const importantLinePattern =
+		/^(売上目標|実績売上額|粗利目標|実績粗利額|粗利達成率|商談件数|成約件数|案件化件数|仕入れ件数|仕入れ金額|専売許可件数):/;
+	return source
+		.split(/\n+/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.filter((line) =>
+			line.includes("定量評価（実績）｜65点") ||
+			line.includes("定性評価（活動ログ）｜35点") ||
+			line.includes("補助確認事項（採点対象外）") ||
+			line.includes("採点対象: false") ||
+			line.includes("活動ログ未接続") ||
+			line.includes("活動ログ未集約") ||
+			line.includes("活動ログ件数超過") ||
+			line.startsWith("URL:") ||
+			importantLinePattern.test(line),
+		)
+		.slice(0, 20);
+}
+
 async function buildSalesPerformanceRelatedSource(
 	notion: NotionClient,
 	properties: Record<string, unknown>,
 ): Promise<string> {
-	const relationMap: Array<[string, string[], number]> = [
-		["関連活動ログ", relationIdsFromProperty(properties["関連活動ログ"]), 8],
-		["活動ログ", relationIdsFromProperty(properties["活動ログ"]), 8],
-		["関連日報ログ", relationIdsFromProperty(properties["関連日報ログ"]), 5],
-		["日報ログ", relationIdsFromProperty(properties["日報ログ"]), 5],
-		["関連発言ログ", relationIdsFromProperty(properties["関連発言ログ"]), 5],
-		["発言ログ", relationIdsFromProperty(properties["発言ログ"]), 5],
-		["関連営業ログ", relationIdsFromProperty(properties["関連営業ログ"]), 5],
-		["営業ログ", relationIdsFromProperty(properties["営業ログ"]), 5],
+	const sections: string[] = [];
+	const activityIds = uniqueIds([
+		...relationIdsFromProperty(properties["関連活動ログ"]),
+		...relationIdsFromProperty(properties["活動ログ"]),
+	]);
+	const legacyDirectMap: Array<[string, string[], number]> = [
+		["旧直接ログ:関連日報ログ", relationIdsFromProperty(properties["関連日報ログ"]), 5],
+		["旧直接ログ:日報ログ", relationIdsFromProperty(properties["日報ログ"]), 5],
+		["旧直接ログ:関連発言ログ", relationIdsFromProperty(properties["関連発言ログ"]), 5],
+		["旧直接ログ:発言ログ", relationIdsFromProperty(properties["発言ログ"]), 5],
+		["旧直接ログ:関連顧客接点ログ", relationIdsFromProperty(properties["関連顧客接点ログ"]), 5],
+		["旧直接ログ:顧客接点ログ", relationIdsFromProperty(properties["顧客接点ログ"]), 5],
+		["旧直接ログ:関連貢献ログ", relationIdsFromProperty(properties["関連貢献ログ"]), 5],
+		["旧直接ログ:貢献ログ", relationIdsFromProperty(properties["貢献ログ"]), 5],
+		["旧直接ログ:関連営業貢献ログ", relationIdsFromProperty(properties["関連営業貢献ログ"]), 5],
+		["旧直接ログ:営業貢献ログ", relationIdsFromProperty(properties["営業貢献ログ"]), 5],
+		["旧直接ログ:関連営業ログ", relationIdsFromProperty(properties["関連営業ログ"]), 5],
+		["旧直接ログ:営業ログ", relationIdsFromProperty(properties["営業ログ"]), 5],
+		["旧直接ログ:関連ノルマ申請", relationIdsFromProperty(properties["関連ノルマ申請"]), 5],
+		["旧直接ログ:ノルマ申請", relationIdsFromProperty(properties["ノルマ申請"]), 5],
+		["旧直接ログ:関連商談", relationIdsFromProperty(properties["関連商談"]), 5],
+		["旧直接ログ:商談", relationIdsFromProperty(properties["商談"]), 5],
+		["旧直接ログ:関連成約", relationIdsFromProperty(properties["関連成約"]), 5],
+		["旧直接ログ:関連成約報告", relationIdsFromProperty(properties["関連成約報告"]), 5],
+		["旧直接ログ:成約報告", relationIdsFromProperty(properties["成約報告"]), 5],
+		["旧直接ログ:関連マネージャー評価", relationIdsFromProperty(properties["関連マネージャー評価"]), 5],
+		["旧直接ログ:マネージャー評価", relationIdsFromProperty(properties["マネージャー評価"]), 5],
+	];
+	if (activityIds.length > 0) {
+		const scoringLines: string[] = [];
+		const supportLines: string[] = [];
+		for (const id of activityIds.slice(0, 8)) {
+			const summary = await buildSalesActivityEvidenceSummary(notion, id);
+			if (summary.scoring) scoringLines.push(summary.scoring);
+			if (summary.support) supportLines.push(summary.support);
+		}
+		if (activityIds.length > 8) {
+			scoringLines.push(
+				`活動ログ件数超過: 関連活動ログ${activityIds.length}件中8件のみを評価材料として読みました。残り${activityIds.length - 8}件は人間確認または集約ルール見直しが必要です。`,
+			);
+		}
+		sections.push(`【定性評価（活動ログ）｜35点】\n貢献ログ・顧客接点ログ・発言ログだけを評価対象の定性根拠として読む。\n${scoringLines.length > 0 ? scoringLines.join("\n---\n") : "評価対象外または対象3ログ外の活動ログだけが紐づいています。"}`);
+		if (supportLines.length > 0) {
+			sections.push(
+				`【補助確認事項（採点対象外）】\nAI活用ログ、人見さんメモ、ワニポメモリーは採点根拠にせず、面談前の確認材料としてだけ扱う。\n${supportLines.join("\n---\n")}`,
+			);
+		}
+	} else {
+		sections.push("【定性評価（活動ログ）｜35点】\n活動ログ未接続: 営業マンパフォーマンスDBに関連活動ログがありません。");
+	}
+	const legacyDirectCount = legacyDirectMap.reduce((sum, [, ids]) => sum + ids.length, 0);
+	if (legacyDirectCount > 0) {
+		sections.push(
+			"【データ不足・警告】\n活動ログ未集約: 直接ログはありますが、定性評価35点には使いません。活動ログDBへ集約してから評価材料にしてください。",
+		);
+	}
+	return sections.join("\n\n").slice(0, 10000);
+}
+
+type SalesActivityEvidenceSummary = {
+	scoring: string;
+	support: string;
+};
+
+async function buildSalesActivityEvidenceSummary(
+	notion: NotionClient,
+	pageId: string,
+): Promise<SalesActivityEvidenceSummary> {
+	try {
+		const page = await notion.pages.retrieve({ page_id: pageId });
+		const properties = page.properties ?? {};
+		const support = buildActivitySupportEvidenceSummary(page, properties);
+		if (!checkboxValue(properties["評価対象"])) {
+			return { scoring: "", support };
+		}
+		if (!hasActivityScoringSource(properties)) {
+			return { scoring: "", support };
+		}
+		const base = [
+			page.url ? `URL: ${page.url}` : "",
+			buildGenericPageSummary(properties),
+		]
+			.filter(Boolean)
+			.join("\n");
+		const childSummary = await buildActivityChildEvidenceSummary(notion, properties);
+		return {
+			scoring: [base, childSummary].filter(Boolean).join("\n"),
+			support,
+		};
+	} catch (error) {
+		return { scoring: `取得失敗: ${String(error).slice(0, 120)}`, support: "" };
+	}
+}
+
+function hasActivityScoringSource(properties: Record<string, unknown>): boolean {
+	return (
+		relationIdsFromProperty(properties["関連発言"]).length > 0 ||
+		relationIdsFromProperty(properties["関連顧客接点ログ"]).length > 0 ||
+		relationIdsFromProperty(properties["関連営業貢献ログ"]).length > 0
+	);
+}
+
+function buildActivitySupportEvidenceSummary(
+	page: Page,
+	properties: Record<string, unknown>,
+): string {
+	const supportRelations: Array<[string, string[]]> = [
+		["関連人見さんメモ", relationIdsFromProperty(properties["関連人見さんメモ"])],
+		["関連ワニポメモリー", relationIdsFromProperty(properties["関連ワニポメモリー"])],
+		["関連AI活用ログ", relationIdsFromProperty(properties["関連AI活用ログ"])],
+	];
+	const relationLines = supportRelations
+		.filter(([, ids]) => ids.length > 0)
+		.map(([label, ids]) => `${label}: ${ids.length}件`);
+	const isScoringTarget = checkboxValue(properties["評価対象"]);
+	if (relationLines.length === 0 && isScoringTarget) return "";
+	const titleText = text(properties["活動タイトル"]) || text(properties["名前"]);
+	return [
+		page.url ? `URL: ${page.url}` : "",
+		titleText ? `活動タイトル: ${titleText}` : "",
+		`採点対象: ${isScoringTarget ? "true" : "false"}`,
+		relationLines.join("\n"),
+	]
+		.filter(Boolean)
+		.join("\n");
+}
+
+async function buildActivityChildEvidenceSummary(
+	notion: NotionClient,
+	properties: Record<string, unknown>,
+): Promise<string> {
+	const childMap: Array<[string, string[], number]> = [
+		["関連発言", relationIdsFromProperty(properties["関連発言"]), 5],
+		["関連顧客接点ログ", relationIdsFromProperty(properties["関連顧客接点ログ"]), 5],
 		["関連営業貢献ログ", relationIdsFromProperty(properties["関連営業貢献ログ"]), 5],
-		["関連ノルマ申請", relationIdsFromProperty(properties["関連ノルマ申請"]), 2],
-		["関連商談", relationIdsFromProperty(properties["関連商談"]), 3],
-		["関連成約", relationIdsFromProperty(properties["関連成約"]), 3],
-		["関連貢献ログ", relationIdsFromProperty(properties["関連貢献ログ"]), 5],
-		["関連マネージャー評価", relationIdsFromProperty(properties["関連マネージャー評価"]), 2],
 	];
 	const sections: string[] = [];
-	for (const [label, ids, limit] of relationMap) {
+	for (const [label, ids, limit] of childMap) {
 		if (ids.length === 0) continue;
 		const lines: string[] = [];
 		for (const id of ids.slice(0, limit)) {
 			try {
-				const page = await notion.pages.retrieve({ page_id: id });
-				lines.push(buildGenericPageSummary(page.properties ?? {}));
+					const page = await notion.pages.retrieve({ page_id: id });
+					const childProperties = page.properties ?? {};
+					lines.push([
+					page.url ? `URL: ${page.url}` : "",
+					buildGenericPageSummary(childProperties),
+				]
+					.filter(Boolean)
+					.join("\n"));
 			} catch (error) {
 				lines.push(`取得失敗: ${String(error).slice(0, 120)}`);
 			}
 		}
 		sections.push(`【${label}】\n${lines.filter(Boolean).join("\n---\n")}`);
 	}
-	return sections.join("\n\n").slice(0, 10000);
+	return sections.join("\n");
+}
+
+function isHitomiMemoEvaluationEvidence(properties: Record<string, unknown>): boolean {
+	const materialStatus = text(properties["評価材料化状態"]);
+	const monthlyStatus = text(properties["月次評価反映状態"]);
+	return (
+		materialStatus === "月次評価で確認" ||
+		materialStatus === "営業貢献ログへ反映" ||
+		monthlyStatus === "反映候補"
+	);
+}
+
+function isWaniPoMemoryEvaluationEvidence(properties: Record<string, unknown>): boolean {
+	const useStatus = text(properties["評価利用可否"]);
+	const monthlyStatus = text(properties["月次評価反映状態"]);
+	const visibility = text(properties["公開範囲"]);
+	return (
+		(useStatus === "本人が許可したら使う" || useStatus === "本人共有済み") &&
+		monthlyStatus === "反映候補" &&
+		visibility !== "本人のみ"
+	);
+}
+
+export {
+	buildSalesPerformanceEvaluationSource as buildSalesPerformanceEvaluationSourceForTest,
+	buildSalesPerformanceDryRunPreview as buildSalesPerformanceDryRunPreviewForTest,
+	buildSalesPerformanceReviewSource as buildSalesPerformanceReviewSourceForTest,
+	buildSalesPerformanceRelatedSource as buildSalesPerformanceRelatedSourceForTest,
+	buildSalesPerformanceReviewPatches as buildSalesPerformanceReviewPatchesForTest,
+	isHitomiMemoEvaluationEvidence as isHitomiMemoEvaluationEvidenceForTest,
+	isWaniPoMemoryEvaluationEvidence as isWaniPoMemoryEvaluationEvidenceForTest,
+};
+
+function buildSalesPerformanceReviewPatches(
+	properties: Record<string, unknown>,
+	review: SalesPerformanceReviewAIResponse,
+	missing: string[],
+	auditOrTest: boolean,
+): Record<string, SafePatch> {
+	const status =
+		review.recommendedStatus === "要確認" && !auditOrTest ? "要確認" : "処理済";
+	const patches: Record<string, SafePatch> = {
+		AI処理状態: { kind: "select", value: status },
+		AI評価メモ: {
+			kind: "text",
+			value: replaceWorkerReviewSection(
+				text(properties["AI評価メモ"]),
+				"人見さんWorker一次評価案:",
+				buildSalesPerformanceReviewMemo(review, missing, auditOrTest),
+			),
+		},
+		上司確認事項: {
+			kind: "text",
+			value: replaceWorkerReviewSection(
+				text(properties["上司確認事項"]),
+				"人見さん確認事項:",
+				buildSalesPerformanceConfirmationMemo(review, missing, auditOrTest),
+			),
+		},
+	};
+	addSalesPerformanceReviewTextPatch(
+		patches,
+		properties,
+		"次月改善ポイント",
+		review.nextMonthImprovements.map((item) => `・${item}`).join("\n"),
+	);
+	addSalesPerformanceReviewTextPatch(patches, properties, "改善ポイント", review.actionGuidance);
+	addSalesPerformanceReviewTextPatch(patches, properties, "成長ポイント", review.personComment);
+	addSalesPerformanceReviewTextPatch(
+		patches,
+		properties,
+		"次月テーマ",
+		review.nextMonthImprovements[0] ?? "",
+	);
+	return patches;
+}
+
+function addSalesPerformanceReviewTextPatch(
+	patches: Record<string, SafePatch>,
+	properties: Record<string, unknown>,
+	propertyName: string,
+	value: string,
+): void {
+	if (!value.trim()) return;
+	const current = text(properties[propertyName]);
+	patches[propertyName] = {
+		kind: "text",
+		value: current.trim()
+			? appendShortMemo(current, buildSalesPerformanceStampedAppend(value))
+			: value,
+	};
+}
+
+function buildSalesPerformanceStampedAppend(value: string): string {
+	return [`人見さんWorker今回追記: ${new Date().toISOString()}`, value]
+		.filter(Boolean)
+		.join("\n");
 }
 
 function buildSalesPerformanceReviewMemo(
@@ -6895,28 +9405,51 @@ function buildSalesPerformanceReviewMemo(
 	missing: string[],
 	auditOrTest: boolean,
 ): string {
+	const evidenceLines = review.evidence
+		.filter((item) => item.trim().length > 0)
+		.slice(0, 8)
+		.map((item) => `・${item}`);
 	const lines = [
 		`人見さんWorker一次評価案: ${new Date().toISOString()}`,
 		"総合スコア・評価ランク・評価ステータス確定は未変更。",
 		auditOrTest ? "監査除外/テストデータとして確認。本番評価根拠には使わない。" : "",
 		missing.length > 0 ? `不足/人間確認: ${missing.join(" / ")}` : "",
+		evidenceLines.length > 0 ? "【根拠リンク・材料】" : "",
+		...evidenceLines,
 		"",
 		"【結論】",
 		review.conclusion,
 		"",
-		"【結果評価の読み解き】",
+		"【定量評価（実績）65点】",
 		review.resultExplanation,
 		"",
-		"【行動評価への助言】",
+		"【定性評価（活動ログ）35点】",
 		review.actionGuidance,
 		"",
-		"【貢献評価の見立て】",
 		review.contributionView,
+		"",
+		"【補助確認事項（採点対象外）】",
+		review.riskNotes.length > 0
+			? review.riskNotes.map((item) => `・${item}`).join("\n")
+			: "補助材料は採点根拠にせず、面談前の確認材料として扱う。",
 		"",
 		"【本人に返す短いコメント】",
 		review.personComment,
 	].filter((line) => line !== undefined && line !== null);
 	return lines.join("\n").slice(0, 1800);
+}
+
+function replaceWorkerReviewSection(
+	current: string,
+	marker: string,
+	note: string,
+): string {
+	if (!current) return note;
+	if (!current.includes(marker)) return appendShortMemo(current, note);
+	const markerIndex = current.indexOf(marker);
+	const beforeMarker = current.slice(0, markerIndex).trim();
+	if (!beforeMarker) return note;
+	return `${beforeMarker}\n\n${note}`;
 }
 
 function buildSalesPerformanceConfirmationMemo(
@@ -6943,9 +9476,8 @@ async function callOpenAISalesPerformanceReview(input: {
 	missing: string[];
 	auditOrTest: boolean;
 }): Promise<SalesPerformanceReviewAIResponse> {
-	const apiKey = process.env.OPENAI_API_KEY;
-	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
-	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+	const { apiKey, model } = resolveWajoOpenAiConfig(process.env);
+	if (!apiKey) throw new Error("WAJO_OPENAI_API_KEY / OPENAI_API_KEY が未設定です");
 
 	const systemPrompt = [
 		"あなたは和上ホールディングスのAI人事評価担当「人見さん」です。",
@@ -6961,12 +9493,16 @@ async function callOpenAISalesPerformanceReview(input: {
 		"- 不明なことは要確認と明示する",
 		"",
 		"出力方針:",
+		"- 評価は二軸で見る。定量評価（実績）65点、定性評価（活動ログ）35点を基本配分にする",
+		"- 定量評価は営業の実績数字だけを見る。売上、粗利、達成率、商談件数、成約件数、案件化件数、仕入れ件数、仕入れ金額など",
+		"- 定性評価は活動ログDBに集約された貢献ログ、顧客接点ログ、発言ログだけを見る",
+		"- AI活用ポイント、人見さんメモ、ワニポメモリー、本人コメント、マネージャーメモは主たる採点根拠にしない",
+		"- 月次ページ本文、自由記述、本人コメント、マネージャーメモは採点根拠にしない",
 		"- 既存の数値やスコアは、変更ではなく読み解きとして説明する",
-		"- 活動ログ、日報ログ、発言ログ、営業ログ、営業貢献ログが渡されている場合は、営業パフォーマンスDBの数字の裏付けとして読む",
-		"- 活動ログは証拠正本として扱い、生ログの横断ではなく活動ログに整理された要約を優先する",
-		"- 行動評価と貢献評価は、マネージャーが面談で確認する論点に落とす",
+		"- 行動評価と貢献評価は、定性評価の確認論点としてマネージャー面談に落とす",
 		"- 本人に返す言葉は厳しさと成長支援を両立させる",
 		"- 次月改善ポイントは3件以内で具体化する",
+		"- evidence には、評価コメントの根拠になる数値、活動ログURL、データ不足警告を短く入れる",
 		"- recommendedStatus は、評価材料として使えるなら処理済、不足が大きいなら要確認にする",
 		"必ずJSONのみを返してください。",
 	].join("\n");
@@ -7011,6 +9547,19 @@ async function callOpenAISalesPerformanceReview(input: {
 	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
 	return parseSalesPerformanceReviewAIResponse(raw);
 }
+
+function resolveWajoOpenAiConfig(
+	env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+): { apiKey: string; model: string } {
+	return {
+		apiKey: (env.WAJO_OPENAI_API_KEY || env.OPENAI_API_KEY || "").trim(),
+		model: (env.WAJO_OPENAI_MODEL || env.OPENAI_MODEL || "gpt-4o-mini").trim(),
+	};
+}
+
+export {
+	resolveWajoOpenAiConfig as resolveWajoOpenAiConfigForTest,
+};
 
 function parseSalesPerformanceReviewAIResponse(
 	raw: string,
@@ -10189,40 +12738,19 @@ async function createProjectRecord(
 	notion: NotionClient,
 	properties: Record<string, unknown>,
 ): Promise<Page> {
-	const createBase: Record<string, unknown> = {
+	return notion.pages.create({
 		parent: { data_source_id: PROJECT_DATA_SOURCE_ID },
+		icon: {
+			type: "icon",
+			icon: { name: "school", color: "orange" },
+		},
+		cover: {
+			type: "file_upload",
+			file_upload: { id: PROJECT_COVER_FILE_UPLOAD_ID },
+		},
 		properties,
-	};
-
-	if (!PROJECT_TEMPLATE_ID) {
-		return notion.pages.create(createBase);
-	}
-
-	const templatePayloads: Array<{ template?: Record<string, unknown> | string }> = [
-		{ template: { page_id: PROJECT_TEMPLATE_ID } },
-		{ template: { data_source_id: PROJECT_DATA_SOURCE_ID, page_id: PROJECT_TEMPLATE_ID } },
-		{ template: PROJECT_TEMPLATE_ID },
-	];
-
-	for (const payload of templatePayloads) {
-		try {
-			return await notion.pages.create({
-				...createBase,
-				...payload,
-			});
-		} catch (error) {
-			console.log(
-				`[createProjectRecord] template適用試行をスキップ: ${String(
-					error,
-				).slice(0, 180)}`,
-			);
-		}
-	}
-
-	console.log(
-		`[createProjectRecord] PROJECT_TEMPLATE_ID を使った作成は失敗したため、テンプレート未適用で作成します。`,
-	);
-	return notion.pages.create(createBase);
+		template: pageTemplate(PROJECT_TEMPLATE_ID),
+	});
 }
 
 async function createProjectFromLand(
@@ -10448,9 +12976,8 @@ function buildDealMeetingFeedbackPayload(
 async function callOpenAIDealMeetingFeedback(
 	payload: string,
 ): Promise<DealMeetingFeedbackAIResponse> {
-	const apiKey = process.env.OPENAI_API_KEY;
-	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
-	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+	const { apiKey, model } = resolveWajoOpenAiConfig(process.env);
+	if (!apiKey) throw new Error("WAJO_OPENAI_API_KEY / OPENAI_API_KEY が未設定です");
 	const systemPrompt = [
 		"あなたは和上ホールディングスの商談議事録フィードバックAIです。",
 		"商談管理DBと関連会議議事録を読み、営業マンが次の商談を良くするためのフィードバックを返します。",
@@ -10732,9 +13259,8 @@ function buildSecondReviewPayload(
 }
 
 async function callOpenAISecondReview(payload: string): Promise<SecondReviewAIResponse> {
-	const apiKey = process.env.OPENAI_API_KEY;
-	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
-	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+	const { apiKey, model } = resolveWajoOpenAiConfig(process.env);
+	if (!apiKey) throw new Error("WAJO_OPENAI_API_KEY / OPENAI_API_KEY が未設定です");
 
 	const systemPrompt = [
 		"あなたは和上ホールディングスの営業フィードバック二次レビュアーです。",
@@ -11023,9 +13549,8 @@ function buildDealNextActionPayload(
 async function callOpenAIDealNextActions(
 	payload: string,
 ): Promise<DealNextActionAIResponse> {
-	const apiKey = process.env.OPENAI_API_KEY;
-	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
-	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+	const { apiKey, model } = resolveWajoOpenAiConfig(process.env);
+	if (!apiKey) throw new Error("WAJO_OPENAI_API_KEY / OPENAI_API_KEY が未設定です");
 	const today = new Date().toISOString().slice(0, 10);
 
 	const systemPrompt = [
@@ -13122,7 +15647,13 @@ function isCompanyResearchComplete(research: Research): boolean {
 function appendShortMemo(current: string, note: string): string {
 	if (!current) return note;
 	if (current.includes(note)) return current;
-	return `${current}\n${note}`.slice(0, 1800);
+	const combined = `${current}\n${note}`;
+	if (combined.length <= 1800) return combined;
+	if (note.length >= 1800) return note.slice(0, 1800);
+	const separator = "\n--- 既存メモ抜粋 ---\n";
+	const remaining = 1800 - note.length - separator.length;
+	const currentExcerpt = remaining > 0 ? current.slice(Math.max(0, current.length - remaining)) : "";
+	return `${note}${separator}${currentExcerpt}`.slice(0, 1800);
 }
 
 function extractDomain(value: string): string {
@@ -14162,18 +16693,19 @@ async function createInquiryFromEmail(
 	const created = await notion.pages.create({
 		parent: { data_source_id: INQUIRY_DATA_SOURCE_ID },
 		properties,
-		children: [
-			{
-				object: "block",
-				type: "callout",
-				callout: {
-					rich_text: [{ type: "text", text: { content: "— 問い合わせ画面 —" } }],
-					icon: { emoji: "🔵" },
-					color: "blue_background",
-				},
-			},
-		],
+		template: pageTemplate(INQUIRY_TEMPLATE_ID),
 	});
+	await appendBlocksIfAny(notion, created.id, [
+		{
+			object: "block",
+			type: "callout",
+			callout: {
+				rich_text: [{ type: "text", text: { content: "— 問い合わせ画面 —" } }],
+				icon: { emoji: "🔵" },
+				color: "blue_background",
+			},
+		},
+	]);
 	const createdPage = await notion.pages.retrieve({ page_id: created.id });
 	if (emailInfo.attentionMemo) {
 		await safeUpdateExistingProperties(notion, createdPage, {
@@ -15314,6 +17846,14 @@ function numberValue(property: unknown): number | null {
 	return null;
 }
 
+function numberValueAny(properties: Record<string, unknown>, names: string[]): number | null {
+	for (const name of names) {
+		const value = numberValue(properties[name]);
+		if (value !== null) return value;
+	}
+	return null;
+}
+
 function numberFromText(value: string): number | null {
 	const normalized = value.replace(/,/g, "");
 	const match = normalized.match(/\d+(?:\.\d+)?/);
@@ -15370,6 +17910,53 @@ function text(property: unknown): string {
 			.join(", ");
 	}
 	return "";
+}
+
+function isInternalTestOrAuditText(value: string): boolean {
+	return /Codex|test|テスト|試験|AIテスト|正式テスト|監査除外|ドライラン|dry[-ー]?run|削除可|検証|リリース確認|疎通確認|ダミー|クリック確認|ストレステスト|AI本流|stale read|race 条件|フローレンス|リリースノート/i.test(
+		value,
+	);
+}
+
+function isLowSignalContactActivityText(value: string): boolean {
+	const compact = value.replace(/\s+/g, "").trim();
+	if (!compact) return false;
+	const normalized = compact.replace(/[。．.？?！!]/g, "");
+	if (/Transcribedtext|^Fw:|｜活動｜Fw:/i.test(normalized)) return true;
+	if (/Switch|まだわからんけどな|どうなるかわからん|一致するか分からん/i.test(normalized)) return true;
+	if (/YES|謝謝|測試|Godis|yeste|食料行って帰り/i.test(normalized)) return true;
+	if (/問い合わせの内容は|絞った方がいい|売る.*買う.*売りたい/.test(normalized)) return true;
+	if (/^(オンラインしました|即利用しました)$/.test(normalized)) return true;
+	if (compact.length < 4) return true;
+	if (
+		/電話|メール|訪問|Zoom|オンライン|商談|資料|見積|提案|査定|売却|購入|蓄電池|太陽光|確認|送付|連絡|追客|打合|問い合わせ|案件|現地|調査|相談|次回|折返|条件|価格|契約|成約/.test(
+			compact,
+		)
+	) {
+		return false;
+	}
+	const hasKanji = /[\u4e00-\u9fff]/.test(compact);
+	const hasLatin = /[A-Za-z]/.test(compact);
+	if (hasLatin && !hasKanji) return true;
+	if (!hasKanji && compact.length < 12) return true;
+	return false;
+}
+
+function isTitleOnlyContactLog(
+	titleText: string,
+	activityLog: string,
+	activityDisplay: string,
+): boolean {
+	const titleKey = normalizeContactDisplayText(titleText);
+	if (!titleKey) return false;
+	const carriers = [activityLog, activityDisplay]
+		.map(normalizeContactDisplayText)
+		.filter(Boolean);
+	return carriers.length > 0 && carriers.every((value) => value === titleKey);
+}
+
+function normalizeContactDisplayText(value: string): string {
+	return value.replace(/\s+/g, "").trim();
 }
 
 function checkboxValue(property: unknown): boolean {
@@ -15690,6 +18277,31 @@ function pageIdFromUrl(value: string | undefined): string | undefined {
 	].join("-");
 }
 
+function pageTemplate(templateId: string | undefined): Record<string, unknown> {
+	const clean = (templateId ?? "").trim();
+	if (!clean) throw new Error("ページ作成テンプレートIDが未設定です。");
+	return {
+		type: "template_id",
+		template_id: clean,
+		timezone: "Asia/Tokyo",
+	};
+}
+
+async function appendBlocksIfAny(
+	notion: NotionClient,
+	pageId: string,
+	children: Record<string, unknown>[],
+): Promise<void> {
+	if (children.length === 0) return;
+	if (!notion.blocks?.children?.append) {
+		throw new Error("blocks.children.append が利用できないため、テンプレート後の補足ブロックを追加できません。");
+	}
+	await notion.blocks.children.append({
+		block_id: pageId,
+		children,
+	});
+}
+
 function title(value: string): Record<string, unknown> {
 	return { title: [{ text: { content: value.slice(0, 1800) } }] };
 }
@@ -15770,6 +18382,19 @@ function dateStartFromProperty(property: unknown): string {
 	if (prop.type !== "date" || !prop.date || typeof prop.date !== "object") return "";
 	const date = prop.date as Record<string, unknown>;
 	return typeof date.start === "string" ? date.start : "";
+}
+
+function createdDateFromPage(page: Page): string {
+	const createdTime = (page as Record<string, unknown>).created_time;
+	return typeof createdTime === "string" ? createdTime.slice(0, 10) : "";
+}
+
+function createdByUserIdsFromPage(page: Page): string[] {
+	const createdBy = (page as Record<string, unknown>).created_by;
+	if (!createdBy || typeof createdBy !== "object") return [];
+	const user = createdBy as Record<string, unknown>;
+	const id = typeof user.id === "string" ? user.id : "";
+	return id ? [id] : [];
 }
 
 function email(value: string): Record<string, unknown> {
@@ -16115,6 +18740,46 @@ async function processInquiryProjectCreation(
 		};
 	}
 
+	const plannedGrossProfit = numberValue(inquiryPage.properties?.["予定粗利額"]);
+	if (plannedGrossProfit === null || plannedGrossProfit <= 0) {
+		if (!dryRun) {
+			await safeUpdateExistingProperties(notion, inquiryPage, {
+				案件化状態: { kind: "select", value: "案件化保留" },
+				案件化メモ: {
+					kind: "text",
+					value: "予定粗利額が未入力のため、案件管理DBへの新規作成を止めました。",
+				},
+			});
+		}
+		return {
+			inquiryPageId,
+			action: "error",
+			projectId: null,
+			created: 0,
+			message: "予定粗利額が未入力のため、案件化を止めました。",
+		};
+	}
+
+	const plannedGrossBasis = text(inquiryPage.properties?.["予定粗利の根拠"]);
+	if (!plannedGrossBasis) {
+		if (!dryRun) {
+			await safeUpdateExistingProperties(notion, inquiryPage, {
+				案件化状態: { kind: "select", value: "案件化保留" },
+				案件化メモ: {
+					kind: "text",
+					value: "予定粗利の根拠が未入力のため、案件管理DBへの新規作成を止めました。",
+				},
+			});
+		}
+		return {
+			inquiryPageId,
+			action: "error",
+			projectId: null,
+			created: 0,
+			message: "予定粗利の根拠が未入力のため、案件化を止めました。",
+		};
+	}
+
 	if (dryRun) {
 		return {
 			inquiryPageId,
@@ -16255,12 +18920,68 @@ async function createProjectFromInquiry(
 	}
 	if (plannedGrossProfit !== null && plannedGrossProfit > 0) {
 		patches["予定粗利額"] = { kind: "number", value: plannedGrossProfit };
+		patches["予定粗利の根拠"] = { kind: "select", value: "価格あり" };
 	}
 	if (projectDealType) {
 		patches["売買区分"] = { kind: "select", value: projectDealType };
 	}
+	patches["営業サマリー"] = {
+		kind: "text",
+		value:
+			"情報収集中。問い合わせから案件化済み。対象物、売買条件、必要資料、価格、決裁者を確認してください。",
+	};
+	patches["次の一手"] = {
+		kind: "text",
+		value: "設備詳細を作成し、資料作成に必要な情報を埋める。",
+	};
 	await safeUpdateExistingProperties(notion, projectPage, patches);
+	await appendBlocksIfAny(
+		notion,
+		created.id,
+		buildInquiryProjectFollowupChildren({
+			inquiryTitle,
+			inquiryAttentionMemo,
+		}),
+	);
 	return notion.pages.retrieve({ page_id: created.id });
+}
+
+function buildInquiryProjectFollowupChildren(input: {
+	inquiryTitle: string;
+	inquiryAttentionMemo: string;
+}): Record<string, unknown>[] {
+	const attentionText =
+		input.inquiryAttentionMemo ||
+		"売買条件、資料、価格、所有者/決裁者、現地確認の要否を確認してください。";
+	return [
+		headingBlock("営業サマリーと次の一手", 2),
+		paragraphBlock(`元問い合わせ: ${input.inquiryTitle}`),
+		{
+			object: "block",
+			type: "callout",
+			callout: {
+				rich_text: blockRichText(
+					`確認待ち: ${attentionText}\n次に見る場所: 設備詳細、シミュレーション、説明会用資料`,
+				),
+				icon: { emoji: "🧭" },
+				color: "blue_background",
+			},
+		},
+		{
+			object: "block",
+			type: "bulleted_list_item",
+			bulleted_list_item: {
+				rich_text: blockRichText("現地写真と設備IDの確認待ちがある場合は、先に設備入力を埋める。"),
+			},
+		},
+		{
+			object: "block",
+			type: "bulleted_list_item",
+			bulleted_list_item: {
+				rich_text: blockRichText("案件化直後は、活動ログと次回アクションまで残す。"),
+			},
+		},
+	];
 }
 
 function projectDealTypeFromInquiryDealType(inquiryDealType: string): string | null {
@@ -16307,6 +19028,14 @@ async function markInquiryProjectLinked(
 				"再実行時は既存関連案件を検出し、新規作成しない。",
 			].join("\n"),
 		},
+		営業サマリー: {
+			kind: "text",
+			value: `案件化有無: あり\n${message}`,
+		},
+		次の一手: {
+			kind: "text",
+			value: "活動を残す。その後、案件管理DBで設備詳細を作成する。",
+		},
 	};
 	if (triggerUserId) {
 		patches["案件化実行者"] = { kind: "people", ids: [triggerUserId] };
@@ -16315,6 +19044,7 @@ async function markInquiryProjectLinked(
 }
 
 export { processInquiryAssignOwner as processInquiryAssignOwnerForTest };
+export { processInquiryEmailIntake as processInquiryEmailIntakeForTest };
 export { processInquiryProjectCreation as processInquiryProjectCreationForTest };
 export { processBusinessCard as processBusinessCardForTest };
 export { processInquiryCompanyLink as processInquiryCompanyLinkForTest };

@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import { processClosingReportForTest } from "./index";
 
+function currentYearMonthJST() {
+	const parts = new Intl.DateTimeFormat("ja-JP", {
+		timeZone: "Asia/Tokyo",
+		year: "numeric",
+		month: "numeric",
+	}).formatToParts(new Date());
+	const year = parts.find((part) => part.type === "year")?.value;
+	const month = parts.find((part) => part.type === "month")?.value;
+	if (!year || !month) throw new Error("JST year/month could not be resolved");
+	return { year, month };
+}
+
 const queries: Array<Record<string, unknown>> = [];
 const creates: Array<Record<string, unknown>> = [];
 const updates: Array<Record<string, unknown>> = [];
@@ -88,7 +100,11 @@ async function main() {
 	assert.deepEqual(performanceCreate.properties.関連成約, {
 		relation: [{ id: "closing-1" }],
 	});
-	assert.match(JSON.stringify(performanceCreate.properties), new RegExp("2026/5|2026年5月"));
+	const { year, month } = currentYearMonthJST();
+	assert.match(
+		JSON.stringify(performanceCreate.properties),
+		new RegExp(`${year}/${month}|${year}年${month}月`),
+	);
 	assert.equal(appends.length, 1, "成約報告ページに月次成績反映メモを追記する");
 }
 

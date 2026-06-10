@@ -108,6 +108,19 @@ async function main() {
 	assert.equal(existingCase.creates.length, 0);
 	assert.equal(existingCase.updates.length, 0);
 	assert.equal(existingCase.comments.length, 1);
+
+	const duplicateCase = makeNotion({ equipmentIds: ["equipment-existing", "equipment-dup"] });
+
+	const duplicate = await processProjectEquipmentDetailRequestForTest(
+		{ projectPageId: "project-1", dryRun: false },
+		duplicateCase.notion as never,
+	);
+
+	assert.equal(duplicate.action, "duplicate-hold");
+	assert.equal(duplicate.equipmentPageId, null);
+	assert.equal(duplicateCase.creates.length, 0);
+	assert.equal(duplicateCase.updates.length, 0);
+	assert.equal(duplicateCase.comments.length, 1);
 }
 
 main().catch((error) => {

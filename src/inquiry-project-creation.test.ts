@@ -38,13 +38,19 @@ function inquiryPage(projectIds: string[] = []) {
 			関連企業: relationProp(["company-1"]),
 			顧客接点ログ: relationProp(["log-1"]),
 			予定粗利額: numberProp(3000000),
+			"予定粗利の根拠": selectProp("価格あり"),
 			売買区分: selectProp("売却相談"),
 			紐づき案件: relationProp(projectIds),
 			ステータス: selectProp("担当確定"),
 			進捗フェーズ: selectProp("担当確定"),
 			案件化状態: selectProp("未案件化"),
+			案件化スコア: numberProp(),
+			案件化近さ: selectProp(""),
 			案件化日: dateProp(),
 			案件化メモ: richTextProp(""),
+			"営業サマリー": richTextProp(""),
+			"次の一手": richTextProp(""),
+			確認待ち内容: richTextProp("現地写真と設備IDの確認待ち"),
 			最終アクション日: dateProp(),
 		},
 	};
@@ -62,11 +68,14 @@ function projectPage(id: string) {
 			獲得ソース: selectProp(""),
 			顧客接点ログ: relationProp([]),
 			予定粗利額: numberProp(),
+			"予定粗利の根拠": selectProp(""),
 			売買区分: selectProp(""),
 			作成日: dateProp(),
 			最終アクション日: dateProp(),
 			案件詳細: richTextProp(""),
 			情報ソース: richTextProp(""),
+			"営業サマリー": richTextProp(""),
+			"次の一手": richTextProp(""),
 			確認待ち内容: richTextProp(""),
 		},
 	};
@@ -77,6 +86,7 @@ async function main() {
 	const creates: Array<Record<string, unknown>> = [];
 	const comments: Array<Record<string, unknown>> = [];
 	const queries: Array<Record<string, unknown>> = [];
+	const appends: Array<Record<string, unknown>> = [];
 
 	const notion = {
 		pages: {
@@ -99,6 +109,15 @@ async function main() {
 				return { results: [] };
 			},
 		},
+		blocks: {
+			children: {
+				append: async (args: Record<string, unknown>) => {
+					appends.push(args);
+					return {};
+				},
+				list: async () => ({ results: [] }),
+			},
+		},
 		comments: {
 			create: async (args: Record<string, unknown>) => {
 				comments.push(args);
@@ -117,6 +136,25 @@ async function main() {
 	assert.equal(created.projectId, "project-created");
 	assert.equal(creates.length, 1);
 	assert.ok(queries.length >= 1);
+	assert.deepEqual(creates[0]!.template, {
+		type: "template_id",
+		template_id: "0b9815a4-37c4-4e4c-90b6-1d54fd9664a3",
+		timezone: "Asia/Tokyo",
+	});
+	assert.deepEqual(creates[0]!.icon, {
+		type: "icon",
+		icon: { name: "school", color: "orange" },
+	});
+	assert.deepEqual(creates[0]!.cover, {
+		type: "file_upload",
+		file_upload: { id: "3714d017-81e7-8185-8498-00b21fcffbe1" },
+	});
+	assert.equal(appends.length, 1);
+	assert.equal(appends[0]!.block_id, "project-created");
+	const createdBodyText = JSON.stringify(appends[0]!.children ?? []);
+	assert.match(createdBodyText, /営業サマリーと次の一手/);
+	assert.match(createdBodyText, /現地写真と設備IDの確認待ち/);
+	assert.match(createdBodyText, /設備詳細、シミュレーション、説明会用資料/);
 
 	const projectUpdate = updates.find((update) => update.page_id === "project-created");
 	assert.ok(projectUpdate);
@@ -141,9 +179,15 @@ async function main() {
 	);
 	assert.equal((projectProperties.予定粗利額 as { number: number }).number, 3000000);
 	assert.equal(
+		(projectProperties["予定粗利の根拠"] as { select: { name: string } }).select.name,
+		"価格あり",
+	);
+	assert.equal(
 		(projectProperties.売買区分 as { select: { name: string } }).select.name,
 		"売却案件",
 	);
+	assert.match(JSON.stringify(projectProperties["営業サマリー"]), /情報収集中/);
+	assert.match(JSON.stringify(projectProperties["次の一手"]), /設備詳細を作成/);
 
 	const inquiryUpdate = updates.find((update) => update.page_id === "inquiry-1");
 	assert.ok(inquiryUpdate);
@@ -158,12 +202,15 @@ async function main() {
 		(inquiryProperties.ステータス as { select: { name: string } }).select.name,
 		"案件化",
 	);
+	assert.match(JSON.stringify(inquiryProperties["営業サマリー"]), /案件化有無: あり/);
+	assert.match(JSON.stringify(inquiryProperties["次の一手"]), /活動を残す/);
 	assert.equal(comments.length, 1);
 
 	updates.length = 0;
 	creates.length = 0;
 	comments.length = 0;
 	queries.length = 0;
+	appends.length = 0;
 
 	const existingNotion = {
 		...notion,
@@ -194,6 +241,73 @@ async function main() {
 	const existingInquiryUpdate = updates.find((update) => update.page_id === "inquiry-1");
 	assert.ok(existingInquiryUpdate);
 	assert.equal(comments.length, 1);
+
+	updates.length = 0;
+	creates.length = 0;
+	comments.length = 0;
+	queries.length = 0;
+	appends.length = 0;
+
+	const missingGrossNotion = {
+		...notion,
+		pages: {
+			...notion.pages,
+			retrieve: async ({ page_id }: { page_id: string }) => {
+				if (page_id === "inquiry-1") {
+					const page = inquiryPage();
+					page.properties.予定粗利額 = numberProp();
+					return page;
+				}
+				return projectPage(page_id);
+			},
+		},
+	};
+
+	const missingGross = await processInquiryProjectCreationForTest(
+		"inquiry-1",
+		missingGrossNotion as never,
+		"click-user",
+	);
+
+	assert.equal(missingGross.action, "error");
+	assert.equal(missingGross.projectId, null);
+	assert.equal(creates.length, 0, "予定粗利額なしで案件を作ってはいけない");
+	assert.match(missingGross.message, /予定粗利額/);
+	const missingGrossUpdate = updates.find((update) => update.page_id === "inquiry-1");
+	assert.ok(missingGrossUpdate);
+	assert.match(JSON.stringify(missingGrossUpdate.properties), /案件化保留/);
+
+	updates.length = 0;
+	creates.length = 0;
+	comments.length = 0;
+	queries.length = 0;
+	appends.length = 0;
+
+	const missingBasisNotion = {
+		...notion,
+		pages: {
+			...notion.pages,
+			retrieve: async ({ page_id }: { page_id: string }) => {
+				if (page_id === "inquiry-1") {
+					const page = inquiryPage();
+					page.properties["予定粗利の根拠"] = selectProp("");
+					return page;
+				}
+				return projectPage(page_id);
+			},
+		},
+	};
+
+	const missingBasis = await processInquiryProjectCreationForTest(
+		"inquiry-1",
+		missingBasisNotion as never,
+		"click-user",
+	);
+
+	assert.equal(missingBasis.action, "error");
+	assert.equal(missingBasis.projectId, null);
+	assert.equal(creates.length, 0, "予定粗利の根拠なしで案件を作ってはいけない");
+	assert.match(missingBasis.message, /予定粗利の根拠/);
 }
 
 main().catch((error) => {

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ja">
+<head>
+	<meta charset="utf-8" />
+	<style>
+		html,
+		body {
+			margin: 0;
+			width: 2400px;
+			height: 600px;
+			overflow: hidden;
+			background: #ffffff;
+			font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+		}
+
+		.cover {
+			position: relative;
+			width: 2400px;
+			height: 600px;
+			background:
+				radial-gradient(circle at 48% 28%, rgba(249, 249, 247, 0.9), rgba(255, 255, 255, 0) 30%),
+				linear-gradient(180deg, #fff 0%, #fbfaf8 100%);
+		}
+
+		.mark {
+			position: absolute;
+			left: 265px;
+			top: 145px;
+			display: flex;
+			align-items: center;
+			gap: 54px;
+			color: #f45112;
+		}
+
+		.case {
+			font-size: 44px;
+			font-weight: 500;
+			letter-spacing: 22px;
+		}
+
+		.title {
+			position: absolute;
+			left: 395px;
+			top: 255px;
+			color: #f45112;
+			font-size: 62px;
+			font-weight: 600;
+			letter-spacing: 10px;
+		}
+
+		.line {
+			position: absolute;
+			left: 350px;
+			top: 250px;
+			width: 2px;
+			height: 90px;
+			background: #f45112;
+		}
+
+		.wave {
+			position: absolute;
+			left: -90px;
+			bottom: -18px;
+			width: 1080px;
+			height: 265px;
+			opacity: 0.42;
+		}
+	</style>
+</head>
+<body>
+	<div class="cover">
+		<svg class="wave" viewBox="0 0 1080 265" fill="none" xmlns="http://www.w3.org/2000/svg">
+			<g stroke="#f45112" stroke-width="3">
+				<path d="M0 245 C250 110 510 110 1080 210" />
+				<path d="M0 226 C255 94 520 98 1080 204" />
+				<path d="M0 207 C260 78 530 86 1080 198" />
+				<path d="M0 188 C265 64 540 74 1080 192" />
+				<path d="M0 169 C270 50 550 62 1080 186" />
+				<path d="M0 150 C275 38 560 50 1080 180" />
+				<path d="M0 131 C280 27 570 40 1080 174" />
+				<path d="M0 112 C285 18 580 31 1080 168" />
+				<path d="M0 93 C290 10 590 23 1080 162" />
+				<path d="M0 74 C295 3 600 16 1080 156" />
+			</g>
+		</svg>
+
+		<div class="mark">
+			<svg width="82" height="82" viewBox="0 0 82 82" fill="none" xmlns="http://www.w3.org/2000/svg">
+				<path d="M41 5L72 22.5V59.5L41 77L10 59.5V22.5L41 5Z" stroke="#f45112" stroke-width="6" />
+				<path d="M41 5V41.5M10 22.5L41 41.5L72 22.5M41 41.5V77" stroke="#f45112" stroke-width="6" />
+			</svg>
+			<div class="case">CASE</div>
+		</div>
+
+		<div class="line"></div>
+		<div class="title">案件管理</div>
+	</div>
+</body>
+</html>

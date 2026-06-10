@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { evaluateResidentDocumentDraftForTest } from "./index";
+import { PDFDocument } from "pdf-lib";
+import {
+	buildResidentDocumentPdfBytesForTest,
+	evaluateResidentDocumentDraftForTest,
+} from "./index";
 
 function titleProp(value: string) {
 	return { type: "title", title: [{ plain_text: value }] };
@@ -26,6 +30,22 @@ function filesProp(name = "image.jpg") {
 	};
 }
 
+const onePixelPng =
+	"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+
+function imageFilesProp(name = "image.png") {
+	return {
+		type: "files",
+		files: [
+			{
+				name,
+				type: "external",
+				external: { url: onePixelPng },
+			},
+		],
+	};
+}
+
 function readyResidentProps(overrides: Record<string, unknown> = {}) {
 	return {
 		案件番号: titleProp("2026S099"),
@@ -38,11 +58,12 @@ function readyResidentProps(overrides: Record<string, unknown> = {}) {
 		旧認定事業者: richTextProp("旧認定事業者"),
 		新認定事業者: richTextProp("新認定事業者"),
 		設備ID: richTextProp("A123456789"),
-		発電所所在地画像: filesProp("location.jpg"),
-		ハザードマップ: filesProp("hazard.jpg"),
-		説明会対象エリア画像: filesProp("area.jpg"),
-		"反射光画像（夏至）": filesProp("reflection-summer.jpg"),
-		現場写真: filesProp("site.jpg"),
+		認定出力kW: { type: "number", number: 250 },
+		発電所所在地画像: imageFilesProp("location.png"),
+		ハザードマップ: imageFilesProp("hazard.png"),
+		説明会対象エリア画像: imageFilesProp("area.png"),
+		"反射光画像（夏至）": imageFilesProp("reflection-summer.png"),
+		現場写真: imageFilesProp("site.png"),
 		...overrides,
 	};
 }
@@ -90,6 +111,11 @@ async function main() {
 	assert.equal(ready.missingField, null);
 	assert.equal(ready.documentTitle, "2026S099｜住民説明会資料");
 	assert.match(ready.summaryLines.join("\n"), /質問受付期間: 2026-07-01〜2026-07-14/);
+	assert.match(ready.summaryLines.join("\n"), /認定出力: 250kW/);
+
+	const pdfBytes = await buildResidentDocumentPdfBytesForTest(ready, "resident-2");
+	const pdf = await PDFDocument.load(pdfBytes);
+	assert.equal(pdf.getPageCount(), 13);
 }
 
 main().catch((error) => {

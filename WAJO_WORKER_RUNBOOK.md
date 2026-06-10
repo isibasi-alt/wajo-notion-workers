@@ -26,6 +26,22 @@
 
 Webhook 用の共有シークレットと Notion API token は、Worker 環境変数に設定済みです。ローカル控えは `.env.worker.local` に置き、`.gitignore` で管理対象外にしています。秘密情報はこのメモには書きません。
 
+## Google Drive 資料保存
+
+提案シミュレーションPDFと住民説明会資料PDFは、Notion files への保存を残しつつ、Google Drive を正本置き場に寄せる方針です。Workerは以下の環境変数が揃っている場合だけDriveアップロードを有効化し、未設定時は従来どおりNotion保存へフォールバックします。
+
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `googleDriveAuth` の認可トークン（推奨）または `GOOGLE_DRIVE_REFRESH_TOKEN`
+- 任意: `GOOGLE_DRIVE_ROOT_FOLDER_ID`
+- 任意: `GOOGLE_DRIVE_ROOT_FOLDER_NAME`（未設定時は `WAJO Sales OS 資料`）
+
+Drive側は `WAJO Sales OS 資料` をルートにし、案件ごとに `案件資料｜...` フォルダを作成または再利用します。Notion側には `DriveフォルダURL`、`DriveフォルダID`、`Drive保存メモ`、PDFリンクを書き戻します。GoogleアカウントのログインパスワードはWorkerへ保存しません。OAuth更新トークンまたは同等のサーバー用認証で接続します。
+
+添付資料の正本台帳は `案件資料DB`（data source: `fde6d55f-3127-4716-862c-5fb43b2cc3b4`）です。問い合わせDB、案件管理DB、営業資料作成依頼DBから双方向relation `案件資料DB` で紐付けます。資料種別は、販売資料、現場写真、発電シミュレーション、経産省/認定資料、電力会社資料、契約/同意書、登記/公図/地番図、ハザード/周辺地図、住民説明会資料、完成図書の10種類を初期値にしています。最低5種類が揃えば現場上は完了目安、最大10種類前後まで集める前提です。
+
+2026-05-31 に Worker 側へ `googleDriveAuth` OAuth capability を追加しました。Notion OAuth redirect URL は `https://www.notion.so/workers/oauth/callback` です。Google Cloud Console で OAuth クライアント（Web application）を作成し、この redirect URL を承認済みリダイレクトURIに入れたうえで、`GOOGLE_CLIENT_ID` と `GOOGLE_CLIENT_SECRET` を `ntn workers env set` で設定します。その後 `NOTION_KEYRING=0 npx ntn workers oauth start googleDriveAuth` で `wajo.sales.doc@gmail.com` を認可すると、以後の提案PDF/住民説明会PDFはGoogle Driveへ保存されます。現時点では `GOOGLE_DRIVE_ROOT_FOLDER_NAME=WAJO Sales OS 資料` を本番Worker環境へ設定済み。MacのGoogle Drive同期フォルダにも `wajo.sales.doc@gmail.com/マイドライブ/WAJO Sales OS 資料/_接続テスト/drive-sync-test.txt` を作成し、Driveデスクトップ側の接続は確認済みです。OAuthクライアントは Google Cloud project `wajo-tochi` に作成済みで、アプリ名は `WAJO Sales OS Drive連携`、OAuth client は `WAJO Sales OS Worker OAuth`。テストユーザーは `isibasi@gmail.com` と `wajo.sales.doc@gmail.com` を登録済み。2026-05-31 時点で `client_id` / `client_secret` は Worker 環境へ設定済み、`wajo.sales.doc@gmail.com` のOAuth認可も完了済みです。Google Drive API は project `981901408071` で有効化済みで、提案PDF/住民説明会PDFともGoogle Drive保存を本番確認済みです。
+
 ## 公開している能力
 
 - `processBusinessCardById`: 名刺管理DBのページIDを1件指定して処理する
@@ -63,6 +79,8 @@ Webhook 用の共有シークレットと Notion API token は、Worker 環境�
 - `processProposalSimulationWebhook`: 提案シミュレーションチェックをWebhookで起動する
 - `processProjectEquipmentDetailRequestById`: 案件管理DBの1件から `発電所設備詳細DB` を1件だけ作成し、案件側へ紐づける
 - `processProjectEquipmentDetailRequestWebhook`: 案件管理DBのボタンから発電所設備詳細を作成する
+- `processConfirmedProjectLostDismissWebhook`: 失注確定済み案件のマネージャー用 `失注を差し戻す` ボタンから起動し、案件を `⏳ 確認待ち` へ戻す。失注理由・失注ログは削除しない
+- `processConfirmedProjectLostCancelWebhook`: 失注確定済み案件のマネージャー用 `失注を取り消す` ボタンから起動し、案件を `失注前フェーズ` へ戻す。失注理由・失注ログは削除しない
 - `processLandEvaluationById`: 土地情報DBのページIDを1件指定して、住所・面積を起点に土地詳細評価を返す
 - `processLandEvaluationWebhook`: Notionボタンなどから土地詳細評価を直接起動する
 - `processLandCaseById`: 土地情報DBの1件から案件管理DBへ土地案件を重複なしで作成する
@@ -253,7 +271,28 @@ Yoom は重複判定や企業作成の本体ではなく、Worker を起こす�
 
 ### 問い合わせメール入口
 
-2026-05-23 に `processInquiryEmailIntakeWebhook` を追加しました。問い合わせメールでは、Yoom 側の Notion検索、分岐の「有無」、Notionページ作成は外し、Gmailトリガーで取得した値を Worker へ送るだけに寄せます。
+2026-06-01 に `processGmailInquiryInbox` と `syncGmailInquiryInbox` を追加し、Yoom を使わず Worker が Gmail の `問い合わせ` ラベルを直接読む入口へ移行しました。Gmail 直読みでは、Worker が `問い合わせ` ラベルの未完了メールを取得し、既存の `processInquiryEmailIntake` に渡して重複判定・お問い合わせDB作成・必要時の企業連携を行います。作成または既存検出に成功したメールだけ `INQUIRY_DONE` ラベルを付けます。
+
+### 問い合わせメール入口（Gmail直読み）
+
+- Tool: `processGmailInquiryInbox`
+- Sync: `syncGmailInquiryInbox`（5分ごと）
+- OAuth capability: `googleGmailAuth`
+- OAuth scope: `https://www.googleapis.com/auth/gmail.modify`
+- 読み取り元ラベル: `GMAIL_INQUIRY_SOURCE_LABEL_NAME`（未設定時 `問い合わせ`）
+- 完了ラベル: `GMAIL_INQUIRY_DONE_LABEL_NAME`（未設定時 `INQUIRY_DONE`）
+- デフォルト検索: `GMAIL_INQUIRY_DEFAULT_QUERY`（未設定時 `newer_than:7d`。古い未完了ラベルの一括流入を防ぐ）
+- 1回の処理件数: `GMAIL_INQUIRY_POLL_LIMIT`（未設定時10、最大50）
+- 成功時に元ラベルを外すか: 未設定時は外す。`GMAIL_INQUIRY_REMOVE_SOURCE_LABEL=false` の場合だけ元ラベルを残す。Gmail検索で `-label:INQUIRY_DONE` が効かないケースがあるため、再処理防止は `INQUIRY_DONE` 付与 + 元 `問い合わせ` ラベル解除を正本にする。
+- 除外対象: Yoomのエラー/完了など運用通知メール。`notify@yoom.fun` からのメール、または `【エラー発生】`、`フローボットタイトル`、`オペレーションタイトル`、`このメールはYoomから自動的に送信されています` を含むメールは、問い合わせDBを作らず `INQUIRY_DONE` 付与 + 元ラベル解除だけ行う。
+
+初回セットアップでは、Google Cloud Console の OAuth クライアントに Gmail API を有効化し、Worker 側の `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` を使って `NOTION_KEYRING=0 npx ntn workers oauth start googleGmailAuth` を実行します。認可するGoogleアカウントは、問い合わせメールと `問い合わせ` / `INQUIRY_DONE` ラベルを持つGmailアカウントです。
+
+2026-06-01 本番接続済み。Google Cloud project `wajo-tochi` / `981901408071` で Gmail API を有効化し、`googleGmailAuth` を `isibasi@gmail.com` で認可しました。`processGmailInquiryInbox` の本番実行では、直近7日・`問い合わせ` ラベルの3件を処理し、新規2件、既存1件、エラー0件、完了ラベル3件でした。直後のdry-runで対象0件を確認済み。`syncGmailInquiryInbox` は healthy、5分間隔で稼働します。
+
+### 旧Yoom Webhook入口（退避）
+
+2026-05-23 に `processInquiryEmailIntakeWebhook` を追加しました。問い合わせメールでは、Yoom 側の Notion検索、分岐の「有無」、Notionページ作成は外し、Gmailトリガーで取得した値を Worker へ送るだけに寄せていました。2026-06-01以降はGmail直読みを正本にし、このWebhook入口は緊急時の退避・手動投入用として残します。
 
 - Method: `POST`
 - URL: `https://www.notion.so/webhooks/worker/3874d017-81e7-81d1-8a0c-00030776854b/019e452d-22e7-7de1-b5ea-432a297bb478/vip9HRA_m0KP8H7a/processInquiryEmailIntakeWebhook`
@@ -261,9 +300,7 @@ Yoom は重複判定や企業作成の本体ではなく、Worker を起こす�
 - Header: `x-wajo-worker-secret: <.env.worker.local の WAJO_WORKER_WEBHOOK_SECRET>`
 - Body: `件名`、`from`、`to`、`本文`、`受信日時`、`GmailメールID`、`Message-ID`、`Thread-ID`、`Gmailラベル`、`linkCompany: true`
 
-Yoom 側で保持する処理は、Gmailの対象ラベルを拾って上記WebhookへPOSTするところまでです。`gmail:{GmailメールID}` の保存、既存問い合わせの確認、問い合わせDB作成、必要時の企業連携は Worker 側で行います。
-
-完全にYoomを外す場合は、Gmail API/OAuth または Google Apps Script/Cloudflare Workers などで Gmail を直接読む入口が必要です。初期移行では、Yoomを「薄い起動役」に下げるところを正本にします。
+Yoom 側で保持していた Gmail トリガー、Notion検索、分岐、Notionページ作成は停止対象です。`gmail:{GmailメールID}` の保存、既存問い合わせの確認、問い合わせDB作成、必要時の企業連携は Worker 側で行います。
 
 2026-05-23 の追加確認では、旧 `検証｜お問合せmail→notion v2 重複防止` が Notion 操作でエラー通知を出していました。5/19以降の明確なフォーム問い合わせ9件は `processInquiryEmailIntake` で手動バックフィル済みです。以後は v2 の Notion検索/分岐/Notion作成を使わず、この Webhook へ渡す構成に切り替えます。
 
@@ -394,6 +431,25 @@ Worker/Notionの次回実装では、問い合わせ受付時点でDriveフォ�
 
 この列はあくまで読み取り表示であり、実ステータス/スコアの更新口ではありません。状態変更は `担当になる`、`活動を残す`、`案件化する`、`成約を報告する`、`失注にする` などのボタンまたはWorkerに寄せ、管理者確認ビューだけ実プロパティを見せます。Notion Public APIでは既存ビューの表示/非表示を安全に一括変更しにくいため、ビュー整備時は手動UIで「実プロパティを非表示、表示ミラーを表示」に揃えます。
 
+2026-05-31 に、Webhook/Workerから作成する主要ページへNotion DBテンプレートを明示適用するよう修正しました。Notion API の `pages.create` は `template` を指定でき、`children` と同時指定はできないため、Workerはテンプレートを適用してから必要な本文ブロックだけを後追いで追加します。対象は問い合わせメール入口、問い合わせから案件化、土地から案件化、企業作成（問い合わせ/名刺）、顧客接点ログ、会議から商談作成です。問い合わせから `processInquiryProjectCreationWebhook` で案件化した新規案件ページは `案件入力テンプレート` を適用したうえで、初期本文ブロック `営業サマリー｜次のアクション` を追加します。内容は `営業状態: 🔴 情報収集中`、元問い合わせ、問い合わせ側の `確認待ち内容`、次に確認すること、ステータス/スコアを手で整えずボタン/Workerで進める運用ルールです。
+
+同日追加で、問い合わせから案件化した新規案件ページには、Notion標準アイコン `school` を `orange` で設定し、カバーはNotionの横長カバー表示に合わせた `assets/project-case-cover-wide.png` を `file_upload` で付与します。テンプレート選択肢をユーザーに出す方式ではなく、Workerが `案件入力テンプレート` を1種類だけ明示適用し、その後に本文補足とアイコン/カバーだけを付ける運用です。使用するFile Upload IDは、カバー `3714d017-81e7-8185-8498-00b21fcffbe1` です。
+
+2026-05-31 に、失注確定済み案件向けのマネージャー操作を2本追加しました。`processConfirmedProjectLostDismissWebhook` は `❌ 失注` の案件だけを対象に、`⏳ 確認待ち`、`失注申請状態 = 差し戻し`、`管理アクション状態 = 失注差し戻し` へ更新し、全員通知コメントを残します。`processConfirmedProjectLostCancelWebhook` は `❌ 失注` の案件だけを対象に、`失注前フェーズ` があればそこへ、なければ `📋 提案中` へ戻し、`失注申請状態 = 取り消し`、`管理アクション状態 = 失注取り消し`、`失注日 = clear` とします。どちらも失注理由・失注理由メモ・失注ログは消さず、監査履歴として残します。失注承認、失注申請差し戻し、失注済み差し戻し、失注取消はすべて `MANAGER_USER_IDS` に含まれるクリックユーザーだけ実行できます。Webhook URL は以下です。
+
+- 失注を差し戻す: `https://www.notion.so/webhooks/worker/3874d017-81e7-81d1-8a0c-00030776854b/019e452d-22e7-7de1-b5ea-432a297bb478/92Gexl74o1tdanpN/processConfirmedProjectLostDismissWebhook`
+- 失注を取り消す: `https://www.notion.so/webhooks/worker/3874d017-81e7-81d1-8a0c-00030776854b/019e452d-22e7-7de1-b5ea-432a297bb478/wv6-Eovmx0wbBZyS/processConfirmedProjectLostCancelWebhook`
+
+Notion UI側の推奨ボタン名は、案件管理DBのマネージャー/失注処理ビューに `失注を差し戻す` と `失注を取り消す`。どちらも確認ダイアログを入れ、Webhook送信 payload は `This page` / `pageId` または `projectPageId` がWorkerへ渡る形にします。`失注を差し戻す` は「失注済み案件を確認待ちへ戻します。失注理由と失注ログは残します。」、`失注を取り消す` は「失注判定を取り消し、失注前フェーズへ戻します。失注理由と失注ログは監査履歴として残します。」を確認文にします。
+
+同日仕上げとして、問い合わせDB・案件管理DBの両方に rich_text の `表示｜営業サマリー` と `表示｜次のアクション` を追加しました。これは固定された第1ステップ、第2ステップの管理ではなく、活動・情報量・案件化/成約スコアから「今どのあたりにいるか」と「次にやること」を示す無段階スコアリング表示です。`refreshSalesPipelineSignal` は、問い合わせでは `営業状態 / 次の推奨段階 / 成約見込み` と `次のアクション: 担当になる・活動を残す・案件化する` を、案件では `営業状態 / 次の推奨段階 / 成約見込み` と `次のアクション: 設備詳細を作成・シミュレーション作成・説明会用資料作成・成約報告する` を書き込みます。実ステータスは変更しません。直近確認として、問い合わせ `3704d017-81e7-808f-a6db-d46d31222b4e` と案件 `3704d017-81e7-81bc-9aa0-cbb64ee50593` で本番更新し、両列に表示が入ることを確認済みです。
+
+2026-05-31 追加修正として、問い合わせから案件化した直後に、問い合わせ側の `表示｜営業サマリー` と `表示｜次のアクション` も同時に案件化済み表示へ更新するようにしました。これまでは `紐づき案件` と `ステータス = 案件化` は更新済みでも、問い合わせカードの表示が `案件化有無: なし` / `活動を残す` のまま残ることがあり、営業マン目線では途中で止まったように見えていました。今後は案件化処理時に `案件化有無: あり`、`次のアクション: 案件管理DBで活動を残す / 設備詳細を作成` まで同時更新します。
+
+突貫の完成ロードマップは3つに圧縮します。Step 1 は `営業状況` と `次にやること` を営業ビューの前方へ出し、営業マンが最初に見る導線を完成させること。Step 2 は Webhook作成ページにNotionテンプレートを適用し、テンプレート適用後にWorkerが必要本文を補完する方式へ寄せること。Step 3 は本番スモーク確認として、問い合わせから案件化、活動ログ、設備詳細、シミュレーション、説明会資料、成約/失注の各ボタンが壊れていないことをテストページで確認し、営業に渡せる状態にすること。現時点でコード/DB列/ボタン/Workerはほぼ揃っており、残る主作業はNotion UI上のビュー前方表示と本番クリック確認です。
+
+ユーザー側では `スタッフホーム`、`マネージャーホーム`、`スタッフダッシュボード`、`マネージャーダッシュボード` をリライト中です。2〜3日前に作成した整理前の営業フォーム/営業導線は廃止前提で扱い、新しいホーム/ダッシュボードには混ぜません。石橋さん側で今必要なのは、Notion UIで営業ビューの前方に `表示｜営業サマリー` と `表示｜次のアクション` を出すこと、古い営業フォームを `旧/廃止` と分かる状態にして新ホームから外すこと、実際の営業導線に `担当になる` / `活動を残す` / `案件化する` / `設備詳細を作成` / `シミュレーション作成` / `説明会用資料作成` / `成約報告する` / `失注申請する` が見えるか確認することです。
+
 ## 次に広げる候補
 
 - 問い合わせDB: Gmail/Yoomの重複防止後、企業マスター連携をWorkerへ寄せる
@@ -418,8 +474,14 @@ Worker/Notionの次回実装では、問い合わせ受付時点でDriveフォ�
 - 2026-05-30 太陽光PDF構成補強: 太陽光3タイプでは、`年間維持費（ランニングコスト）`、`発電所名`、`所在地`、`電力会社エリア`、`低圧/高圧区分`、`パネルメーカー`、`パネル型式`、`パネル枚数`、`DC容量（パネル側kW）`、`パワコンメーカー`、`パワコン型式`、`PCS容量（パワコン側kW）`、`FIT/FIP区分`、`売電単価`、`残存売電期間`、`連系開始日` を必須化した。`年間維持費（ランニングコスト）` は合計入力を優先し、未入力なら `O&M費`、`保険料`、`地代`、`固定資産税`、`除草費`、`監視通信費`、`管理費` の入力済み内訳を合算する。`稼働年数` は連系開始日から自動計算し、`年間手残り` をPDF/メモの主要数字へ追加。`営業資料作成依頼DB` へ不足プロパティを追加し、太陽光入力例3件を補完済み。`npm run test:proposal-simulation-validation`、`npm run check`、`npm run build`、PDF画像確認、`NOTION_KEYRING=0 npx ntn workers deploy`、`processProposalSimulationById` 本番実行、Webhook POST（eventId `2eedb7fe-d9e0-476f-a238-7b08360a4b20`）まで確認済み。
 - 2026-05-30 現場写真枠追加: `営業資料作成依頼DB` に files型の `現場写真` を追加済み。太陽光3タイプのPDFでは1ページ目上部に `Site Photos` 枠を常設し、`現場写真` / `発電所写真` / `現地写真` / `外観写真` / `設備写真` / `写真` のfiles型から最大2枚を読み込む。PNG/JPEGがあれば、スマホ縦写真を想定した3:4の縦長2枠へ横並びで差し込む。未入力時は既存レコードを止めず、2枚分の写真枠だけ表示する。営業提出前は `現場写真` を実質必須として確認する。`npm run test:proposal-simulation-validation`、`npm run check`、`npm run build`、PDF画像確認、`NOTION_KEYRING=0 npx ntn workers deploy`、`processProposalSimulationById` 本番実行まで確認済み。
 - 2026-05-30 PDFリンク導線補強: `営業資料作成依頼DB` にURL型の `提案PDFリンク` とrich_textの `資料作成メモ` を追加した。WorkerはPDF保存後、`提案PDF` files型、`提案PDFリンク` URL型、既存互換の `提案PDF URL` rich_text に書き込む。`個人投資家向け` 入力例で `提案PDF` 1件、`提案PDFリンク` URLありを確認済み。
+- 2026-05-31 提案シミュレーションPDF日本語化: 社内確認用とお客様テスト用は分けず、同一PDFを使う方針にした。`@pdf-lib/fontkit` と Noto Sans JP TTF を使い、提案シミュレーションPDFのタイトル、見出し、提案の結論、物件概要、確認ポイント、次のアクションを日本語表示へ変更した。日本語フォントはサブセット埋め込みだとQuick Lookで文字化けしたため、PDFビューア互換を優先して `subset: false` で埋め込む。金額などASCIIだけの値はHelvetica Boldで描画し、桁間隔が広がらないようにした。`npm run test:proposal-simulation-validation`、`npm run check`、`npm run build`、`NOTION_KEYRING=0 npx ntn workers deploy` 通過後、表示テストページ `【資料テスト】提案シミュレーションPDF 20260531-033511` で本番実行し、Notion `提案PDF` files 1件 + `提案PDFリンク` 保存、ダウンロードPDF 3,152,227 bytes / 2ページ、Quick Lookサムネイルで日本語と主要数字の表示を確認済み。
+- 2026-05-31 見積補足ブロック追加: 提案シミュレーションPDFの1ページ目へ `見積補足コメント` を追加し、設備費ではなく20年間の収益資産として見る位置づけ、税制・補助金・融資・保険・発電量の確認前提を短く表示するようにした。2ページ目には `比較・和上を選ぶ理由` を追加し、不動産・定期預金・株式・保険商品・車両償却などとの比較観点、施工/O&M/金融機関連携/長期対応/30年実績、解体・廃棄費用や出力抑制まで隠さない提出前ルールを入れた。サンプルPDF `/tmp/wajo-proposal-strong.pdf` をQuick Lookサムネイルで目視し、1ページ目の見積補足コメント表示まで確認済み。
+- 2026-05-31 投資メモ型レイアウトへ再調整: 提案シミュレーションPDFの1ページ目を、情報を詰め込む日本式見積書ではなく、海外の投資審査メモのような静かなレイアウトへ変更した。グラフは紙面上部の小さな `RECOVERY MODEL` パネルへ縮小し、0年/5年/10年/15年/20年の累計手残り、赤い投資額ライン、回収年数、20年累計だけを表示する。本文は `THESIS`、`KEY NUMBERS`、`CONDITIONS`、`WAJO REVIEW` のフレームへ分割し、段落を短くして、チラシ感を避ける。買主が最初に見る `出した金に対してどれだけ返るか` は残しつつ、紙面全体は落ち着いた投資メモとして見せる方針。サンプルPDF `/tmp/wajo-proposal-memo.pdf` をQuick Lookサムネイルで目視し、小型グラフ、フレーム分割、余白の表示を確認済み。
+- 2026-05-31 セカンダリー資産化の価値訴求追加: 中古発電所/セカンダリー案件向けに、1ページ目の下段カードを `WAJO SECONDARY ASSET PROTOCOL` へ変更した。内容は、和上が現地で施工の粗さ、管理不良、劣化、将来故障しやすい箇所を数字の前に見抜くこと、仕入れた発電所をそのまま右から左へ流さず、現地確認、資料原本確認、設備状態の洗い出し、必要な手直し、O&M設計まで整えてから渡すこと、発電所を箱に詰め、洗い、磨き、ワックスをかけ、リボンをかけて渡すように買主が保有後に説明しやすい状態へ整えることを短く入れた。サンプルPDF `/tmp/wajo-proposal-secondary.pdf` をQuick Lookサムネイルで目視し、下段カード内に3段落が収まることを確認済み。
 - 2026-05-30 案件DBから資料作成へ進む入口: 案件管理DBに `資料作成依頼` relation、`提案PDFリンク` URL、`資料作成メモ` rich_text を追加した。営業資料作成依頼DB側の逆relationは `関連案件`。Workerに `processProjectProposalRequestById` / `processProjectProposalRequestWebhook` を追加し、案件ページから営業資料作成依頼DBへ `資料種別 = 提案書`、`シミュレーションステータス = 入力待ち` の依頼を1件作成して案件側へ紐づけ返す。既に `資料作成依頼` がある場合は重複作成しない。資料作成依頼側でPDF生成が完了した場合、`関連案件` があれば案件側の `提案PDFリンク` / `資料作成メモ` へも書き戻す。正式テスト案件でdry-run、本実行、再実行existingまで確認済み。案件管理DB上部のNotionボタンは、`シミュレーション作成` をこのWebhookへ接続する想定。`説明会用資料作成` は次に同じ入口設計で住民説明会/事前周知資料側へつなぐ。
 - 2026-05-30 説明会用資料見本確認: k-report のPDF見本はA4縦13ページ。1ページ目は周辺住民向けの所有者変更通知、2ページ目は改正再エネ特措法の趣旨と発電所所在地/ハザードマップ枠、3ページ目は事前周知対象判定表と事業計画、4-5ページ目は関係法令遵守・土地権原・着工/運転開始、6-10ページ目は安全面/景観面/生活環境面の影響と予防措置、11-12ページ目は廃棄費用・積立・含有物質・産廃処理・原状回復、13ページ目は説明会対象エリア地図。`説明会用資料作成` は `シミュレーション作成` と別入口にし、資料種別は `住民説明会資料` または `所有者変更周知` として扱う。追加必須候補は、旧/新認定事業者、設備ID、出力、低圧/高圧区分、パネル/パワコン情報、発電所所在地画像、ハザードマップ、説明会対象エリア画像、反射光画像（夏至/冬至）。
+- 2026-05-31 住民説明会PDFを日本語13ページ化: 旧実装は英語の1ページ要約だったため、k-report見本の構成に合わせてA4縦13ページの日本語ドラフトへ置き換えた。構成は、所有者変更通知、制度趣旨と設備概要、所在地/ハザード、事前周知対象判定、関係法令・土地権原、安全面、景観面、生活環境面、反射光、廃棄費用・含有物質、産廃処理・原状回復、説明会対象エリア、提出前チェックリスト。`発電所所在地画像`、`ハザードマップ`、`説明会対象エリア画像`、`反射光画像`、`現場写真` はPDF内の画像枠へ差し込む。`npm run test:resident-document-validation` で13ページ生成を検証し、`npm run test:proposal-simulation-validation`、`npm run check`、`npm run build`、`NOTION_KEYRING=0 npx ntn workers deploy` 通過済み。本番テストページでGoogle Drive保存も確認済み。住民説明会側は `資料PDFリンク` を優先し、`提案PDFリンク` へ混ざらないようにした。
+- 2026-05-31 住民説明会PDFの表紙強化: 住民説明会PDFに濃紺の左帯、金色アクセントライン、`WAJO LOCAL BRIEFING DOCUMENT` のヘッダー表示を追加した。1ページ目には `この資料の位置づけ`、13ページ目には `提出前の最終判定` の注意枠を入れ、地域住民向けの説明資料でありながら、社内提出前チェックにも使える見た目へ寄せた。サンプルPDF `/tmp/wajo-resident-strong.pdf` をQuick Lookサムネイルで目視し、表紙の日本語表示と注意枠を確認済み。
 - 2026-05-30 説明会用資料入口を実装: Workerに `processProjectResidentDocumentRequestById` / `processProjectResidentDocumentRequestWebhook` を追加した。案件ページIDから `営業資料作成依頼DB` に `資料種別 = 住民説明会資料`、`資料作成ステータス = 入力待ち`、`周知方法 = 所有者変更周知` の依頼を作り、案件側 `資料作成依頼` relationへ戻す。重複判定は `関連案件 + 資料種別` なので、提案書依頼と説明会用資料依頼は同一案件に共存できる。追加したDBプロパティは `資料作成ステータス`、`案件番号`、`発電所住所`、`周知方法`、`質問受付期間`、`周知日`、`保守管理責任者 氏名`、旧/新認定事業者、設備ID、認定出力kW、発電所所在地画像、ハザードマップ、説明会対象エリア画像、反射光画像（夏至/冬至）。`npm run test:project-document-request`、`npm run test:resident-document-validation`、`npm run test:proposal-simulation-validation`、`npm run check`、`npm run build`、`NOTION_KEYRING=0 npx ntn workers deploy` 通過。正式テスト案件でdry-run、作成、再実行existing、提案依頼existing、説明会依頼の `processResidentDocumentById` dry-run（不足項目 `案件番号`）まで確認済み。
 - 2026-05-30 NotionボタンUI接続完了: 案件管理DB上部の `シミュレーション作成` と `説明会用資料作成` をそれぞれ該当Webhookへ接続済み。確認メッセージ、`作成する` / `キャンセル`、既存プロパティ送信を設定した。`説明会用資料作成` はテスト案件 `群馬５５webhookテスト` でUI実行し、Notionの正常実行表示を確認済み。企業ダッシュボード上部の空 `New database` / `新規データベース` は0件確認後にアーカイブ済み。
 - 2026-05-30 入力不足時の即時停止パッチ: 案件管理DBの `シミュレーション作成` / `説明会用資料作成` は、依頼レコード作成前に案件ページの必須項目を事前チェックする。不足があれば `needs-input` で止め、営業資料作成依頼DBを作らない。Webhookは `needs-input` をthrowしてNotionボタン側を失敗扱いにする。入力済みの場合は、案件側の金額・設備・日付・画像を営業資料作成依頼DBへ引き継ぐ。太陽光提案では `現場写真` も必須化し、住民説明会資料では旧/新認定事業者、設備ID、発電所所在地画像、ハザードマップ、説明会対象エリア画像、反射光画像、現場写真も必須化。`npm run test:project-document-request`、`npm run test:proposal-simulation-validation`、`npm run test:resident-document-validation`、`npm run check`、`npm run build`、`NOTION_KEYRING=0 npx ntn workers deploy` 通過済み。

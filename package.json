@@ -18,11 +18,13 @@
 		"test:customer-contact-log-title": "tsx src/customer-contact-log-title.test.ts",
 		"test:feedback-ai-learning-log": "tsx src/feedback-ai-learning-log.test.ts",
 		"test:gmail-inquiry-intake": "tsx src/gmail-inquiry-intake.test.ts",
+		"test:hitomi-evaluation-system": "tsx src/hitomi-evaluation-system.test.ts",
 		"test:inquiry-title-cleanup": "tsx src/inquiry-title-cleanup.test.ts",
 		"test:inquiry-assign-owner": "tsx src/inquiry-assign-owner.test.ts",
 		"test:inquiry-project-creation": "tsx src/inquiry-project-creation.test.ts",
 		"test:land-ai-learning-log": "tsx src/land-ai-learning-log.test.ts",
 		"test:lost-order-system": "tsx src/lost-order-system.test.ts",
+		"test:meeting-deal-two-button": "tsx src/meeting-deal-two-button.test.ts",
 		"test:monthly-performance-link": "tsx src/monthly-performance-link.test.ts",
 		"test:monthly-performance-skips-audit-record": "tsx src/monthly-performance-skips-audit-record.test.ts",
 		"test:project-document-request": "tsx src/project-document-request.test.ts",
@@ -37,7 +39,9 @@
 		"test:company-scoring": "tsx src/company-scoring.test.ts",
 		"test:deep-research-merge": "tsx src/deep-research-merge.test.ts",
 		"test:company-dossier": "tsx src/company-dossier.test.ts",
-		"test:research-target-guard": "tsx src/research-target-guard.test.ts"
+		"test:research-target-guard": "tsx src/research-target-guard.test.ts",
+		"test:tdb-fetcher": "tsx src/tdb-fetcher.test.ts",
+		"test:structured-fact-clean": "tsx src/structured-fact-clean.test.ts"
 	},
 	"engines": {
 		"node": ">=22.0.0",

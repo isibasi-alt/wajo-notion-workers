@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import {
 	approveProjectLostRequestForTest,
+	cancelConfirmedProjectLostForTest,
+	dismissConfirmedProjectLostForTest,
 	processInquiryLostForTest,
 	processProjectLostRequestForTest,
 	rejectProjectLostRequestForTest,
@@ -73,6 +75,21 @@ function projectPage(status = "📋 提案中", lostRequestStatus: string | null
 	};
 }
 
+function confirmedLostProjectPage() {
+	const page = projectPage("❌ 失注", "承認済");
+	return {
+		...page,
+		properties: {
+			...page.properties,
+			失注理由: multiSelectProp(["価格条件が合わない"]),
+			失注理由メモ: richTextProp("売主希望額と買主条件が合わないため。"),
+			失注日: dateProp("2026-05-30"),
+			失注前フェーズ: richTextProp("📋 提案中"),
+			失注ログ: richTextProp("2026-05-30 案件失注承認"),
+		},
+	};
+}
+
 function createNotionStub(page: Record<string, unknown>) {
 	const updates: Array<Record<string, unknown>> = [];
 	const comments: Array<Record<string, unknown>> = [];
@@ -99,6 +116,8 @@ function createNotionStub(page: Record<string, unknown>) {
 }
 
 async function main() {
+	process.env.MANAGER_USER_IDS = "manager-1";
+
 	{
 		const { notion, updates, comments } = createNotionStub(inquiryPage());
 		const result = await processInquiryLostForTest(
@@ -191,6 +210,22 @@ async function main() {
 		const { notion, updates, comments } = createNotionStub(
 			projectPage("失注申請中", "申請中"),
 		);
+		const result = await approveProjectLostRequestForTest(
+			"project-1",
+			notion as never,
+			{ memo: "マネージャー確認済み。", triggerUserId: "sales-1" },
+		);
+
+		assert.equal(result.action, "blocked");
+		assert.match(result.message, /マネージャー専用/);
+		assert.equal(updates.length, 0, "マネージャー以外は失注承認を実行できない");
+		assert.equal(comments.length, 1, "権限ブロック理由をページに残す");
+	}
+
+	{
+		const { notion, updates, comments } = createNotionStub(
+			projectPage("失注申請中", "申請中"),
+		);
 		const result = await rejectProjectLostRequestForTest(
 			"project-1",
 			notion as never,
@@ -207,6 +242,99 @@ async function main() {
 			"差し戻し",
 		);
 		assert.equal(comments.length, 1, "案件失注差し戻しは全員通知のコメントを残す");
+	}
+
+	{
+		const { notion, updates, comments } = createNotionStub(
+			projectPage("失注申請中", "申請中"),
+		);
+		const result = await rejectProjectLostRequestForTest(
+			"project-1",
+			notion as never,
+			{ memo: "再提案余地あり。", triggerUserId: "sales-1" },
+		);
+
+		assert.equal(result.action, "blocked");
+		assert.match(result.message, /マネージャー専用/);
+		assert.equal(updates.length, 0, "マネージャー以外は失注差し戻しを実行できない");
+		assert.equal(comments.length, 1, "権限ブロック理由をページに残す");
+	}
+
+	{
+		const { notion, updates, comments } = createNotionStub(confirmedLostProjectPage());
+		const result = await dismissConfirmedProjectLostForTest(
+			"project-1",
+			notion as never,
+			{ memo: "再提案余地あり。", triggerUserId: "manager-1" },
+		);
+
+		assert.equal(result.action, "lost-dismissed");
+		assert.equal(
+			((updates[0]!.properties as Record<string, unknown>).ステータス as { select: { name: string } }).select.name,
+			"⏳ 確認待ち",
+		);
+		assert.equal(
+			((updates[0]!.properties as Record<string, unknown>).失注申請状態 as { select: { name: string } }).select.name,
+			"差し戻し",
+		);
+		assert.equal(
+			((updates[0]!.properties as Record<string, unknown>).管理アクション状態 as { select: { name: string } }).select.name,
+			"失注差し戻し",
+		);
+		assert.equal(comments.length, 1, "失注確定後の差し戻しは全員通知のコメントを残す");
+	}
+
+	{
+		const { notion, updates, comments } = createNotionStub(confirmedLostProjectPage());
+		const result = await dismissConfirmedProjectLostForTest(
+			"project-1",
+			notion as never,
+			{ memo: "再提案余地あり。", triggerUserId: "sales-1" },
+		);
+
+		assert.equal(result.action, "blocked");
+		assert.match(result.message, /マネージャー専用/);
+		assert.equal(updates.length, 0, "マネージャー以外は失注済み差し戻しを実行できない");
+		assert.equal(comments.length, 1, "権限ブロック理由をページに残す");
+	}
+
+	{
+		const { notion, updates, comments } = createNotionStub(confirmedLostProjectPage());
+		const result = await cancelConfirmedProjectLostForTest(
+			"project-1",
+			notion as never,
+			{ memo: "失注判定を取り消して再提案へ戻す。", triggerUserId: "manager-1" },
+		);
+
+		assert.equal(result.action, "lost-cancelled");
+		assert.equal(
+			((updates[0]!.properties as Record<string, unknown>).ステータス as { select: { name: string } }).select.name,
+			"📋 提案中",
+		);
+		assert.equal(
+			((updates[0]!.properties as Record<string, unknown>).失注申請状態 as { select: { name: string } }).select.name,
+			"取り消し",
+		);
+		assert.equal(
+			((updates[0]!.properties as Record<string, unknown>).管理アクション状態 as { select: { name: string } }).select.name,
+			"失注取り消し",
+		);
+		assert.deepEqual((updates[0]!.properties as Record<string, unknown>).失注日, { date: null });
+		assert.equal(comments.length, 1, "失注取消は全員通知のコメントを残す");
+	}
+
+	{
+		const { notion, updates, comments } = createNotionStub(confirmedLostProjectPage());
+		const result = await cancelConfirmedProjectLostForTest(
+			"project-1",
+			notion as never,
+			{ memo: "失注判定を取り消して再提案へ戻す。", triggerUserId: "sales-1" },
+		);
+
+		assert.equal(result.action, "blocked");
+		assert.match(result.message, /マネージャー専用/);
+		assert.equal(updates.length, 0, "マネージャー以外は失注取消を実行できない");
+		assert.equal(comments.length, 1, "権限ブロック理由をページに残す");
 	}
 }
 

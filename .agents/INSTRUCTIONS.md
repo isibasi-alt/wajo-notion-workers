@@ -1,5 +1,15 @@
 # Repository Guidelines
 
+## WAJO Sales OS Operating Context
+- 回答・作業報告は日本語で行う。
+- WAJO Sales OS 関連作業の前に `/Users/isibasidaisuke/WAJO_SALES_OS_CONTEXT.md` を読む。
+- ローカル資料フォルダーは `/Users/isibasidaisuke/WAJO Sales OS`、Worker リポジトリは `/Users/isibasidaisuke/wajo-notion-workers`。
+- 第一弾リリース範囲は `問い合わせ -> 案件 -> 資料 -> 成約/失注`。OpenAI API依存の会議振り返り・評価案生成は、APIキー/課金/プロジェクト設定の確認後に追加リリースとして扱う。
+- 既存成果物は壊さず、差分修正を優先する。エラー時もゼロから作り直さず、問題箇所だけを修正する。
+- 個人情報、契約情報、APIキーを外部送信しない。APIキーはログ・チャット・ファイルに平文で残さない。
+- 確認なしでファイル削除やNotionページ/DB削除を行わない。
+- Notion UIでしか安全に触れないビュー列順やbuttonプロパティ作成は、無理に自動ドラッグ操作せず、`/Users/isibasidaisuke/WAJO Sales OS/NOTION_UI_RELEASE_STEPS.md` に沿って人間作業として扱う。
+
 ## Project Structure & Module Organization
 - `src/index.ts` defines the worker and capabilities.
 - `.examples/` has focused samples (sync, tool, automation, OAuth, webhook).

@@ -230,23 +230,38 @@ function makeNotion(options: {
 }
 
 async function main() {
-	const missingInputCase = makeNotion({
+	const financialInputWaitingCase = makeNotion({
 		projectPropertyOverrides: {
 			販売価格: numberProp(null),
 		},
 	});
 
-	const missing = await processProjectProposalRequestForTest(
+	const financialInputWaiting = await processProjectProposalRequestForTest(
 		{ projectPageId: "project-1", dryRun: false },
-		missingInputCase.notion as never,
+		financialInputWaitingCase.notion as never,
 	);
 
-	assert.equal(missing.action, "needs-input");
-	assert.equal(missing.requestPageId, null);
-	assert.match(missing.message, /販売価格/);
-	assert.equal(missingInputCase.creates.length, 0);
-	assert.equal(missingInputCase.updates.length, 1);
-	assert.equal(missingInputCase.comments.length, 1);
+	assert.equal(financialInputWaiting.action, "created");
+	assert.equal(financialInputWaiting.requestPageId, "request-created-1");
+	assert.match(financialInputWaiting.message, /提案シミュレーション依頼/);
+	assert.equal(financialInputWaitingCase.creates.length, 1);
+	const financialInputWaitingProps = financialInputWaitingCase.creates[0]!
+		.properties as Record<string, unknown>;
+	assert.equal(
+		(financialInputWaitingProps.資料種別 as { select: { name: string } }).select.name,
+		"提案書",
+	);
+	assert.equal(
+		(
+			financialInputWaitingProps.シミュレーションステータス as {
+				select: { name: string };
+			}
+		).select.name,
+		"入力待ち",
+	);
+	assert.match(JSON.stringify(financialInputWaitingProps.資料作成メモ), /販売価格/);
+	assert.equal(financialInputWaitingCase.updates.length, 1);
+	assert.equal(financialInputWaitingCase.comments.length, 1);
 
 	const equipmentLinkedCase = makeNotion({
 		projectPageOverride: projectPageWithEquipmentOnly(),

@@ -76,12 +76,26 @@ function inquiryPage() {
 			案件化近さ: selectProp("① 情報不足"),
 			案件化スコア: numberProp(),
 			"問い合わせフェーズ（推奨）": selectProp("未対応"),
+		"営業サマリー": richTextProp(""),
+		"次の一手": richTextProp(""),
 			案件化根拠: richTextProp(""),
 			案件化次アクション: richTextProp(""),
 			案件化停滞時間: numberProp(),
 			案件化停滞日数: numberProp(),
 			案件化停滞アラート: selectProp("⚪ 判定不可"),
 			案件化最終判定日時: dateProp("2026-05-20"),
+		},
+	};
+}
+
+function linkedInquiryPage() {
+	const page = inquiryPage();
+	return {
+		...page,
+		id: "inquiry-linked",
+		properties: {
+			...page.properties,
+			紐づき案件: relationProp(["project-1"]),
 		},
 	};
 }
@@ -100,6 +114,8 @@ function projectPage() {
 			成約近さ: selectProp("① 情報不足"),
 			成約スコア: numberProp(),
 			"推奨フェーズ（活動ログ）": selectProp("接点不足"),
+		"営業サマリー": richTextProp(""),
+		"次の一手": richTextProp(""),
 			成約根拠: richTextProp(""),
 			成約次アクション: richTextProp(""),
 			成約停滞時間: numberProp(),
@@ -194,7 +210,11 @@ async function main() {
 	const notion = {
 		pages: {
 			retrieve: async ({ page_id }: { page_id: string }) =>
-				page_id === "project-1" ? projectPage() : inquiryPage(),
+				page_id === "project-1"
+					? projectPage()
+					: page_id === "inquiry-linked"
+						? linkedInquiryPage()
+						: inquiryPage(),
 			update: async (args: Record<string, unknown>) => {
 				updates.push(args);
 				return { id: args.page_id };
@@ -221,6 +241,11 @@ async function main() {
 	const patched = updates[0]!.properties as Record<string, unknown>;
 	assert.ok(patched.案件化近さ);
 	assert.ok(patched.案件化スコア);
+	assert.match(JSON.stringify(patched["営業サマリー"]), /営業状態: 対応中/);
+	assert.match(
+		JSON.stringify(patched["次の一手"]),
+		/次の一手: 活動を残す|次の一手: 案件化する/,
+	);
 	assert.ok(patched.案件化停滞時間);
 	assert.equal(patched.ステータス, undefined);
 	assert.equal(createdPages.length, 1);
@@ -230,11 +255,24 @@ async function main() {
 	assert.equal((inquiryLearningLog.判定種別 as { select: { name: string } }).select.name, "案件化予測");
 	assert.equal((inquiryLearningLog.対象領域 as { select: { name: string } }).select.name, "問い合わせ");
 
+	const linkedRefreshed = await refreshSalesPipelineSignalForTest("inquiry-linked", notion as never, NOW);
+
+	assert.equal(linkedRefreshed.action, "updated-inquiry");
+	const linkedPatch = updates.find((update) => update.page_id === "inquiry-linked")!.properties as Record<string, unknown>;
+	assert.match(JSON.stringify(linkedPatch["営業サマリー"]), /案件化有無: あり/);
+	assert.match(JSON.stringify(linkedPatch["次の一手"]), /次の一手: 活動を残す|次の一手: 設備詳細を作成/);
+
 	const projectRefreshed = await refreshSalesPipelineSignalForTest("project-1", notion as never, NOW);
 
 	assert.equal(projectRefreshed.action, "updated-project");
-	assert.equal(createdPages.length, 2);
-	const projectLearningLog = createdPages[1]!.properties as Record<string, unknown>;
+	const projectPatch = updates.find((update) => update.page_id === "project-1")!.properties as Record<string, unknown>;
+	assert.match(JSON.stringify(projectPatch["営業サマリー"]), /営業状態: 📋 提案中/);
+	assert.match(
+		JSON.stringify(projectPatch["次の一手"]),
+		/次の一手: 設備詳細を作成|次の一手: シミュレーション作成|次の一手: 成約報告する|次の一手: 活動を残す/,
+	);
+	assert.equal(createdPages.length, 3);
+	const projectLearningLog = createdPages[2]!.properties as Record<string, unknown>;
 	assert.ok(projectLearningLog.判定名);
 	assert.ok(projectLearningLog.関連案件);
 	assert.equal((projectLearningLog.判定種別 as { select: { name: string } }).select.name, "成約予測");
