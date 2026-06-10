@@ -6726,6 +6726,11 @@ async function processCompanyResearch(
 	patches["信頼度"] = { kind: "select", value: score.信頼度 };
 	patches["提案可否"] = { kind: "select", value: score.提案可否 };
 	patches["企業調査ステータス"] = { kind: "select", value: status };
+	// 実行の足あと: いつのリサーチかを列で見えるように打刻(鮮度判断・再実行判断に使う)
+	patches["リサーチ最終実行日"] = {
+		kind: "date",
+		value: new Date().toISOString().slice(0, 10),
+	};
 	const properties = companyPage.properties ?? {};
 	// 短い事実列はベタ値化(出典番号・末尾「です。」を除去)。経営陣は文章なので除外。
 	// 既存値が旧コードの汚れ付きならノイズだけ修復する(addStructuredFactPatch)。
