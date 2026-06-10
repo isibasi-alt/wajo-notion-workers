@@ -9146,6 +9146,9 @@ function buildSalesPerformanceDryRunPreview(source: string): string[] {
 			line.includes("定量評価不足警告") ||
 			line.includes("ノルマ申請（月初ゲート）") ||
 			line.startsWith("申請ステータス:") ||
+			line.startsWith("承認期限:") ||
+			line.startsWith("承認日時:") ||
+			line.startsWith("ノルマ申請承認警告:") ||
 			line.startsWith("粗利目標:") ||
 			line.includes("定性評価（活動ログ）｜35点") ||
 			line.includes("補助確認事項（採点対象外）") ||
@@ -9183,10 +9186,13 @@ async function buildSalesPerformanceQuotaSource(
 		const quotaProperties = quotaPage.properties ?? {};
 		const status = text(quotaProperties["申請ステータス"]) || text(quotaProperties["承認ステータス"]);
 		const approved = ["承認", "承認済", "承認済み"].includes(status);
+		const approvalGate = evaluateQuotaApprovalDeadline(properties, quotaProperties, quotaPage);
 		const lines = [
 			"【ノルマ申請（月初ゲート）】",
 			quotaPage.url ? `URL: ${quotaPage.url}` : "",
 			`申請ステータス: ${status || "未設定"}`,
+			approvalGate.deadlineLabel ? `承認期限: ${approvalGate.deadlineLabel}` : "",
+			approvalGate.approvedAt ? `承認日時: ${approvalGate.approvedAt}` : "",
 			text(quotaProperties["評価タイプ"]) ? `評価タイプ: ${text(quotaProperties["評価タイプ"])}` : "",
 			numberValue(quotaProperties["粗利目標"]) !== null && numberValue(quotaProperties["粗利目標"]) !== undefined
 				? `粗利目標: ${numberValue(quotaProperties["粗利目標"])}`
@@ -9204,10 +9210,14 @@ async function buildSalesPerformanceQuotaSource(
 				? `仕入れ金額目標: ${numberValue(quotaProperties["仕入れ金額目標"])}`
 				: "",
 			approved ? "" : `ノルマ申請承認警告: 申請ステータスが${status || "未設定"}のため、人間確認モードに落とす`,
+			approved && approvalGate.warning ? `ノルマ申請承認警告: ${approvalGate.warning}` : "",
 		].filter(Boolean);
 		return {
 			source: lines.join("\n"),
-			warnings: approved ? [] : [`ノルマ申請未承認:${status || "未設定"}`],
+			warnings: [
+				approved ? "" : `ノルマ申請未承認:${status || "未設定"}`,
+				approved ? approvalGate.warning : "",
+			].filter(Boolean),
 		};
 	} catch (error) {
 		return {
@@ -9215,6 +9225,65 @@ async function buildSalesPerformanceQuotaSource(
 			warnings: ["ノルマ申請取得失敗"],
 		};
 	}
+}
+
+function evaluateQuotaApprovalDeadline(
+	performanceProperties: Record<string, unknown>,
+	quotaProperties: Record<string, unknown>,
+	quotaPage: Page,
+): { deadlineLabel: string; approvedAt: string; warning: string } {
+	const periodStart =
+		dateStartFromProperty(performanceProperties["開始日"]) ||
+		dateStartFromProperty(performanceProperties["対象期間"]) ||
+		dateStartFromProperty(quotaProperties["対象期間"]);
+	if (!periodStart) {
+		return {
+			deadlineLabel: "",
+			approvedAt: quotaApprovalTimestamp(quotaProperties, quotaPage),
+			warning: "ノルマ承認期限未判定:対象月不明",
+		};
+	}
+	const monthStart = periodStart.slice(0, 7) + "-01";
+	const deadlineLabel = `${monthStart} 09:00 JST`;
+	const deadlineUtcMs = Date.parse(`${monthStart}T00:00:00.000Z`);
+	const approvedAt = quotaApprovalTimestamp(quotaProperties, quotaPage);
+	if (!approvedAt) {
+		return {
+			deadlineLabel,
+			approvedAt,
+			warning: "ノルマ承認日時未確認",
+		};
+	}
+	const approvedMs = Date.parse(approvedAt);
+	if (!Number.isFinite(approvedMs)) {
+		return {
+			deadlineLabel,
+			approvedAt,
+			warning: `ノルマ承認日時不正:${approvedAt}`,
+		};
+	}
+	if (approvedMs > deadlineUtcMs) {
+		return {
+			deadlineLabel,
+			approvedAt,
+			warning: `ノルマ承認期限超過:${approvedAt}`,
+		};
+	}
+	return { deadlineLabel, approvedAt, warning: "" };
+}
+
+function quotaApprovalTimestamp(
+	quotaProperties: Record<string, unknown>,
+	quotaPage: Page,
+): string {
+	const explicitDate =
+		dateStartFromProperty(quotaProperties["マネージャー承認日時"]) ||
+		dateStartFromProperty(quotaProperties["承認日時"]) ||
+		dateStartFromProperty(quotaProperties["承認日"]) ||
+		dateStartFromProperty(quotaProperties["会議決定日"]);
+	if (explicitDate) return explicitDate;
+	const lastEditedTime = (quotaPage as Record<string, unknown>).last_edited_time;
+	return typeof lastEditedTime === "string" ? lastEditedTime : "";
 }
 
 async function buildSalesPerformanceRelatedSource(

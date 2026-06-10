@@ -145,6 +145,21 @@ const retrievedPages: Record<string, Record<string, unknown>> = {
 		評価タイプ: select("両方"),
 		粗利目標: number(8_000_000),
 	},
+	"quota-approved-late": {
+		申請名: title("2026年5月ノルマ申請"),
+		申請ステータス: select("承認済み"),
+		評価タイプ: select("両方"),
+		粗利目標: number(8_000_000),
+	},
+};
+
+const retrievedPageMeta: Record<string, Record<string, unknown>> = {
+	"quota-approved": {
+		last_edited_time: "2026-04-30T23:30:00.000Z",
+	},
+	"quota-approved-late": {
+		last_edited_time: "2026-05-01T00:30:00.000Z",
+	},
 };
 
 const notion = {
@@ -152,6 +167,7 @@ const notion = {
 		retrieve: async ({ page_id }: { page_id: string }) => ({
 			id: page_id,
 			url: `https://notion.so/${page_id}`,
+			...(retrievedPageMeta[page_id] ?? {}),
 			properties: retrievedPages[page_id] ?? {
 				名前: title(`missing-${page_id}`),
 			},
@@ -191,10 +207,17 @@ async function main() {
 
 	const approvedQuotaSource = await buildSalesPerformanceQuotaSourceForTest(
 		notion as never,
-		{ 関連ノルマ申請: relation(["quota-approved"]) },
+		{ 関連ノルマ申請: relation(["quota-approved"]), 開始日: date("2026-05-01") },
 	);
 	assert.match(approvedQuotaSource.source, /申請ステータス: 承認済み/);
 	assert.deepEqual(approvedQuotaSource.warnings, []);
+
+	const lateApprovedQuotaSource = await buildSalesPerformanceQuotaSourceForTest(
+		notion as never,
+		{ 関連ノルマ申請: relation(["quota-approved-late"]), 開始日: date("2026-05-01") },
+	);
+	assert.match(lateApprovedQuotaSource.source, /承認期限: 2026-05-01 09:00 JST/);
+	assert.deepEqual(lateApprovedQuotaSource.warnings, ["ノルマ承認期限超過:2026-05-01T00:30:00.000Z"]);
 
 	const relatedSource = await buildSalesPerformanceRelatedSourceForTest(
 		notion as never,
@@ -290,9 +313,12 @@ async function main() {
 	assert.doesNotMatch(legacyContributionOnlySource, /蓄電池ナレッジ共有|deal-1|closing-1/);
 
 	const dryRunPreview = buildSalesPerformanceDryRunPreviewForTest([
+		lateApprovedQuotaSource.source,
 		monthlySource,
 		relatedSource,
 	].join("\n\n"));
+	assert.ok(dryRunPreview.some((line) => line.includes("承認期限: 2026-05-01 09:00 JST")));
+	assert.ok(dryRunPreview.some((line) => line.includes("承認日時: 2026-05-01T00:30:00.000Z")));
 	assert.ok(dryRunPreview.some((line) => line.includes("定量評価（実績）｜65点")));
 	assert.ok(dryRunPreview.some((line) => line.includes("定性評価（活動ログ）｜35点")));
 	assert.ok(dryRunPreview.some((line) => line.includes("補助確認事項（採点対象外）")));
