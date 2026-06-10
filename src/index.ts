@@ -1,6 +1,6 @@
 import { Worker, WebhookVerificationError } from "@notionhq/workers";
 import { j } from "@notionhq/workers/schema-builder";
-import { generateShoutaBrief, type ShoutaInput } from "./shouta-brief";
+import { generateInspectedShoutaBrief, type ShoutaInput } from "./shouta-brief";
 import { PDFDocument, StandardFonts, rgb, type PDFImage } from "pdf-lib";
 
 const worker = new Worker();
@@ -118,7 +118,10 @@ const SALES_TEAM_USER_IDS = (process.env.SALES_TEAM_USER_IDS ?? "")
 	.filter(Boolean);
 
 const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY;
-const PERPLEXITY_MODEL = process.env.PERPLEXITY_MODEL || "sonar";
+// クオリティ優先(大ちゃん方針2026-06-11): 既定をsonar-proに(wajo-intel CLIと同格の深掘り品質)。
+// コスト注意: sonarの3〜15倍/トークン。深掘り7呼び出し全部に効く。安いYes/No判定は個別にsonar指定。
+// 本番環境変数 PERPLEXITY_MODEL が設定済みだとそちらが勝つ(デプロイ時に要確認)。
+const PERPLEXITY_MODEL = process.env.PERPLEXITY_MODEL || "sonar-pro";
 
 const WAJO_PLAYBOOK = [
 	"和上ホールディングスの強み:",
@@ -258,6 +261,7 @@ export {
 
 async function perplexityChat(
 	messages: Array<{ role: string; content: string }>,
+	modelOverride?: string,
 ): Promise<{ content: string; citations: string[] }> {
 	if (!PERPLEXITY_API_KEY) throw new Error("PERPLEXITY_API_KEY が未設定です");
 	const response = await fetch("https://api.perplexity.ai/chat/completions", {
@@ -266,7 +270,7 @@ async function perplexityChat(
 			"Content-Type": "application/json",
 			Authorization: `Bearer ${PERPLEXITY_API_KEY}`,
 		},
-		body: JSON.stringify({ model: PERPLEXITY_MODEL, messages }),
+		body: JSON.stringify({ model: modelOverride || PERPLEXITY_MODEL, messages }),
 	});
 	if (!response.ok) {
 		const errorText = await response.text();
@@ -793,17 +797,21 @@ async function assessTargetPlausibility(
 ): Promise<{ realistic: boolean; reason: string }> {
 	if (!PERPLEXITY_API_KEY) return { realistic: true, reason: "" };
 	try {
-		const r = await perplexityChat([
-			{
-				role: "system",
-				content:
-					"あなたは日本の再エネ中小企業『和上ホールディングス』の営業審査担当。相手が太陽光/蓄電池の現実的な商談相手かを判定する。自社・各国政府・著名公人・非現実的な超巨大組織など商談がおよそ成立しない相手はrealistic=false。JSONのみで返す。",
-			},
-			{
-				role: "user",
-				content: `相手:「${companyName}」。{"realistic":true/false,"reason":"日本語で短く"} だけ返す。`,
-			},
-		]);
+		// このガードはYes/No判定だけ=安いsonarで十分(sonar-pro既定化の対象外・検品レビュー反映)
+		const r = await perplexityChat(
+			[
+				{
+					role: "system",
+					content:
+						"あなたは日本の再エネ中小企業『和上ホールディングス』の営業審査担当。相手が太陽光/蓄電池の現実的な商談相手かを判定する。自社・各国政府・著名公人・非現実的な超巨大組織など商談がおよそ成立しない相手はrealistic=false。JSONのみで返す。",
+				},
+				{
+					role: "user",
+					content: `相手:「${companyName}」。{"realistic":true/false,"reason":"日本語で短く"} だけ返す。`,
+				},
+			],
+			"sonar",
+		);
 		let parsed: { realistic?: unknown; reason?: unknown } = {};
 		const m = r.content.match(/\{[\s\S]*\}/);
 		if (m) parsed = JSON.parse(m[0]) as { realistic?: unknown; reason?: unknown };
@@ -9955,6 +9963,13 @@ function buildShoutaInput(
 	if (pick("企業サマリー")) dossierLines.push(pick("企業サマリー"));
 	if (pick("営業切り口")) dossierLines.push(pick("営業切り口"));
 	if (pick("和上解決策適合")) dossierLines.push(pick("和上解決策適合"));
+	if (pick("現在課題仮説")) dossierLines.push(`現在課題仮説: ${pick("現在課題仮説")}`);
+	if (pick("将来課題仮説")) dossierLines.push(`将来課題仮説: ${pick("将来課題仮説")}`);
+	if (pick("想定決裁者")) dossierLines.push(`想定決裁者: ${pick("想定決裁者")}`);
+	if (pick("想定反論・懸念"))
+		dossierLines.push(`想定反論・懸念: ${pick("想定反論・懸念")}`);
+	if (pick("初回トーク方針"))
+		knowledgeLines.push(`初回トーク方針: ${pick("初回トーク方針")}`);
 	return {
 		companyName,
 		contact:
@@ -10019,18 +10034,38 @@ async function processMeetingPrepReport(
 
 	// 商太ブリーフは本文を書く時だけ生成(検品指摘: 捨てる結果のためにLLMを呼ばない)。
 	// 材料(A実データ/和上の手がかり)がゼロの時も呼ばない=数字の創作圧力をかけない。
+	// クオリティ優先(2026-06-11): 企業ページ本文(Aドシエ全文)まで食わせ、検品AI(4体目)を通してから書く。
 	let briefWritten = false;
 	if (shouldAppendBody) {
 		const shoutaInput = buildShoutaInput(
 			company.name,
 			companyPage.properties ?? {},
 		);
+		const bodyDossier = await fetchPageBlockPlainText(notion, company.page.id);
+		if (bodyDossier.trim()) {
+			shoutaInput.dossier = [
+				shoutaInput.dossier,
+				`【企業ページ本文(Aドシエ全文)】\n${bodyDossier}`,
+			]
+				.filter(Boolean)
+				.join("\n\n");
+		}
 		const hasMaterial =
 			(shoutaInput.hits?.length ?? 0) > 0 ||
 			Boolean(shoutaInput.renewableXray) ||
 			Boolean(shoutaInput.dossier) ||
 			Boolean(shoutaInput.knowledge);
-		const shoutaBrief = hasMaterial ? await generateShoutaBrief(shoutaInput) : "";
+		let shoutaBrief = "";
+		if (hasMaterial) {
+			const result = await generateInspectedShoutaBrief(shoutaInput);
+			const verdictLine = result.inspection.inspected
+				? result.inspection.pass
+					? `✅ 検品AI通過（生成${result.attempts}回）`
+					: `⚠️ 検品AIの指摘が残っています（人間確認推奨）: ${result.inspection.problems.join(" ／ ")}`
+				: `ℹ️ 未検品: ${result.inspection.problems.join(" ／ ")}`;
+			// 判定行は先頭(60行カットで消えない位置・検品レビュー反映)
+			shoutaBrief = `${verdictLine}\n${result.brief}`;
+		}
 		briefWritten = shoutaBrief.trim().length > 0;
 		await appendMeetingPrepReportBody(
 			notion,
