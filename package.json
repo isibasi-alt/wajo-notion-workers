@@ -7,6 +7,8 @@
 		"check": "tsc --noEmit",
 		"test:ai-learning-log-outcome": "tsx src/ai-learning-log-outcome.test.ts",
 		"test:closing-report-celebration": "tsx src/closing-report-celebration.test.ts",
+		"test:closing-report-existing-monthly-callout": "tsx src/closing-report-existing-monthly-callout.test.ts",
+		"test:closing-knowledge-candidate": "tsx src/closing-knowledge-candidate.test.ts",
 		"test:closing-report-cancel-safety": "tsx src/closing-report-cancel-safety.test.ts",
 		"test:closing-report-deal-type-validation": "tsx src/closing-report-deal-type-validation.test.ts",
 		"test:closing-report-existing-deal-type-validation": "tsx src/closing-report-existing-deal-type-validation.test.ts",

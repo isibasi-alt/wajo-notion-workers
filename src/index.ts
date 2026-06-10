@@ -38,6 +38,8 @@ const MEETING_DATA_SOURCE_ID =
 const MEETING_PRIMARY_TYPES = ["ミーティング", "商談"] as const;
 type MeetingPrimaryType = (typeof MEETING_PRIMARY_TYPES)[number];
 const KNOWLEDGE_MEETING_RELATION_ALIASES = ["元ミーティング", "元会議議事録"] as const;
+const PROJECT_DEAL_RELATION_ALIASES = [" 商談管理DB", "商談管理DB", "関連商談"] as const;
+const DEAL_PROJECT_RELATION_ALIASES = ["関連案件", "🔥 案件リスト"] as const;
 const ACTIVITY_LOG_DATA_SOURCE_ID =
 	process.env.ACTIVITY_LOG_DATA_SOURCE_ID ??
 	"a58a107d-92e3-43f3-887d-5e3acf72e9ec";
@@ -19360,6 +19362,9 @@ async function processClosingReport(
 		} catch (error) {
 			console.error("existing closing monthly link repair error:", String(error));
 		}
+		await syncRelatedDealsToClosed(projectPage, existingId, notion).catch((error) => {
+			console.error("existing closing deal sync error:", String(error));
+		});
 		return {
 			action: linked ? "already-exists-linked" : "already-exists",
 			closingPageId: existingId,
@@ -19396,6 +19401,14 @@ async function processClosingReport(
 			message,
 		};
 	}
+	const salesAmount = numberValueAny(projectPage.properties ?? {}, [
+		"実績売上額",
+		"予定売上額",
+		"売上額",
+		"契約金額",
+		"販売価格",
+		"成約金額",
+	]);
 
 	// 担当営業：案件側の担当を優先し、未設定時だけクリックしたユーザーを使う
 	const dealSalesPersonIds = personIdsFromProperty(projectPage.properties?.["担当営業ユーザー"]);
@@ -19425,6 +19438,9 @@ async function processClosingReport(
 		関連案件: { relation: [{ id: projectPageId }] },
 		AI処理状態: select("処理中"),
 	};
+	if (salesAmount !== null && salesAmount > 0) {
+		properties["売上額"] = { number: salesAmount };
+	}
 	properties["粗利額"] = { number: grossProfit };
 	// 歩合見込額をここで計算して書き込む（月次成績のrollupで集計される）
 	// 仕入れ・販売が同一人物 → 4%全額、別々 → それぞれ2%
@@ -19490,6 +19506,9 @@ async function processClosingReport(
 		parent: { data_source_id: CLOSING_REPORT_DATA_SOURCE_ID },
 		properties,
 		children: contentBlocks,
+	});
+	await syncRelatedDealsToClosed(projectPage, created.id, notion).catch((error) => {
+		console.error("closing deal sync error:", String(error));
 	});
 
 	await markAiLearningLogsOutcome(notion, {
@@ -19646,7 +19665,70 @@ async function syncProjectClosingStatusToPerformance(
 }
 
 function isClosedProjectStatus(status: string): boolean {
-	return /成約/.test(status);
+	return status === "🏆 成約";
+}
+
+async function syncRelatedDealsToClosed(
+	projectPage: Page,
+	closingPageId: string,
+	notion: NotionClient,
+): Promise<number> {
+	const dealPages = await collectRelatedDealPages(projectPage, notion);
+	let updated = 0;
+	for (const dealPage of dealPages) {
+		const currentClosingIds = relationIdsFromProperty(dealPage.properties?.["関連成約"]);
+		const nextClosingIds = uniqueStrings([...currentClosingIds, closingPageId]);
+		const currentStatus = text(dealPage.properties?.["商談ステータス"]);
+		const currentResult = text(dealPage.properties?.["商談結果"]);
+		if (
+			currentStatus === "成約" &&
+			currentResult === "成約" &&
+			currentClosingIds.includes(closingPageId)
+		) {
+			continue;
+		}
+		await safeUpdateExistingProperties(notion, dealPage, {
+			商談ステータス: { kind: "select", value: "成約" },
+			商談結果: { kind: "select", value: "成約" },
+			関連成約: { kind: "relation", ids: nextClosingIds },
+		});
+		updated++;
+	}
+	return updated;
+}
+
+async function collectRelatedDealPages(
+	projectPage: Page,
+	notion: NotionClient,
+): Promise<Page[]> {
+	const pagesById = new Map<string, Page>();
+	const directDealIds = uniqueStrings(
+		PROJECT_DEAL_RELATION_ALIASES.flatMap((name) =>
+			relationIdsFromProperty(projectPage.properties?.[name])
+		),
+	);
+	for (const dealId of directDealIds) {
+		const dealPage = await notion.pages.retrieve({ page_id: dealId });
+		pagesById.set(dealPage.id, dealPage);
+	}
+	for (const relationProperty of DEAL_PROJECT_RELATION_ALIASES) {
+		try {
+			const response = await notion.dataSources.query({
+				data_source_id: DEAL_DATA_SOURCE_ID,
+				filter: {
+					property: relationProperty,
+					relation: { contains: projectPage.id },
+				},
+				page_size: 20,
+			});
+			for (const page of (response.results ?? []) as Page[]) {
+				pagesById.set(page.id, page);
+			}
+		} catch (error) {
+			console.log(`related deal query skipped: ${relationProperty}`, String(error));
+		}
+	}
+	return [...pagesById.values()];
 }
 
 function buildClosingSuccessMessage({
@@ -19774,7 +19856,7 @@ async function linkClosingToMonthlyPerformanceRecord(
 			},
 		});
 	}
-	if (closingSummary && notion.blocks?.children?.append) {
+	if (!wasAlreadyLinked && closingSummary && notion.blocks?.children?.append) {
 		await notion.blocks.children.append({
 			block_id: closingPageId,
 			children: [
@@ -20507,7 +20589,170 @@ async function generateClosingFeedback(
 		}
 	}
 	await safeUpdateExistingProperties(notion, closingPage, patches);
+	if (feedback.ナレッジ化候補 === "候補") {
+		await createClosingKnowledgeCandidateFromFeedback(
+			closingPage,
+			projectPage,
+			feedback,
+			notion,
+		).catch((error) => {
+			console.error("closing knowledge candidate creation error:", String(error));
+		});
+	}
 }
+
+async function createClosingKnowledgeCandidateFromFeedback(
+	closingPage: Page,
+	projectPage: Page,
+	feedback: ClosingFeedbackAIResponse,
+	notion: NotionClient,
+): Promise<{ action: string; knowledgePageId: string | null; message: string }> {
+	if (feedback.ナレッジ化候補 !== "候補") {
+		return {
+			action: "skipped-not-candidate",
+			knowledgePageId: null,
+			message: "ナレッジ化候補ではないため社内ナレッジDBへの作成は行いません。",
+		};
+	}
+	const projectName =
+		text(projectPage.properties?.["案件名"]) ||
+		text(closingPage.properties?.["成約名"]) ||
+		"成約案件";
+	const titleText = `成約ナレッジ｜${projectName}`.slice(0, 90);
+	const relatedDealIds = uniqueStrings([
+		...relationIdsFromProperty(closingPage.properties?.["関連商談"]),
+		...PROJECT_DEAL_RELATION_ALIASES.flatMap((name) =>
+			relationIdsFromProperty(projectPage.properties?.[name])
+		),
+	]);
+	const relatedCompanyIds = uniqueStrings([
+		...relationIdsFromProperty(closingPage.properties?.["関連企業"]),
+		...relationIdsFromProperty(projectPage.properties?.["関連企業"]),
+	]);
+	const existing = await findClosingKnowledgeCandidates(notion, titleText, relatedDealIds);
+	if (existing.length > 0) {
+		await safeUpdateExistingProperties(notion, closingPage, {
+			ナレッジ化候補: { kind: "select", value: "作成済" },
+			ナレッジ化メモ: {
+				kind: "text",
+				value: `既存ナレッジ候補あり: ${existing[0]!.id}`,
+			},
+		});
+		return {
+			action: "already-exists",
+			knowledgePageId: existing[0]!.id,
+			message: "既存の社内ナレッジ候補があるため、重複作成を止めました。",
+		};
+	}
+
+	const created = await notion.pages.create({
+		parent: { data_source_id: KNOWLEDGE_DATA_SOURCE_ID },
+		properties: {
+			ナレッジタイトル: title(titleText),
+		},
+	});
+	const fullKnowledgePage = await notion.pages.retrieve({ page_id: created.id });
+	const summary = [
+		feedback.ナレッジ化メモ ? `候補理由: ${feedback.ナレッジ化メモ}` : "",
+		feedback.勝因 ? `勝因: ${feedback.勝因}` : "",
+		feedback.次に活かす学び ? `学び: ${feedback.次に活かす学び}` : "",
+	].filter(Boolean).join("\n");
+	const source = [
+		`成約報告ID: ${closingPage.id}`,
+		`案件ID: ${projectPage.id}`,
+		`案件名: ${projectName}`,
+		feedback.勝因 ? `勝因: ${feedback.勝因}` : "",
+		feedback.反省点 ? `反省点: ${feedback.反省点}` : "",
+		feedback.次に活かす学び ? `次に活かす学び: ${feedback.次に活かす学び}` : "",
+	].filter(Boolean).join("\n");
+	const patches: Record<string, SafePatch> = {
+		ナレッジ種別: { kind: "select", value: "勝ちパターン" },
+		候補判定: { kind: "select", value: "新規候補" },
+		元データ種別: { kind: "select", value: "商談" },
+		要点: { kind: "text", value: summary },
+		入力テキスト: { kind: "text", value: source },
+		使いどころ: {
+			kind: "text",
+			value: "似た案件の初回商談、条件整理、提案前レビュー、営業ロールプレイ",
+		},
+		根拠メモ: {
+			kind: "text",
+			value:
+				`Worker成約ナレッジ化: ${new Date().toISOString()}\n` +
+				`成約報告ID: ${closingPage.id}\n` +
+				"現行社内ナレッジDBに元成約relationがないため、元商談relationとタイトルで重複を抑止。",
+		},
+		推奨トーク: {
+			kind: "text",
+			value:
+				feedback.次に活かす学び ||
+				"類似案件では、勝因となった判断軸を先に確認し、条件・経済性・リスクを分けて提案する。",
+		},
+		AI候補度: { kind: "select", value: "高" },
+		AI重要度: { kind: "select", value: "高" },
+		確度: { kind: "select", value: "中" },
+		重複疑い: { kind: "checkbox", value: false },
+		生成ステータス: { kind: "select", value: "完了" },
+		運用ステータス: { kind: "select", value: "未着手" },
+	};
+	if (relatedDealIds.length > 0) {
+		patches["元商談"] = { kind: "relation", ids: relatedDealIds.slice(0, 3) };
+	}
+	if (relatedCompanyIds.length > 0) {
+		patches["元企業"] = { kind: "relation", ids: relatedCompanyIds.slice(0, 3) };
+	}
+	await safeUpdateExistingProperties(notion, fullKnowledgePage, patches);
+	await safeUpdateExistingProperties(notion, closingPage, {
+		ナレッジ化候補: { kind: "select", value: "作成済" },
+		ナレッジ化依頼日: { kind: "date", value: todayDateJST() },
+	});
+	return {
+		action: "created",
+		knowledgePageId: created.id,
+		message: "成約報告から社内ナレッジDBへ未承認候補を作成しました。",
+	};
+}
+
+async function findClosingKnowledgeCandidates(
+	notion: NotionClient,
+	titleText: string,
+	relatedDealIds: string[],
+): Promise<Page[]> {
+	const pages = new Map<string, Page>();
+	for (const dealId of relatedDealIds) {
+		try {
+			const response = await notion.dataSources.query({
+				data_source_id: KNOWLEDGE_DATA_SOURCE_ID,
+				page_size: 10,
+				filter: {
+					property: "元商談",
+					relation: { contains: dealId },
+				},
+			});
+			for (const page of (response.results ?? []) as Page[]) pages.set(page.id, page);
+		} catch (error) {
+			console.log("closing knowledge lookup by deal skipped", String(error));
+		}
+	}
+	try {
+		const response = await notion.dataSources.query({
+			data_source_id: KNOWLEDGE_DATA_SOURCE_ID,
+			page_size: 10,
+			filter: {
+				property: "ナレッジタイトル",
+				title: { equals: titleText },
+			},
+		});
+		for (const page of (response.results ?? []) as Page[]) pages.set(page.id, page);
+	} catch (error) {
+		console.log("closing knowledge lookup by title skipped", String(error));
+	}
+	return [...pages.values()];
+}
+
+export {
+	createClosingKnowledgeCandidateFromFeedback as createClosingKnowledgeCandidateFromFeedbackForTest,
+};
 
 // ─── 人見さんと壁打ちをする ──────────────────────────────────────────────────
 
