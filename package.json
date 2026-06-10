@@ -12,6 +12,7 @@
 		"test:closing-report-existing-deal-type-validation": "tsx src/closing-report-existing-deal-type-validation.test.ts",
 		"test:closing-report-existing-links-monthly": "tsx src/closing-report-existing-links-monthly.test.ts",
 		"test:closing-report-gross-validation": "tsx src/closing-report-gross-validation.test.ts",
+		"test:project-closing-status-sync": "tsx src/project-closing-status-sync.test.ts",
 		"test:company-registration-duplicate-guard": "tsx src/company-registration-duplicate-guard.test.ts",
 		"test:closing-report-monthly-performance-autocreate": "tsx src/closing-report-monthly-performance-autocreate.test.ts",
 		"test:closing-report-safety": "tsx src/closing-report-safety.test.ts",

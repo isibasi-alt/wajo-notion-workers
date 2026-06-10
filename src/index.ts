@@ -2399,6 +2399,28 @@ worker.tool("refreshSalesPipelineSignal", {
 	},
 });
 
+worker.tool("syncProjectClosingStatusToPerformance", {
+	title: "WAJO 案件ステータス成約→月次成績同期",
+	description:
+		"案件DBのステータスが「🏆 成約」になったページを確認し、成約報告DB作成と営業マンパフォーマンスDBへの月次反映を既存の成約報告本流で実行します。成約以外のステータスは変更しません。",
+	schema: j.object({
+		projectPageId: j.string().describe("案件管理DBのページID"),
+		triggerUserId: j.string().describe("任意。Notion automation/buttonを実行したユーザーID"),
+	}),
+	outputSchema: j.object({
+		action: j.string(),
+		message: j.string(),
+		closingPageId: j.string().nullable(),
+	}),
+	execute: async ({ projectPageId, triggerUserId }, { notion }) => {
+		return syncProjectClosingStatusToPerformance(
+			projectPageId,
+			notion as unknown as NotionClient,
+			triggerUserId,
+		);
+	},
+});
+
 worker.tool("backfillCustomerContactLogDisplays", {
 	title: "WAJO 顧客接点ログ 表示名整形",
 	description:
@@ -3762,6 +3784,29 @@ worker.webhook("processClosingReportWebhook", {
 			// ボタンを押したユーザーIDを取得（担当営業に自動セット）
 			const triggerUserId = extractTriggerUserIdFromWebhook(body);
 			await processClosingReport(projectPageId, notion as unknown as NotionClient, triggerUserId);
+		}
+	},
+});
+
+worker.webhook("syncProjectClosingStatusWebhook", {
+	title: "WAJO 案件ステータス成約同期Webhook",
+	description:
+		"案件DBのステータスが「🏆 成約」に変わった時の後段Automation用。成約報告DB作成と営業マンパフォーマンスDBへの月次反映を既存の成約報告本流で実行します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const projectPageId = extractProjectPageIdFromWebhook(body);
+			if (!projectPageId) {
+				throw new Error(
+					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
+				);
+			}
+			const triggerUserId = extractTriggerUserIdFromWebhook(body);
+			await syncProjectClosingStatusToPerformance(
+				projectPageId,
+				notion as unknown as NotionClient,
+				triggerUserId,
+			);
 		}
 	},
 });
@@ -19582,6 +19627,28 @@ function closingDealTypeFromProjectDealType(dealType: string): string | null {
 	return null;
 }
 
+async function syncProjectClosingStatusToPerformance(
+	projectPageId: string,
+	notion: NotionClient,
+	triggerUserId?: string,
+): Promise<{ action: string; message: string; closingPageId: string | null }> {
+	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
+	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
+	const status = text(projectPage.properties?.["ステータス"]);
+	if (!isClosedProjectStatus(status)) {
+		return {
+			action: "skipped-not-closed",
+			closingPageId: null,
+			message: `案件ステータスが成約ではないため、成約報告・月次成績反映は行いませんでした: ${projectName} / ${status || "未設定"}`,
+		};
+	}
+	return processClosingReport(projectPageId, notion, triggerUserId);
+}
+
+function isClosedProjectStatus(status: string): boolean {
+	return /成約/.test(status);
+}
+
 function buildClosingSuccessMessage({
 	projectName,
 	grossProfit,
@@ -19824,6 +19891,7 @@ export {
 	linkClosingToMonthlyPerformanceRecord as linkClosingToMonthlyPerformanceRecordForTest,
 	linkClosingToMonthlyPerformanceRecord as linkClosingToPerformanceRecordForTest,
 	processClosingReport as processClosingReportForTest,
+	syncProjectClosingStatusToPerformance as syncProjectClosingStatusToPerformanceForTest,
 };
 
 function monthWindowJST(now: Date): {
