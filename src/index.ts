@@ -505,6 +505,30 @@ function cleanStructuredFact(value: string): string {
 }
 export { cleanStructuredFact as cleanStructuredFactForTest };
 
+// 短い事実列の書き込み: 空欄なら新値(クリーニング済)を入れる。
+// 既存値が旧コードの書き残しで汚れている(出典番号[1][3]/末尾「です。」付き)場合は、
+// 事実の中身は変えずノイズだけ落とした値に修復する。
+// きれいな既存値(手入力含む)には触らない=非破壊マージの精神を守る。
+function addStructuredFactPatch(
+	patches: Record<string, SafePatch>,
+	properties: Record<string, unknown>,
+	propertyName: string,
+	value: string,
+): void {
+	const existing = text(properties[propertyName]).trim();
+	if (existing) {
+		const repaired = cleanStructuredFact(existing);
+		if (repaired && repaired !== existing) {
+			patches[propertyName] = { kind: "text", value: repaired };
+		}
+		return;
+	}
+	const cleaned = cleanStructuredFact(value);
+	if (!cleaned) return;
+	patches[propertyName] = { kind: "text", value: cleaned };
+}
+export { addStructuredFactPatch as addStructuredFactPatchForTest };
+
 function tdbToPatches(tdb: TdbProfile): Record<string, SafePatch> {
 	const patches: Record<string, SafePatch> = {};
 	const addText = (key: string, value: string) => {
@@ -577,12 +601,63 @@ function buildDossierMarkdown(
 export { buildDossierMarkdown as buildDossierMarkdownForTest };
 
 // ドシエMarkdownを本文ブロックへ追記（既存 appendMeetingPrepReportBody と同じ作法）
+// 旧ドシエ区画の特定(純関数・オフラインでテスト可能)。
+// ドシエはページ末尾に追記される運用のため、最初の「…商談ドシエ」heading_1から
+// 末尾までを旧ドシエ(と過去の複製)とみなして置き換え対象にする。
+// ドシエ見出しより前のユーザーコンテンツには触らない。見出しが無ければ何も消さない。
+function dossierBlockIdsToReplace(
+	blocks: Array<{ id: string; type: string; text: string }>,
+): string[] {
+	const start = blocks.findIndex(
+		(b) => b.type === "heading_1" && b.text.trim().endsWith("商談ドシエ"),
+	);
+	if (start === -1) return [];
+	return blocks
+		.slice(start)
+		.map((b) => b.id)
+		.filter((id) => id.length > 0);
+}
+export { dossierBlockIdsToReplace as dossierBlockIdsToReplaceForTest };
+
+// 既存ドシエをアーカイブし、再実行で本文が複製しないようにする。
+// blocks.update が使えない環境では従来通り追記のみ(安全側・クラッシュさせない)。
+async function archiveExistingDossierBlocks(
+	notion: NotionClient,
+	pageId: string,
+): Promise<void> {
+	const list = notion.blocks?.children?.list;
+	const update = notion.blocks?.update;
+	if (!list || !update) return;
+	const summaries: Array<{ id: string; type: string; text: string }> = [];
+	let startCursor: string | null | undefined;
+	for (let i = 0; i < 10; i += 1) {
+		const response = await list({
+			block_id: pageId,
+			page_size: 100,
+			start_cursor: startCursor,
+		});
+		for (const block of response.results) {
+			summaries.push({
+				id: typeof block.id === "string" ? block.id : "",
+				type: typeof block.type === "string" ? block.type : "",
+				text: blockPlainText(block),
+			});
+		}
+		if (!response.has_more || !response.next_cursor) break;
+		startCursor = response.next_cursor;
+	}
+	for (const blockId of dossierBlockIdsToReplace(summaries)) {
+		await update({ block_id: blockId, archived: true });
+	}
+}
+
 async function appendCompanyDossierBody(
 	notion: NotionClient,
 	pageId: string,
 	markdown: string,
 ): Promise<void> {
 	if (!notion.blocks?.children?.append) return;
+	await archiveExistingDossierBlocks(notion, pageId);
 	const lines = markdown.split("\n").filter((line) => line.trim().length > 0);
 	const blocks = lines.map((line) => {
 		if (line.startsWith("## ")) return headingBlock(line.slice(3), 2);
@@ -734,6 +809,7 @@ type NotionClient = {
 			}>;
 			append: (args: Record<string, unknown>) => Promise<unknown>;
 		};
+		update?: (args: Record<string, unknown>) => Promise<unknown>;
 	};
 	comments?: {
 		create: (args: Record<string, unknown>) => Promise<unknown>;
@@ -6521,13 +6597,14 @@ async function processCompanyResearch(
 	patches["企業調査ステータス"] = { kind: "select", value: status };
 	const properties = companyPage.properties ?? {};
 	// 短い事実列はベタ値化(出典番号・末尾「です。」を除去)。経営陣は文章なので除外。
-	addPatchIfBlank(patches, properties, "代表者", cleanStructuredFact(merged.representative));
+	// 既存値が旧コードの汚れ付きならノイズだけ修復する(addStructuredFactPatch)。
+	addStructuredFactPatch(patches, properties, "代表者", merged.representative);
 	addPatchIfBlank(patches, properties, "経営陣", merged.executives);
-	addPatchIfBlank(patches, properties, "業種", cleanStructuredFact(merged.industry));
-	addPatchIfBlank(patches, properties, "資本金", cleanStructuredFact(merged.capital));
-	addPatchIfBlank(patches, properties, "設立年月", cleanStructuredFact(merged.founded));
-	addPatchIfBlank(patches, properties, "売上規模", cleanStructuredFact(merged.revenue));
-	addPatchIfBlank(patches, properties, "従業員規模", cleanStructuredFact(merged.employees));
+	addStructuredFactPatch(patches, properties, "業種", merged.industry);
+	addStructuredFactPatch(patches, properties, "資本金", merged.capital);
+	addStructuredFactPatch(patches, properties, "設立年月", merged.founded);
+	addStructuredFactPatch(patches, properties, "売上規模", merged.revenue);
+	addStructuredFactPatch(patches, properties, "従業員規模", merged.employees);
 	addPatchIfBlank(patches, properties, "役員SNS発信メモ", merged.executiveSns);
 	addPatchIfBlank(patches, properties, "直近ニュース", merged.recentNews);
 	addPatchIfBlank(patches, properties, "再エネ接点シグナル", merged.renewableSignals);
