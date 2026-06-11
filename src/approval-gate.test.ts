@@ -67,6 +67,26 @@ async function main() {
 			true,
 		);
 
+		// monitor: ゲート内で例外が起きても通す(防御try/catch・検品指摘)。
+		// payloadのuserプロパティにthrowするgetterを仕込み、extractTriggerUserIdFromWebhookで爆発させる。
+		const explodingBody = {
+			get user(): never {
+				throw new Error("gate internal boom");
+			},
+		} as unknown as Record<string, unknown>;
+		logs.length = 0;
+		comments.length = 0;
+		assert.equal(await gate("processProjectCancelWebhook", explodingBody, "page-1", notion as never), true);
+		assert.equal(
+			logs.some((l) =>
+				l.includes("approval-gate monitor error(通過させる): handler=processProjectCancelWebhook") &&
+				l.includes("gate internal boom"),
+			),
+			true,
+			`monitor例外ログが出ていない: ${JSON.stringify(logs)}`,
+		);
+		assert.equal(comments.length, 0);
+
 		// monitor: userId欠落でも通す(wouldBlock=true・userId=なし をログ)
 		logs.length = 0;
 		assert.equal(await gate("processClosingDismissWebhook", noUserBody, "page-1", notion as never), true);
@@ -105,6 +125,11 @@ async function main() {
 		// enforce: userId欠落(payloadに無い) → 遮断
 		comments.length = 0;
 		assert.equal(await gate("processProjectLostRejectWebhook", noUserBody, "page-9", notion as never), false);
+		assert.equal(comments.length, 1);
+
+		// enforce: userId空文字({user:{id:""}}) → !userId で非マネージャー扱い=遮断
+		comments.length = 0;
+		assert.equal(await gate("processProjectDismissWebhook", { user: { id: "" } }, "page-9", notion as never), false);
 		assert.equal(comments.length, 1);
 
 		// enforce: 大文字小文字・ハイフン差は正規化して許可(与信ゲートと同じisManagerUser)

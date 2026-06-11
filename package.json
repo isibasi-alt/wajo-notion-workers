@@ -66,7 +66,8 @@
 		"test:credit-check": "tsx src/credit-check.test.ts",
 		"test:shouta-input": "tsx src/shouta-input.test.ts",
 		"test:shouta-inspection": "tsx src/shouta-inspection.test.ts",
-		"test:business-card-image": "tsx src/business-card-image.test.ts"
+		"test:business-card-image": "tsx src/business-card-image.test.ts",
+		"test:approval-gate": "tsx src/approval-gate.test.ts"
 	},
 	"engines": {
 		"node": ">=22.0.0",

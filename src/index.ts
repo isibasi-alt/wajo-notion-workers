@@ -507,19 +507,28 @@ async function checkManagerApprovalGate(
 	pageId: string,
 	notion: NotionClient,
 ): Promise<boolean> {
-	const userId = extractTriggerUserIdFromWebhook(body);
-	const wouldBlock = !isManagerUser(userId);
 	const mode =
 		(process.env.APPROVAL_GATE_MODE ?? "").trim().toLowerCase() === "enforce"
 			? "enforce"
 			: "monitor";
 	if (mode !== "enforce") {
-		console.log(
-			`approval-gate monitor: handler=${handlerName} userId=${userId ?? "なし"} wouldBlock=${wouldBlock}`,
-		);
+		// 防御(検品指摘): monitorは観測専用なので、ゲート自身の不具合(payload解析の例外等)で
+		// 現役の業務ボタン5本を巻き込まないよう経路全体をtry/catchし、例外時もログだけ残して必ず通す。
+		try {
+			const userId = extractTriggerUserIdFromWebhook(body);
+			const wouldBlock = !isManagerUser(userId);
+			console.log(
+				`approval-gate monitor: handler=${handlerName} userId=${userId ?? "なし"} wouldBlock=${wouldBlock}`,
+			);
+		} catch (error) {
+			console.log(
+				`approval-gate monitor error(通過させる): handler=${handlerName} error=${String(error)}`,
+			);
+		}
 		return true;
 	}
-	if (!wouldBlock) return true;
+	const userId = extractTriggerUserIdFromWebhook(body);
+	if (isManagerUser(userId)) return true;
 	// enforce遮断: 黙って失敗させず、対象ページへ既存ハンドラと同じ手段(コメント)で案内を残す。
 	// createPageComment は内部でエラーを握りつぶすため、コメント失敗でも遮断自体は成立する。
 	console.log(
