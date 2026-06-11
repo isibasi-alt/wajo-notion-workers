@@ -493,6 +493,43 @@ function isManagerUser(userId: string | undefined): boolean {
 }
 export { isManagerUser as isManagerUserForTest };
 
+// 承認系webhook(マネージャー用ボタン)の権限ゲート。二段ロケット方式:
+// - APPROVAL_GATE_MODE=enforce のときだけ非マネージャーを遮断する
+// - それ以外(未設定/monitor) は遮断せず通すが、wouldBlock をログに残す
+//   (Notionボタンが実行者IDを実際に送るかは実機未証明のため、まず観測してから enforce に切替)
+// 戻り値 true=本処理を続行してよい / false=遮断済み(案内コメントは残した)。
+const APPROVAL_GATE_BLOCK_MESSAGE =
+	"この操作はマネージャーのみ実行できます。MANAGER_USER_IDS に登録されたユーザーでボタンを押してください。";
+
+async function checkManagerApprovalGate(
+	handlerName: string,
+	body: Record<string, unknown>,
+	pageId: string,
+	notion: NotionClient,
+): Promise<boolean> {
+	const userId = extractTriggerUserIdFromWebhook(body);
+	const wouldBlock = !isManagerUser(userId);
+	const mode =
+		(process.env.APPROVAL_GATE_MODE ?? "").trim().toLowerCase() === "enforce"
+			? "enforce"
+			: "monitor";
+	if (mode !== "enforce") {
+		console.log(
+			`approval-gate monitor: handler=${handlerName} userId=${userId ?? "なし"} wouldBlock=${wouldBlock}`,
+		);
+		return true;
+	}
+	if (!wouldBlock) return true;
+	// enforce遮断: 黙って失敗させず、対象ページへ既存ハンドラと同じ手段(コメント)で案内を残す。
+	// createPageComment は内部でエラーを握りつぶすため、コメント失敗でも遮断自体は成立する。
+	console.log(
+		`approval-gate enforce: handler=${handlerName} userId=${userId ?? "なし"} blocked=true`,
+	);
+	await createPageComment(notion, pageId, `⛔ ${APPROVAL_GATE_BLOCK_MESSAGE}`);
+	return false;
+}
+export { checkManagerApprovalGate as checkManagerApprovalGateForTest };
+
 // 実行中ロック(検品指摘③): TDB取得はPlaywrightで数十秒かかるため、その間の再押し/
 // 重複配送で二重課金しないよう、企業AI受付メモの「TDB取得中 <ISO分>」マーカーを見る。
 // ttl分以内のマーカーがあり、その後に完了/失敗の記録が無ければ「実行中」と判定(純関数)。
@@ -4175,6 +4212,13 @@ worker.webhook("processClosingDismissWebhook", {
 					"closingPageId / pageId / entity.id のいずれからも成約報告ページIDを特定できませんでした。",
 				);
 			}
+			const gateOk = await checkManagerApprovalGate(
+				"processClosingDismissWebhook",
+				body,
+				closingPageId,
+				notion as unknown as NotionClient,
+			);
+			if (!gateOk) continue;
 			await dismissClosingReport(
 				closingPageId,
 				notion as unknown as NotionClient,
@@ -4197,6 +4241,13 @@ worker.webhook("processProjectDismissWebhook", {
 					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
 				);
 			}
+			const gateOk = await checkManagerApprovalGate(
+				"processProjectDismissWebhook",
+				body,
+				projectPageId,
+				notion as unknown as NotionClient,
+			);
+			if (!gateOk) continue;
 			await dismissProject(
 				projectPageId,
 				notion as unknown as NotionClient,
@@ -4219,6 +4270,13 @@ worker.webhook("processProjectCancelWebhook", {
 					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
 				);
 			}
+			const gateOk = await checkManagerApprovalGate(
+				"processProjectCancelWebhook",
+				body,
+				projectPageId,
+				notion as unknown as NotionClient,
+			);
+			if (!gateOk) continue;
 			await cancelProject(
 				projectPageId,
 				notion as unknown as NotionClient,
@@ -4285,6 +4343,13 @@ worker.webhook("processProjectLostApproveWebhook", {
 					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
 				);
 			}
+			const gateOk = await checkManagerApprovalGate(
+				"processProjectLostApproveWebhook",
+				body,
+				projectPageId,
+				notion as unknown as NotionClient,
+			);
+			if (!gateOk) continue;
 			await approveProjectLostRequest(projectPageId, notion as unknown as NotionClient, {
 				memo: extractLostMemoFromWebhook(body) || extractManagerActionReasonFromWebhook(body),
 				triggerUserId: extractTriggerUserIdFromWebhook(body),
@@ -4306,6 +4371,13 @@ worker.webhook("processProjectLostRejectWebhook", {
 					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
 				);
 			}
+			const gateOk = await checkManagerApprovalGate(
+				"processProjectLostRejectWebhook",
+				body,
+				projectPageId,
+				notion as unknown as NotionClient,
+			);
+			if (!gateOk) continue;
 			await rejectProjectLostRequest(projectPageId, notion as unknown as NotionClient, {
 				memo: extractLostMemoFromWebhook(body) || extractManagerActionReasonFromWebhook(body),
 				triggerUserId: extractTriggerUserIdFromWebhook(body),
