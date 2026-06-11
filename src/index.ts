@@ -1,5 +1,7 @@
 import { Worker, WebhookVerificationError } from "@notionhq/workers";
 import { j } from "@notionhq/workers/schema-builder";
+import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { generateInspectedShoutaBrief, type ShoutaInput } from "./shouta-brief";
 import { PDFDocument, StandardFonts, rgb, type PDFImage } from "pdf-lib";
 import {
@@ -972,6 +974,8 @@ type CardInput = {
 	pageId: string;
 	pageData?: Page;
 	dryRun?: boolean;
+	// 画像インテイク経由の明示実行(自分で「処理中」を立てた直後に呼ぶため終端ガードを通す)
+	force?: boolean;
 };
 
 type CardResult = {
@@ -3322,6 +3326,72 @@ worker.tool("processSalesTalkFinalizeByNewsId", {
 	},
 });
 
+worker.webhook("processBusinessCardImageWebhook", {
+	title: "WAJO 名刺画像インテイクWebhook(新ショートカット用)",
+	description:
+		"iPhoneショートカットから名刺画像(base64)＋振り分け＋担当者を受け取り、OCR→名刺ページ作成→振り分け(企業/ブローカー/あとで)→企業連携・A深掘りまで実行します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const imageBase64 = firstString(
+				body.imageBase64,
+				body.image,
+				body["画像"],
+			);
+			if (!imageBase64) {
+				throw new Error(
+					"imageBase64 / image / 画像 のいずれにも名刺画像(base64)がありません。",
+				);
+			}
+			await processBusinessCardImage(
+				{
+					imageBase64,
+					routing: firstString(body.routing, body["振り分け"]),
+					assigneeUserId: firstString(
+						body.assigneeUserId,
+						body["担当者"],
+						extractTriggerUserIdFromWebhook(body),
+					),
+					dryRun: body.dryRun === true,
+				},
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.tool("processBusinessCardImage", {
+	title: "WAJO 名刺画像インテイク",
+	description:
+		"名刺画像(base64)からOCR→名刺ページ作成→振り分け→企業連携・A深掘りまで実行します。新ショートカットの動作テスト用。",
+	schema: j.object({
+		imageBase64: j.string().describe("名刺画像のbase64(データURL可)"),
+		routing: j
+			.string()
+			.describe("撮影時の振り分け: 企業 / 社外顧問 / あとで。空なら企業扱い"),
+		assigneeUserId: j.string().describe("担当営業のNotionユーザーID。空なら未設定"),
+		dryRun: j.boolean().describe("trueならOCRのみ実行し書き込みません"),
+	}),
+	outputSchema: j.object({
+		pageId: j.string().nullable(),
+		action: j.string(),
+		companyId: j.string().nullable(),
+		message: j.string(),
+	}),
+	execute: async ({ imageBase64, routing, assigneeUserId, dryRun }, { notion }) => {
+		return processBusinessCardImage(
+			{
+				imageBase64,
+				routing: routing || undefined,
+				assigneeUserId: assigneeUserId || undefined,
+				dryRun,
+			},
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
 worker.webhook("processBusinessCardWebhook", {
 	title: "WAJO 名刺処理Webhook",
 	description:
@@ -4323,6 +4393,22 @@ async function processBusinessCard(
 		}));
 	const card = readCard(page);
 
+	// 終端/処理中ガード(検品指摘=オートメーション二重発火・再送で企業が二重作成される穴):
+	// 既に処理中・処理済み・対象外の名刺は再処理しない。画像インテイク経由はforceで明示的に通す。
+	const aiState = text(page.properties?.["名刺AI処理状態"]);
+	if (
+		!input.force &&
+		["処理中", "対象外", "既存企業に紐づけ済", "新規企業作成"].includes(aiState)
+	) {
+		return {
+			pageId: input.pageId,
+			action: "skipped",
+			companyId: null,
+			companyName: null,
+			message: `名刺AI処理状態=${aiState} のため再処理をスキップしました(二重処理防止)。`,
+		};
+	}
+
 	if (!shouldProcess(card)) {
 		return {
 			pageId: input.pageId,
@@ -4420,6 +4506,350 @@ async function processBusinessCard(
 		await markCardFailure(notion, card, message);
 		throw error;
 	}
+}
+
+// ── 名刺画像インテイク（入口ルール2026-06-11・新ショートカット用） ──
+// iPhoneショートカットは「撮って送るだけ」: 画像base64＋振り分け＋担当者を1回POST。
+// OCR・JSON検証・リトライ・ページ作成・重複チェック・企業登録・A深掘り連結は全部こちら側
+// （旧ショートカットの不安定の主因=iPhone内のテキスト置換JSON整形・max_tokens不足・キー直書き を解消）。
+
+type BusinessCardOcr = {
+	氏名: string;
+	会社名: string;
+	役職: string;
+	部署: string;
+	電話: string;
+	メール: string;
+	住所: string;
+	メモ: string;
+};
+
+// OCR応答のJSON検証(純関数・壊れた出力に強く)。全項目空は失敗扱い=創作した空殻を通さない。
+function parseBusinessCardOcr(raw: string): BusinessCardOcr | null {
+	const m = String(raw ?? "").match(/\{[\s\S]*\}/);
+	if (!m) return null;
+	try {
+		const j = JSON.parse(m[0]) as Record<string, unknown>;
+		const s = (k: string) => (typeof j[k] === "string" ? (j[k] as string).trim() : "");
+		const ocr: BusinessCardOcr = {
+			氏名: s("氏名"),
+			会社名: s("会社名"),
+			役職: s("役職"),
+			部署: s("部署"),
+			電話: s("電話"),
+			メール: s("メール"),
+			住所: s("住所"),
+			メモ: s("メモ"),
+		};
+		if (!ocr.氏名 && !ocr.会社名 && !ocr.メール && !ocr.電話) return null;
+		return ocr;
+	} catch {
+		return null;
+	}
+}
+export { parseBusinessCardOcr as parseBusinessCardOcrForTest };
+
+// 振り分け(入口で営業が選ぶ)の正規化(純関数)。絵文字つきラベルでも判定できるようにする。
+function normalizeCardRouting(value: string | undefined): "company" | "broker" | "later" {
+	const v = String(value ?? "");
+	if (v.includes("社外顧問") || v.includes("ブローカー") || v.includes("🤝")) return "broker";
+	if (v.includes("あとで") || v.includes("後で") || v.includes("❓")) return "later";
+	return "company"; // 未指定/「企業」は従来通り企業連携へ
+}
+export { normalizeCardRouting as normalizeCardRoutingForTest };
+
+async function callOpenAIBusinessCardOcr(imageDataUrl: string): Promise<BusinessCardOcr> {
+	const apiKey = process.env.OPENAI_API_KEY || process.env.WAJO_OPENAI_API_KEY;
+	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定のため名刺OCRを実行できません");
+	const model = process.env.CARD_OCR_MODEL || "gpt-4o";
+	const ask = async (extra: string): Promise<string> => {
+		const res = await fetch("https://api.openai.com/v1/chat/completions", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				authorization: `Bearer ${apiKey}`,
+			},
+			body: JSON.stringify({
+				model,
+				max_tokens: 1024,
+				response_format: { type: "json_object" },
+				messages: [
+					{
+						role: "system",
+						content:
+							"あなたは名刺OCRです。画像から名刺情報を読み取り、JSONだけを返す。読み取れない項目は空文字。画像に無い情報の創作は禁止。キー: 氏名, 会社名, 役職, 部署, 電話, メール, 住所, メモ(その他の特記事項)。" +
+							extra,
+					},
+					{
+						role: "user",
+						content: [{ type: "image_url", image_url: { url: imageDataUrl } }],
+					},
+				],
+			}),
+		});
+		if (!res.ok) {
+			throw new Error(`OpenAI OCR ${res.status}: ${(await res.text()).slice(0, 160)}`);
+		}
+		const data = (await res.json()) as {
+			choices?: Array<{ message?: { content?: string } }>;
+		};
+		return data.choices?.[0]?.message?.content ?? "";
+	};
+	const first = parseBusinessCardOcr(await ask(""));
+	if (first) return first;
+	// 壊れたJSONは一度だけ言い直させる(旧ショートカットはここで黙って壊れていた)
+	const second = parseBusinessCardOcr(
+		await ask("前回の出力はJSONとして壊れていた。必ず有効なJSONオブジェクトだけを返すこと。"),
+	);
+	if (second) return second;
+	throw new Error("名刺OCRの結果をJSONとして解析できませんでした(2回試行)");
+}
+
+// 名刺JPEGをNotionへアップロード(失敗しても本体処理は止めない=画像なしで続行)
+async function uploadBusinessCardJpeg(
+	notion: NotionClient,
+	jpegBytes: Uint8Array,
+): Promise<string | null> {
+	if (!notion.fileUploads?.create || !notion.fileUploads.send) return null;
+	try {
+		const fileName = `meishi_${todayIsoDateInTokyo()}.jpg`;
+		const created = await notion.fileUploads.create({
+			mode: "single_part",
+			filename: fileName,
+			content_type: "image/jpeg",
+		});
+		const fileUploadId =
+			firstString(
+				(created as Record<string, unknown>).id,
+				readNestedString(created, ["file_upload", "id"]),
+			) ?? "";
+		if (!fileUploadId) return null;
+		await notion.fileUploads.send({
+			file_upload_id: fileUploadId,
+			file: {
+				filename: fileName,
+				data: new Blob([new Uint8Array(jpegBytes)], { type: "image/jpeg" }),
+			},
+		});
+		if (notion.fileUploads.complete) {
+			try {
+				await notion.fileUploads.complete({ file_upload_id: fileUploadId });
+			} catch {
+				// single_partではcomplete不要の場合があるため無視
+			}
+		}
+		return fileUploadId;
+	} catch (error) {
+		console.log("business card image upload skipped", String(error).slice(0, 120));
+		return null;
+	}
+}
+
+type BusinessCardImageInput = {
+	imageBase64: string;
+	routing?: string;
+	assigneeUserId?: string;
+	dryRun: boolean;
+};
+
+type BusinessCardImageResult = {
+	pageId: string | null;
+	action:
+		| "company-routed"
+		| "broker-routed"
+		| "queued-later"
+		| "dry-run"
+		| CardResult["action"];
+	companyId: string | null;
+	message: string;
+};
+
+async function processBusinessCardImage(
+	input: BusinessCardImageInput,
+	notion: NotionClient,
+): Promise<BusinessCardImageResult> {
+	const raw = input.imageBase64.trim();
+	if (!raw) {
+		return { pageId: null, action: "needs-review", companyId: null, message: "画像が空です。" };
+	}
+	const commaIndex = raw.indexOf(",");
+	const base64 = raw.startsWith("data:") && commaIndex >= 0 ? raw.slice(commaIndex + 1) : raw;
+	const dataUrl = raw.startsWith("data:") ? raw : `data:image/jpeg;base64,${base64}`;
+	const routing = normalizeCardRouting(input.routing);
+
+	// サイズ上限(base64で約14MB≒画像10MB)。巨大ペイロードは早期に明示エラー
+	if (base64.length > 14_000_000) {
+		return {
+			pageId: null,
+			action: "needs-review",
+			companyId: null,
+			message: "画像が大きすぎます(10MB上限)。ショートカットのリサイズ設定を確認してください。",
+		};
+	}
+
+	if (input.dryRun) {
+		const ocr = await callOpenAIBusinessCardOcr(dataUrl);
+		return {
+			pageId: null,
+			action: "dry-run",
+			companyId: null,
+			message: `dry-run: OCR成功。氏名=${ocr.氏名 || "不明"} / 会社=${ocr.会社名 || "不明"} / 振り分け=${routing}。書き込みなし。`,
+		};
+	}
+
+	// 1. 再送ガード(検品指摘=iPhone側タイムアウト→再送で同じ名刺が2枚できる):
+	//    画像ハッシュを企業重複チェックキーに刻み、同一画像の再送は既存ページを返す。
+	const imageKey = `imgsha:${createHash("sha256").update(base64).digest("hex").slice(0, 40)}`;
+	const dup = await notion.dataSources.query({
+		data_source_id: BUSINESS_CARD_DATA_SOURCE_ID,
+		page_size: 1,
+		// containsで照合: 処理完了後はキーが「企業キー imgsha:...」の連結になるため(equalsだと取り逃す)
+		filter: { property: "企業重複チェックキー", rich_text: { contains: imageKey } },
+	});
+	const existing = dup.results[0];
+	if (existing) {
+		return {
+			pageId: existing.id,
+			action: "skipped",
+			companyId: null,
+			message: "同じ画像の名刺が登録済みのため、再送をスキップしました(二重登録防止)。",
+		};
+	}
+
+	// 2. 先に画像とページを保存(検品指摘=OCRが失敗すると営業の写真ごと消える沈黙データロスの防止)。
+	//    状態は作成時点で確定させる=名刺管理DBのオートメーション二重発火をガードで弾けるようにする。
+	const fileUploadId = await uploadBusinessCardJpeg(
+		notion,
+		new Uint8Array(Buffer.from(base64, "base64")),
+	);
+	const routingLabel =
+		routing === "broker" ? "🤝社外顧問・ブローカー" : routing === "later" ? "❓あとで決める" : "🏢企業";
+	const initialAiState =
+		routing === "broker" ? "対象外" : routing === "later" ? "要確認" : "処理中";
+	const initialLinkState = routing === "broker" ? "対象外" : "処理中";
+	const properties: Record<string, unknown> = {
+		氏名: title("名刺(読み取り中)"),
+		メモ: richText(`撮影時の振り分け: ${routingLabel}`),
+		登録日: { date: { start: todayIsoDateInTokyo() } },
+		企業重複チェックキー: richText(imageKey),
+		名刺AI処理状態: select(initialAiState),
+		企業連携ステータス: select(initialLinkState),
+	};
+	if (input.assigneeUserId) {
+		properties["担当営業ユーザー"] = {
+			people: [{ object: "user", id: input.assigneeUserId }],
+		};
+	}
+	if (fileUploadId) {
+		properties["名刺画像"] = {
+			files: [
+				{
+					type: "file_upload",
+					file_upload: { id: fileUploadId },
+					name: `meishi_${todayIsoDateInTokyo()}.jpg`,
+				},
+			],
+		};
+	}
+	const page = await notion.pages.create({
+		parent: { data_source_id: BUSINESS_CARD_DATA_SOURCE_ID },
+		properties,
+	});
+
+	// 3. OCR(失敗してもページと画像は残る=要確認で人に渡す)
+	let ocr: BusinessCardOcr;
+	try {
+		ocr = await callOpenAIBusinessCardOcr(dataUrl);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		await safeUpdateExistingProperties(notion, page, {
+			名刺AI処理状態: { kind: "select", value: "要確認" },
+			名刺AI処理メモ: {
+				kind: "text",
+				value: `名刺OCRに失敗(${message.slice(0, 200)})。${fileUploadId ? "画像は保存済み=名刺画像を見て" : "画像の保存にも失敗=もう一度撮影するか"}手入力してください。`,
+			},
+		});
+		return {
+			pageId: page.id,
+			action: "needs-review",
+			companyId: null,
+			message: "OCRに失敗しましたが、ページは保存済みです(要確認キューへ)。",
+		};
+	}
+
+	// 4. OCR結果を反映(不正なメール形式等でNotionが400を返しても「処理中スタック」にしない=再検品指摘)
+	try {
+		const ocrProps: Record<string, unknown> = {
+			氏名: title(ocr.氏名 || ocr.会社名 || "名刺(氏名読み取り不可)"),
+			会社名: richText(ocr.会社名),
+			役職: richText([ocr.部署, ocr.役職].filter(Boolean).join(" ")),
+			住所: richText(ocr.住所),
+			メモ: richText(
+				[`撮影時の振り分け: ${routingLabel}`, ocr.メモ].filter(Boolean).join("\n"),
+			),
+		};
+		if (ocr.電話) ocrProps["電話"] = { phone_number: ocr.電話 };
+		if (ocr.メール) ocrProps["メール"] = { email: ocr.メール };
+		await notion.pages.update({ page_id: page.id, properties: ocrProps });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		await safeUpdateExistingProperties(notion, page, {
+			名刺AI処理状態: { kind: "select", value: "要確認" },
+			名刺AI処理メモ: {
+				kind: "text",
+				value: `OCR結果の書き込みに失敗(${message.slice(0, 200)})。メール/電話の形式不正の可能性。名刺画像を見て手入力してください。`,
+			},
+		});
+		return {
+			pageId: page.id,
+			action: "needs-review",
+			companyId: null,
+			message: "OCR結果の書き込みに失敗しましたが、ページと画像は保存済みです(要確認キューへ)。",
+		};
+	}
+
+	// 5. 振り分け(入口ルール: 人がその場で選んだ結果を尊重し、AIは確実な作業だけやる)
+	if (routing === "broker") {
+		await safeUpdateExistingProperties(notion, page, {
+			名刺AI処理メモ: {
+				kind: "text",
+				value:
+					"撮影時に本人が🤝社外顧問・ブローカーを選択。企業連携はスキップ(ブローカーDBへの自動登録は今後実装)。",
+			},
+		});
+		return {
+			pageId: page.id,
+			action: "broker-routed",
+			companyId: null,
+			message: `名刺を登録し、🤝社外顧問・ブローカー扱いにしました(${ocr.氏名 || ocr.会社名})。`,
+		};
+	}
+	if (routing === "later") {
+		await safeUpdateExistingProperties(notion, page, {
+			名刺AI処理メモ: {
+				kind: "text",
+				value: "撮影時に❓あとで決めるを選択。判定不能キューで振り分け待ち。",
+			},
+		});
+		return {
+			pageId: page.id,
+			action: "queued-later",
+			companyId: null,
+			message: `名刺を登録し、振り分け待ちキューに入れました(${ocr.氏名 || ocr.会社名})。`,
+		};
+	}
+	// 🏢企業: 既存パイプライン(重複チェック→企業登録→A深掘り連結)へ。
+	// 自分で「処理中」を立てた直後なので force で終端ガードを通す。
+	const result = await processBusinessCard(
+		{ pageId: page.id, dryRun: false, force: true },
+		notion,
+	);
+	return {
+		pageId: page.id,
+		action: result.action,
+		companyId: result.companyId,
+		message: `名刺を登録し、企業連携を実行しました: ${result.message}`,
+	};
 }
 
 async function processInquiryEmailIntake(
@@ -20299,11 +20729,17 @@ async function linkCardToCompany(
 	status: "既存企業に紐づけ済" | "新規企業作成",
 	memo: string,
 ): Promise<void> {
+	// 画像インテイクの再送ガード(imgsha:トークン)を消さない(再検品指摘=処理完了後の再送で二重登録)
+	const existingDupKey = text(card.page.properties?.["企業重複チェックキー"]);
+	const imgshaToken =
+		existingDupKey.split(/\s+/).find((t) => t.startsWith("imgsha:")) ?? "";
 	await notion.pages.update({
 		page_id: card.page.id,
 		properties: {
 			関連企業: relation(companyId),
-			企業重複チェックキー: richText(card.key),
+			企業重複チェックキー: richText(
+				[card.key, imgshaToken].filter(Boolean).join(" "),
+			),
 			企業連携ステータス: select(status),
 			企業連携メモ: richText(memo),
 			Webhook引き継ぎステータス: select("引き継ぎ済"),
@@ -20394,6 +20830,8 @@ async function markCardFailure(
 		page_id: card.page.id,
 		properties: {
 			企業連携ステータス: select("連携失敗"),
+			// 「処理中」のまま残すと終端ガードで再処理不能になる(再検品指摘)。要確認=再処理可能な状態へ戻す
+			名刺AI処理状態: select("要確認"),
 			Webhook引き継ぎステータス: select("引き継ぎ失敗"),
 			企業連携メモ: richText(`Worker処理失敗: ${message}`),
 			設計上の弱点: richText(`Worker処理失敗: ${message}`),
