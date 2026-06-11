@@ -19,6 +19,9 @@ export type LandTreasureInput = {
 };
 
 export type LandTreasureGrade = "S" | "A" | "B" | "C";
+export type LandFarmlandProspectRank = "高" | "中" | "低";
+export type LandFarmlandConfidence = "高" | "中" | "低";
+export type LandFarmlandFormalStatus = "未照会" | "照会準備中" | "照会済み" | "回答済み";
 
 export type LandTreasureSubstationCandidate = {
 	name: string;
@@ -29,6 +32,16 @@ export type LandTreasureSubstationCandidate = {
 	latitude: number;
 	longitude: number;
 	confirmationUrl: string;
+};
+
+export type LandFarmlandPreAssessment = {
+	score: number;
+	rank: LandFarmlandProspectRank;
+	confidence: LandFarmlandConfidence;
+	formalStatus: LandFarmlandFormalStatus;
+	actionBranch: string;
+	salesInputGuide: string;
+	evidence: string[];
 };
 
 export type LandTreasureEvaluation = {
@@ -55,6 +68,8 @@ export type LandTreasureEvaluation = {
 	customerValue: string;
 	blockers: string[];
 	sabcReason: string;
+	farmlandPreAssessment: LandFarmlandPreAssessment;
+	farmlandPreAssessmentText: string;
 	landEvaluation: string;
 	powerEvaluation: string;
 	roadEvaluation: string;
@@ -78,6 +93,8 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 	const roadWidthM = roadWidthFromText(input.road);
 	const gridStatus = nearest?.substation.grid || "";
 	const blockers = identifyBirdEyeBlockers(input, roadWidthM, distanceKm);
+	const farmlandPreAssessment = evaluateFarmlandPreAssessment(input, blockers, roadWidthM);
+	const farmlandPreAssessmentText = formatFarmlandPreAssessment(farmlandPreAssessment);
 	const physicalAiScore = scorePhysicalAi({
 		area,
 		distanceKm,
@@ -174,6 +191,7 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 		substationLine,
 		substationCandidatesLine,
 		roadLine,
+		farmlandPreAssessmentText.replace(/\n/g, " / "),
 		blockerLine,
 		customerValue,
 	].join(" / ");
@@ -202,9 +220,13 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 		customerValue,
 		blockers,
 		sabcReason,
+		farmlandPreAssessment,
+		farmlandPreAssessmentText,
 		landEvaluation: [
 			`${input.name}は、${area > 0 ? `${Math.round(area).toLocaleString("ja-JP")}坪` : "面積未確認"}・所在地「${input.address || "未確認"}」を起点にした土地評価です。`,
 			`2AI評価として、物理・系統AIは${physicalAiScore}点、営業・案件化AIは${salesAiScore}点。SABC統合では${overallGrade} / ${score}点です。`,
+			farmlandPreAssessmentText,
+			substationLine,
 			`鳥の目で見ると、${customerValue}`,
 			substationCandidatesLine,
 			blockerLine,
@@ -240,12 +262,179 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 					: "推測ですが、低圧集約、売却候補、近隣案件との組み合わせで価値を確認します。",
 		nextAction:
 			overallGrade === "S"
-				? "最寄り変電所、接道、農転/登記、近隣住宅距離を人間が確認し、案件化・仕入れ打診へ進めてください。"
+				? `${farmlandPreAssessment.salesInputGuide}\n最寄り変電所、接道、農転/登記、近隣住宅距離を人間が確認し、案件化・仕入れ打診へ進めてください。`
 				: blockers.length > 0
-					? `変電所近接だけで進めず、先に ${blockers.join(" / ")} を解消または確認してください。`
-					: "不足条件を整理し、接道・用途地域・農転/登記・需要地距離を確認してから再評価してください。",
+					? `${farmlandPreAssessment.salesInputGuide}\n変電所近接だけで進めず、先に ${blockers.join(" / ")} を解消または確認してください。`
+					: `${farmlandPreAssessment.salesInputGuide}\n不足条件を整理し、接道・用途地域・農転/登記・需要地距離を確認してから再評価してください。`,
 		reviewMemo: sabcReason,
 	};
+}
+
+function evaluateFarmlandPreAssessment(
+	input: LandTreasureInput,
+	blockers: string[],
+	roadWidthM: number | null,
+): LandFarmlandPreAssessment {
+	const combined = [
+		input.farmland,
+		input.farmlandType,
+		input.landUse,
+		input.road,
+		input.registry,
+	].join(" ");
+	const evidence: string[] = [];
+	let score = 50;
+
+	if (/不可|不許可|転用困難/.test(input.farmland)) {
+		score = 10;
+		evidence.push("農地転用可否に不可・不許可系の入力あり");
+	} else if (/不要|許可済|回答済|確認済|済|可能|可/.test(input.farmland)) {
+		score += 30;
+		evidence.push(`農地転用可否=${input.farmland}`);
+	} else if (/未確認|未照会|不明/.test(input.farmland)) {
+		score -= 10;
+		evidence.push("農地転用可否は未確認");
+	}
+
+	if (/農業振興地域外|農振外/.test(combined)) {
+		score += 15;
+		evidence.push("農業振興地域外の可能性");
+	}
+	if (/農用地区域内/.test(combined)) {
+		score -= 30;
+		evidence.push("農用地区域内の可能性");
+	}
+	if (/第1種農地|第一種農地|甲種農地/.test(combined)) {
+		score -= 30;
+		evidence.push("第1種農地または甲種農地の可能性");
+	}
+	if (/田|畑/.test(input.farmlandType)) {
+		score -= 5;
+		evidence.push(`地目=${input.farmlandType}`);
+	}
+	if (/市街化区域|用途地域|準工業|工業|商業|住居/.test(input.landUse)) {
+		score += 15;
+		evidence.push(`都市計画・用途地域=${input.landUse}`);
+	}
+	if (/市街化調整区域/.test(input.landUse)) {
+		score -= 10;
+		evidence.push("市街化調整区域の可能性");
+	}
+	if (/未接道|進入不可|不可|なし|無し/.test(input.road) || (roadWidthM !== null && roadWidthM < 4)) {
+		score -= 20;
+		evidence.push("接道・搬入に阻害要因あり");
+	} else if (roadWidthM !== null && roadWidthM >= 4) {
+		score += 5;
+		evidence.push(`接道幅員候補=${roadWidthM}m`);
+	} else if (!input.road) {
+		score -= 5;
+		evidence.push("接道情報なし");
+	}
+	if (/確認済|登記済|所有者確認済/.test(input.registry)) {
+		score += 5;
+		evidence.push("登記確認済み");
+	} else if (/所有者不明|権利未整理/.test(input.registry)) {
+		score -= 20;
+		evidence.push("所有者・権利に阻害要因あり");
+	} else if (!input.registry || /未確認/.test(input.registry)) {
+		score -= 10;
+		evidence.push("登記・権利確認が未完了");
+	}
+	if (blockers.some((item) => /農地転用に阻害/.test(item))) {
+		score = Math.min(score, 25);
+	}
+	if (blockers.some((item) => /農地・農転確認が未入力/.test(item))) {
+		score = Math.min(score, 55);
+		evidence.push("農地・農転確認が未入力");
+	}
+
+	const clampedScore = clamp(Math.round(score), 0, 100);
+	const rank: LandFarmlandProspectRank = clampedScore >= 75 ? "高" : clampedScore >= 50 ? "中" : "低";
+	const formalStatus = inferFarmlandFormalStatus(input.farmland, combined);
+	const confidence = inferFarmlandConfidence(input, formalStatus);
+	const actionBranch =
+		rank === "高"
+			? "案件継続・追加資料取得・農業委員会照会資料準備"
+			: rank === "中"
+				? "追加資料取得・2営業日以内に再判定"
+				: "停止・責任者判断";
+	const salesInputGuide = buildFarmlandSalesInputGuide(rank, formalStatus);
+
+	return {
+		score: clampedScore,
+		rank,
+		confidence,
+		formalStatus,
+		actionBranch,
+		salesInputGuide,
+		evidence: evidence.length > 0 ? evidence : ["農転判定に使える入力が不足"],
+	};
+}
+
+function inferFarmlandFormalStatus(
+	farmland: string,
+	combined: string,
+): LandFarmlandFormalStatus {
+	if (/回答済|許可済|不許可|不可|不要|確認済/.test(farmland)) return "回答済み";
+	if (/照会済|相談済|確認中/.test(combined)) return "照会済み";
+	if (combined.trim()) return "照会準備中";
+	return "未照会";
+}
+
+function inferFarmlandConfidence(
+	input: LandTreasureInput,
+	formalStatus: LandFarmlandFormalStatus,
+): LandFarmlandConfidence {
+	if (formalStatus === "回答済み") return "高";
+	const filled = [
+		input.farmland,
+		input.farmlandType,
+		input.landUse,
+		input.road,
+		input.registry,
+		input.latitude !== null && input.longitude !== null ? "座標あり" : "",
+	].filter((value) => String(value).trim()).length;
+	if (filled >= 5) return "高";
+	if (filled >= 3) return "中";
+	return "低";
+}
+
+function buildFarmlandSalesInputGuide(
+	rank: LandFarmlandProspectRank,
+	formalStatus: LandFarmlandFormalStatus,
+): string {
+	const deadline =
+		rank === "高"
+			? "本日中"
+			: rank === "中"
+				? "2営業日以内"
+				: "本日中に責任者判断";
+	const nextAction =
+		rank === "高"
+			? "所有者、接道、系統、価格調査を並行し、農業委員会への照会資料も準備する。"
+			: rank === "中"
+				? "不足資料を入力し、正式回答を待たずに再判定する。"
+				: "現地訪問や追加費用は原則停止し、例外理由がある場合だけ責任者判断へ送る。";
+	return [
+		"営業担当への入力案内:",
+		"担当: 営業担当",
+		"調べるもの: 地番 / 地目 / 農振法区分 / 農地区分 / 都市計画法区分 / 農業委員会相談状況 / 回答予定日",
+		"入力場所: 土地DB",
+		`期限: ${deadline}`,
+		`正式確認状態: ${formalStatus}`,
+		`次アクション: ${nextAction}`,
+		"再判定時期: 入力直後、または農業委員会への照会状況更新時",
+	].join("\n");
+}
+
+function formatFarmlandPreAssessment(assessment: LandFarmlandPreAssessment): string {
+	return [
+		"農転事前判定:",
+		`見込みスコア: ${assessment.score} / 見込みランク: ${assessment.rank} / 判定信頼度: ${assessment.confidence} / 正式確認状態: ${assessment.formalStatus}`,
+		`行動分岐: ${assessment.actionBranch}`,
+		`判定根拠: ${assessment.evidence.slice(0, 4).join(" / ")}`,
+		"営業担当への入力案内: 入力場所: 土地DB / 地番・地目・農振法区分・農業委員会相談状況を入力。正式許可とは表示しない。",
+	].join("\n");
 }
 
 function findNearestSubstations(

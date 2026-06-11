@@ -1585,6 +1585,7 @@ type LandEvaluation = {
 	physicalAiScore?: number;
 	salesAiScore?: number;
 	sabcReason?: string;
+	farmlandPreAssessmentText?: string;
 };
 
 type DealSecondReviewInput = {
@@ -7869,7 +7870,7 @@ function buildMeetingQuickStartChildren(
 }
 
 function blockRichText(content: string): Array<Record<string, unknown>> {
-	return [{ type: "text", text: { content: content.slice(0, 1800) } }];
+	return richTextItems(content);
 }
 
 function buildMeetingQuickStartTitle(
@@ -18112,6 +18113,7 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 				physicalAiScore: treasure.physicalAiScore,
 				salesAiScore: treasure.salesAiScore,
 				sabcReason: treasure.sabcReason,
+				farmlandPreAssessmentText: treasure.farmlandPreAssessmentText,
 			};
 		}
 		return {
@@ -18142,6 +18144,7 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			physicalAiScore: treasure.physicalAiScore,
 			salesAiScore: treasure.salesAiScore,
 			sabcReason: treasure.sabcReason,
+			farmlandPreAssessmentText: treasure.farmlandPreAssessmentText,
 		};
 	}
 
@@ -18198,6 +18201,7 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 					? "変電所距離、系統空き、接道、農転/登記、近隣住宅距離を確認し、案件化可否を人間が判断してください。"
 					: "不足条件を整理し、接道・用途地域・農転/登記・需要地距離を確認してから再評価してください。",
 		reviewMemo,
+		farmlandPreAssessmentText: "",
 	};
 }
 
@@ -18256,6 +18260,8 @@ function buildLandScoutReport(input: {
 	const uncheckedStatus = "農地・登記・接道・系統空きは未確認。";
 	const todayActionSummary =
 		"今日やることは、地番確認、農業委員会確認、道路台帳確認、空き容量マップ確認、所有者への売却意向確認。";
+	const farmlandPreAssessmentText = treasure.farmlandPreAssessmentText || "";
+	const farmlandSalesInputGuide = treasure.farmlandPreAssessment?.salesInputGuide || "";
 	const rejectionReasons = [
 		"地番・登記・所有者が確認できない",
 		"農業委員会で農地区分または転用見込みを確認できない",
@@ -18265,6 +18271,7 @@ function buildLandScoutReport(input: {
 	];
 	const nextAction = [
 		todayActionSummary,
+		farmlandSalesInputGuide,
 		"",
 		"今日やること:",
 		"1. 地番を確認する",
@@ -18299,6 +18306,7 @@ function buildLandScoutReport(input: {
 		"",
 		"詰まり:",
 		"- 安全判定: 変電所だけでは案件化・S評価にしない。",
+		farmlandPreAssessmentText,
 		`- 本評価不可: ${investigationGaps.join(" / ")} が未確認です。`,
 		`- 未確認詳細: ${treasure.blockers.join(" / ")}`,
 		"- 農転確認済み、登記確認済み、接道成立、系統空きあり、価格確定とは言いません。",
@@ -18313,6 +18321,7 @@ function buildLandScoutReport(input: {
 		`本評価不可。公的確認または人間確認が必要: ${investigationGaps.join(" / ")}`,
 		`調査指示: 地番、登記、農地・農転、道路台帳、系統空き、所有者意向を確認してから本評価へ進める。`,
 		`見送り理由候補: ${rejectionReasons.join(" / ")}`,
+		farmlandPreAssessmentText ? `農転事前判定: ${farmlandPreAssessmentText.replace(/\n/g, " / ")}` : "",
 		confirmationGuide,
 		quickEvidence ? `取得済み要約: ${quickEvidence}` : "",
 		mapEvidence ? `取得済み参考情報: ${mapEvidence.replace(/\n/g, " / ")}` : "",
@@ -18527,6 +18536,9 @@ async function createLandEvaluationLearningLog(
 				.join(" / ")}`
 			: "",
 		evaluation.sabcReason ? `SABC/2AI根拠: ${evaluation.sabcReason}` : "",
+		evaluation.farmlandPreAssessmentText
+			? `農転事前判定: ${evaluation.farmlandPreAssessmentText}`
+			: "",
 		`AIアクション: ${evaluation.actionBucket}`,
 		`案件化状態予測: ${evaluation.caseStatus}`,
 		evaluation.landEvaluation,
@@ -21658,7 +21670,17 @@ function title(value: string): Record<string, unknown> {
 }
 
 function richText(value: string): Record<string, unknown> {
-	return { rich_text: [{ text: { content: value.slice(0, 1800) } }] };
+	return { rich_text: richTextItems(value) };
+}
+
+function richTextItems(value: string): Array<Record<string, unknown>> {
+	const chunks: string[] = [];
+	const chunkSize = 1800;
+	for (let index = 0; index < value.length; index += chunkSize) {
+		chunks.push(value.slice(index, index + chunkSize));
+	}
+	if (chunks.length === 0) chunks.push("");
+	return chunks.map((content) => ({ type: "text", text: { content } }));
 }
 
 function select(name: string): Record<string, unknown> {

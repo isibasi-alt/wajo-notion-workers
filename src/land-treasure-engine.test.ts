@@ -195,6 +195,10 @@ async function main() {
 	assert.match(memo, /接道/);
 	assert.match(memo, /顧客に提示できる価値/);
 	assert.match(memo, /鳥の目/);
+	assert.match(memo, /農転事前判定/);
+	assert.match(memo, /見込みランク: 高/);
+	assert.match(memo, /正式確認状態: 回答済み/);
+	assert.match(memo, /営業担当への入力案内/);
 
 	assert.equal(createdPages.length, 1);
 	const learningLog = createdPages[0]!.properties as Record<string, unknown>;
@@ -213,6 +217,9 @@ async function main() {
 	assert.match(blockedMemo, /未接道/);
 	assert.match(blockedMemo, /農転|農地/);
 	assert.match(blockedMemo, /近隣住宅/);
+	assert.match(blockedMemo, /農転事前判定/);
+	assert.match(blockedMemo, /見込みランク: 低/);
+	assert.match(blockedMemo, /停止・責任者判断/);
 
 	process.env.GOOGLE_MAPS_API_KEY = "test-google-key";
 	process.env.WAGRI_ACCESS_TOKEN = "test-wagri-token";
@@ -615,6 +622,12 @@ async function main() {
 	assert.match(addressOnlyMemo, /12\.5MW/);
 	assert.match(addressOnlyMemo, /接続可否確定ではない/);
 	assert.match(addressOnlyMemo, /接続検討/);
+	assert.match(addressOnlyMemo, /農転事前判定/);
+	assert.match(addressOnlyMemo, /見込みスコア/);
+	assert.match(addressOnlyMemo, /正式確認状態: 照会準備中/);
+	assert.match(addressOnlyMemo, /営業担当への入力案内/);
+	assert.match(addressOnlyMemo, /入力場所: 土地DB/);
+	assert.match(addressOnlyMemo, /再判定時期/);
 	assert.match(addressOnlyMemo, /接道幅員|大型車進入/);
 	assert.doesNotMatch(addressOnlyMemo, /農転確認が未入力/);
 	assert.match(addressOnlyMemo, /登記確認が未入力/);
@@ -671,6 +684,10 @@ async function main() {
 	assert.match(missingOfficialMemo, /eMAFF農地ナビ/);
 	assert.match(missingOfficialMemo, /登記情報提供サービス/);
 	assert.match(missingOfficialMemo, /OCCTO|電力広域的運営推進機関/);
+	assert.match(missingOfficialMemo, /農転事前判定/);
+	assert.match(missingOfficialMemo, /見込みランク: 中|見込みランク: 低/);
+	assert.match(missingOfficialMemo, /営業担当への入力案内/);
+	assert.match(missingOfficialMemo, /担当: 営業担当/);
 	assert.doesNotMatch(missingOfficialMemo, /農転不可|危険|1億|判定が全部出た/);
 
 	globalThis.fetch = originalFetch;
