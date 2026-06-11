@@ -627,6 +627,16 @@ async function main() {
 	assert.match(addressOnlyMemo, /正式確認状態: 照会準備中/);
 	assert.match(addressOnlyMemo, /営業担当への入力案内/);
 	assert.match(addressOnlyMemo, /入力場所: 土地DB/);
+	assert.match(addressOnlyMemo, /土地DB「所在地」/);
+	assert.match(addressOnlyMemo, /土地DB「面積（坪）」/);
+	assert.match(addressOnlyMemo, /土地DB「農地種別」/);
+	assert.match(addressOnlyMemo, /農振法区分=/);
+	assert.match(addressOnlyMemo, /都市計画法区分=/);
+	assert.match(addressOnlyMemo, /土地DB「農地転用可否」/);
+	assert.match(addressOnlyMemo, /土地DB「接道状況」/);
+	assert.match(addressOnlyMemo, /土地DB「登記確認状況」/);
+	assert.match(addressOnlyMemo, /入力例: 土地DB「接道状況」=/);
+	assert.match(addressOnlyMemo, /迷ったら「未確認」/);
 	assert.match(addressOnlyMemo, /再判定時期/);
 	assert.match(addressOnlyMemo, /接道幅員|大型車進入/);
 	assert.doesNotMatch(addressOnlyMemo, /農転確認が未入力/);
@@ -688,6 +698,10 @@ async function main() {
 	assert.match(missingOfficialMemo, /見込みランク: 中|見込みランク: 低/);
 	assert.match(missingOfficialMemo, /営業担当への入力案内/);
 	assert.match(missingOfficialMemo, /担当: 営業担当/);
+	assert.match(missingOfficialMemo, /土地DB「農地種別」/);
+	assert.match(missingOfficialMemo, /土地DB「農地転用可否」/);
+	assert.match(missingOfficialMemo, /土地DB「接道状況」/);
+	assert.match(missingOfficialMemo, /正式許可ではなく「未確認」または相談状況/);
 	assert.doesNotMatch(missingOfficialMemo, /農転不可|危険|1億|判定が全部出た/);
 
 	globalThis.fetch = originalFetch;
