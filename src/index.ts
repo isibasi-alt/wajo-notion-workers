@@ -4645,6 +4645,76 @@ async function uploadBusinessCardJpeg(
 	}
 }
 
+// ── 人=案件の種ドクトリン(2026-06-11 大ちゃん確定) ──
+// 和上の商品(発電所・土地)は物より先に「人の頭の中」にある=物の具体化を待つと遅い。
+// よって🤝で振り分けられた人は死蔵せず、社外顧問DBに「関係構築中」で自動登録する。
+// 社外顧問DBは案件DBの人物タブに表示される仕掛け=営業の働きかけ対象として生き続ける。
+// 案件は1対1(ブローカーXから案件A/B/C)で、案件化の瞬間に「紹介案件」リレーションで紐づく(既存UI)。
+const ADVISOR_DATA_SOURCE_ID =
+	process.env.ADVISOR_DATA_SOURCE_ID ?? "de575c80-5e25-41a5-a27d-b1b3d84a0cbd";
+
+// 社外顧問ページのプロパティを名刺OCRから組む(純関数)
+function buildAdvisorProperties(
+	ocr: BusinessCardOcr,
+	assigneeUserId: string | undefined,
+	cardPageUrl: string,
+	today: string,
+): Record<string, unknown> {
+	const memoLines = [
+		`名刺パシャ経由で登録(${today})。`,
+		ocr.会社名 ? `所属(名刺より): ${ocr.会社名}` : "",
+		ocr.部署 || ocr.役職
+			? `役職: ${[ocr.部署, ocr.役職].filter(Boolean).join(" ")}`
+			: "",
+		cardPageUrl ? `名刺: ${cardPageUrl}` : "",
+	].filter(Boolean);
+	const properties: Record<string, unknown> = {
+		顧問名: title(ocr.氏名 || ocr.会社名 || "名刺(氏名読み取り不可)"),
+		ステータス: select("関係構築中"),
+		信頼度: select("要確認"),
+		初回接点日: { date: { start: today } },
+		紹介実績メモ: richText(memoLines.join("\n")),
+	};
+	if (ocr.電話) properties["電話番号"] = { phone_number: ocr.電話 };
+	if (ocr.メール) properties["連絡先メール"] = { email: ocr.メール };
+	if (assigneeUserId) {
+		properties["担当営業ユーザー"] = {
+			people: [{ object: "user", id: assigneeUserId }],
+		};
+	}
+	return properties;
+}
+export { buildAdvisorProperties as buildAdvisorPropertiesForTest };
+
+// 同名の社外顧問が既にいれば再登録しない(名寄せは同名完全一致のみ=安全側)
+async function createAdvisorFromCard(
+	notion: NotionClient,
+	ocr: BusinessCardOcr,
+	assigneeUserId: string | undefined,
+	cardPageUrl: string,
+): Promise<{ page: Page; created: boolean }> {
+	const name = ocr.氏名 || ocr.会社名 || "";
+	if (name) {
+		const dup = await notion.dataSources.query({
+			data_source_id: ADVISOR_DATA_SOURCE_ID,
+			page_size: 1,
+			filter: { property: "顧問名", title: { equals: name } },
+		});
+		const existing = dup.results[0];
+		if (existing) return { page: existing, created: false };
+	}
+	const page = await notion.pages.create({
+		parent: { data_source_id: ADVISOR_DATA_SOURCE_ID },
+		properties: buildAdvisorProperties(
+			ocr,
+			assigneeUserId,
+			cardPageUrl,
+			todayIsoDateInTokyo(),
+		),
+	});
+	return { page, created: true };
+}
+
 type BusinessCardImageInput = {
 	imageBase64: string;
 	routing?: string;
@@ -4810,18 +4880,32 @@ async function processBusinessCardImage(
 
 	// 5. 振り分け(入口ルール: 人がその場で選んだ結果を尊重し、AIは確実な作業だけやる)
 	if (routing === "broker") {
+		// 人=案件の種: 社外顧問DBに「関係構築中」で自動登録し、案件DBの人物タブに出す(死蔵させない)
+		let advisorNote: string;
+		try {
+			const advisor = await createAdvisorFromCard(
+				notion,
+				ocr,
+				input.assigneeUserId,
+				page.url ?? "",
+			);
+			advisorNote = advisor.created
+				? `社外顧問DBに自動登録(関係構築中・案件の種): ${advisor.page.url ?? advisor.page.id}`
+				: `同名の社外顧問が既に存在するため再登録せず: ${advisor.page.url ?? advisor.page.id}`;
+		} catch (error) {
+			advisorNote = `社外顧問DBへの自動登録に失敗(${String(error).slice(0, 120)})。手動で登録してください。`;
+		}
 		await safeUpdateExistingProperties(notion, page, {
 			名刺AI処理メモ: {
 				kind: "text",
-				value:
-					"撮影時に本人が🤝社外顧問・ブローカーを選択。企業連携はスキップ(ブローカーDBへの自動登録は今後実装)。",
+				value: `撮影時に本人が🤝社外顧問・ブローカーを選択。${advisorNote}`,
 			},
 		});
 		return {
 			pageId: page.id,
 			action: "broker-routed",
 			companyId: null,
-			message: `名刺を登録し、🤝社外顧問・ブローカー扱いにしました(${ocr.氏名 || ocr.会社名})。`,
+			message: `名刺を登録し、社外顧問DBへ振り分けました(${ocr.氏名 || ocr.会社名})。`,
 		};
 	}
 	if (routing === "later") {
