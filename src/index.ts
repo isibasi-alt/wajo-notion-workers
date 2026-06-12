@@ -4423,26 +4423,9 @@ worker.webhook("notifySalesTeamWebhook", {
 	},
 });
 
-worker.webhook("processMonthlyQuotaLinkWebhook", {
-	title: "WAJO ノルマ申請書 提出時 成約自動紐付けWebhook（退役）",
-	description:
-		"退役済み。ノルマ申請DBは目標申請の原本とし、成約実績の月次反映は成約報告Workerが営業マンパフォーマンスDBへ行います。",
-	execute: async (events) => {
-		for (const event of events) {
-			const body = event.body as Record<string, unknown>;
-			const quotaPageId = extractQuotaPageIdFromWebhook(body);
-			if (!quotaPageId) {
-				throw new Error(
-					"quotaPageId / pageId / entity.id のいずれからもノルマ申請書ページIDを特定できませんでした。",
-				);
-			}
-			console.log(
-				`processMonthlyQuotaLinkWebhook is retired. ` +
-				`quotaPageId=${quotaPageId}. 成約実績は営業マンパフォーマンスDBの月次成績へ反映します。`,
-			);
-		}
-	},
-});
+// processMonthlyQuotaLinkWebhook（退役済み）は 2026-06-12 に登録ごと削除した。
+// ノルマ申請DBは目標申請の原本とし、成約実績の月次反映は成約報告Workerが
+// 営業マンパフォーマンスDBへ行う（WAJO_WORKER_RUNBOOK.md 参照）。
 
 worker.webhook("processProjectWallHitWebhook", {
 	title: "WAJO 案件壁打ちWebhook",
@@ -22046,21 +22029,6 @@ interface ClosingFeedbackAIResponse {
 	次に活かす学び: string;
 	ナレッジ化候補: "候補" | "不要";
 	ナレッジ化メモ: string;
-}
-
-/** ノルマ申請書DBのページIDをWebhookボディから抽出 */
-function extractQuotaPageIdFromWebhook(body: Record<string, unknown>): string | undefined {
-	return firstString(
-		body.quotaPageId,
-		body.quota_page_id,
-		body.pageId,
-		body.page_id,
-		body.id,
-		pageIdFromUrl(bodyString(body.url)),
-		readNestedString(body, ["page", "id"]),
-		readNestedString(body, ["source", "page_id"]),
-		readNestedString(body, ["entity", "id"]),
-	);
 }
 
 /** 案件DBのページIDをWebhookボディから抽出 */
