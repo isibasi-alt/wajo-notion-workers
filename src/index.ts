@@ -539,6 +539,41 @@ async function checkManagerApprovalGate(
 }
 export { checkManagerApprovalGate as checkManagerApprovalGateForTest };
 
+// ─── 正本スタンプ(チェックリスト1-2/1-3) ────────────────────────────────────
+// 「承認/成約が正規ルート(Worker)を通った」事実を、Workerだけが書く1列に集約して残す。
+// 列名は環境変数で差し替え可能。**列はまだNotionに存在しない(新列作成は大ちゃん承認待ち)**。
+// 書き込みは safeUpdateExistingProperties 経由なので、列が無い間は何も書かれない=安全な
+// スケルトン。大ちゃんがNotion UIでtext列を作った瞬間から自動で記録が始まる。
+const CLOSING_APPROVAL_STAMP_PROPERTY =
+	process.env.CLOSING_APPROVAL_STAMP_PROPERTY ?? "承認スタンプ🤖";
+
+// スタンプ書式: `承認者ID|ISO日時|操作|コミット` の1行。改ざん検知formulaは
+// 「生select=承認済/成約 なのにこの列が空」を🚨にする(列そのものの偽造は権限ロックが本丸)。
+function buildApprovalStamp(
+	operation: string,
+	userId: string | undefined,
+	nowIso = new Date().toISOString(),
+): string {
+	const rev =
+		(process.env.WORKER_GIT_COMMIT ?? "").trim().slice(0, 12) || "rev不明";
+	return `${userId ?? "ユーザー不明"}|${nowIso}|${operation}|${rev}`;
+}
+export { buildApprovalStamp as buildApprovalStampForTest };
+
+// 成約報告の状態読み取り。旧「承認ステータス」selectはNotion側で
+// 「退役｜承認ステータス（使用禁止）」へリネーム済み(2026-06-11棚卸しで実機確認済みの実機名)。
+// 旧名しか見ないと取り消し/差戻し済みの判定が全て素通りするため、両方の名前を読む。
+// ※読み取り専用フォールバック。退役列への書き込みは行わない。
+function readClosingApprovalStatusText(
+	properties: Record<string, unknown> | undefined,
+): string {
+	return (
+		text(properties?.["承認ステータス"]) ||
+		text(properties?.["退役｜承認ステータス（使用禁止）"])
+	);
+}
+export { readClosingApprovalStatusText as readClosingApprovalStatusTextForTest };
+
 // 実行中ロック(検品指摘③): TDB取得はPlaywrightで数十秒かかるため、その間の再押し/
 // 重複配送で二重課金しないよう、企業AI受付メモの「TDB取得中 <ISO分>」マーカーを見る。
 // ttl分以内のマーカーがあり、その後に完了/失敗の記録が無ければ「実行中」と判定(純関数)。
@@ -4199,10 +4234,19 @@ worker.webhook("processClosingCancelWebhook", {
 					"closingPageId / pageId / entity.id のいずれからも成約報告ページIDを特定できませんでした。",
 				);
 			}
+			// マネージャー操作なのにゲート無しだった穴を塞ぐ(1-1の5本と同型・既定monitorで挙動不変)
+			const gateOk = await checkManagerApprovalGate(
+				"processClosingCancelWebhook",
+				body,
+				closingPageId,
+				notion as unknown as NotionClient,
+			);
+			if (!gateOk) continue;
 			await cancelClosingReport(
 				closingPageId,
 				notion as unknown as NotionClient,
 				extractManagerActionReasonFromWebhook(body),
+				extractTriggerUserIdFromWebhook(body),
 			);
 		}
 	},
@@ -4232,6 +4276,7 @@ worker.webhook("processClosingDismissWebhook", {
 				closingPageId,
 				notion as unknown as NotionClient,
 				extractManagerActionReasonFromWebhook(body),
+				extractTriggerUserIdFromWebhook(body),
 			);
 		}
 	},
@@ -13592,6 +13637,12 @@ async function processDailyReportLog(
 		report.nextMove,
 	].some((value) => value.replace(/\s/g, "").length > 0);
 
+	// ⚠️ リスク(チェックリスト1-4・2026-06-13時点の既知の穴):
+	// 「提出状態」は日報DBの生selectで、営業本人がNotion UIから直接「承認済み」を
+	// 選べてしまう(上司承認のWorker正本が存在しない)。ここを正本スタンプ方式に揃えるには
+	// 「上司承認ボタン→Worker→スタンプ列」の新設(Notion列+ボタン=大ちゃん承認待ち)が必要。
+	// LIVEの日報フローを壊さないため、当面は生select信頼+下の上司コメント必須チェックを
+	// 弱い突合として維持する(上司コメントも本人が書ける点は残存リスク)。
 	if (report.submissionStatus !== "承認済み") {
 		return {
 			dailyReportPageId: report.page.id,
@@ -22671,7 +22722,9 @@ async function processClosingReport(
 		page_size: 5,
 	});
 	const activeReports = ((existing.results ?? []) as Page[]).filter((p) => {
-		const s = text(p.properties?.["承認ステータス"]);
+		// 旧名/退役名の両方を読む(旧名のみだとリネーム後は常に""となり、
+		// 取り消し/差戻し済み報告が「有効」と誤判定されて再報告がブロックされ続ける)
+		const s = readClosingApprovalStatusText(p.properties);
 		return s !== "取り消し" && s !== "差戻し" && s !== "差し戻し";
 	});
 	if (activeReports.length > 0) {
@@ -22771,10 +22824,13 @@ async function processClosingReport(
 		成約日: { kind: "date", value: todayDateJST() },
 	});
 
-	// 5. 成約報告ページ作成（承認ステータス = 「成約」）
+	// 5. 成約報告ページ作成
+	// 注意: 旧「承認ステータス: 成約」の書き込みは削除した(2026-06-13)。
+	// 実機の成約報告DBに「承認ステータス」プロパティは存在せず(「退役｜承認ステータス（使用禁止）」
+	// へリネーム済み)、pages.create に存在しない列を含めると validation_error で
+	// 成約報告の作成自体が失敗するため。確定の正本は承認スタンプ列(下記)が担う。
 	const properties: Record<string, unknown> = {
 		成約名: title(`${projectName}｜成約報告`),
-		承認ステータス: select("成約"),
 		対象物種別: select(targetType || "その他"),
 		売買区分: select(closingDealType),
 		歩合対象: { checkbox: true },
@@ -22920,6 +22976,21 @@ async function processClosingReport(
 			],
 		});
 	}
+
+	// 7.5. 正本スタンプ(1-2): 成約確定がWorker経由で行われた事実をWorkerだけが記録する。
+	// 列が未作成の間は safeUpdateExistingProperties が黙ってスキップする(=スケルトン)。
+	// 手作業でDBに直接ページを作った「成約」はこのスタンプを持たない→改ざん検知formulaで🚨。
+	await safeUpdateExistingProperties(notion, created, {
+		[CLOSING_APPROVAL_STAMP_PROPERTY]: {
+			kind: "text",
+			value: buildApprovalStamp(
+				monthlyLinked ? "成約確定" : "成約確定(月次未反映)",
+				triggerUserId ?? salesPersonIds[0],
+			),
+		},
+	}).catch((err) => {
+		console.error("closing approval stamp error:", String(err));
+	});
 
 	// 8. 営業部への通知（非同期・ノーブロック）
 	void notifySalesTeam(
@@ -23254,9 +23325,10 @@ async function cancelClosingReport(
 	closingPageId: string,
 	notion: NotionClient,
 	reason = "",
+	triggerUserId?: string,
 ): Promise<{ action: string; message: string }> {
 	const closingPage = await notion.pages.retrieve({ page_id: closingPageId });
-	const currentStatus = text(closingPage.properties?.["承認ステータス"]);
+	const currentStatus = readClosingApprovalStatusText(closingPage.properties);
 	const fixedCommission = numberValue(closingPage.properties?.["歩合確定額"]) ?? 0;
 
 	// 既に取り消し済み
@@ -23287,6 +23359,11 @@ async function cancelClosingReport(
 	await safeUpdateExistingProperties(notion, closingPage, {
 		承認ステータス: { kind: "select", value: "取り消し" },
 		管理メモ: { kind: "text", value: memo },
+		// 正本スタンプ(1-2): 取り消しもWorker経由の事実として上書き記録(列未作成ならスキップ)
+		[CLOSING_APPROVAL_STAMP_PROPERTY]: {
+			kind: "text",
+			value: buildApprovalStamp("取り消し", triggerUserId),
+		},
 	});
 
 	// 2. 案件DBのステータスを提案中に戻す
@@ -23356,12 +23433,14 @@ async function removeLinkFromMonthlyPerformanceRecords(
 }
 
 export { cancelClosingReport as cancelClosingReportForTest };
+export { dismissClosingReport as dismissClosingReportForTest };
 
 /** マネージャーによる成約報告の差し戻し */
 async function dismissClosingReport(
 	closingPageId: string,
 	notion: NotionClient,
 	reason = "",
+	triggerUserId?: string,
 ): Promise<{ action: string; message: string }> {
 	const closingPage = await notion.pages.retrieve({ page_id: closingPageId });
 	const memo = [
@@ -23372,6 +23451,11 @@ async function dismissClosingReport(
 	await safeUpdateExistingProperties(notion, closingPage, {
 		承認ステータス: { kind: "select", value: "差戻し" },
 		管理メモ: { kind: "text", value: memo },
+		// 正本スタンプ(1-2): マネージャーゲート(1-1)を通った差し戻しだけがここに到達する
+		[CLOSING_APPROVAL_STAMP_PROPERTY]: {
+			kind: "text",
+			value: buildApprovalStamp("差戻し", triggerUserId),
+		},
 	});
 
 	// 案件DBのステータスを提案中に戻す

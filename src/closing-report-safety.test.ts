@@ -32,7 +32,15 @@ const notion = {
 		},
 		create: async (args: Record<string, unknown>) => {
 			creates.push(args);
-			return { id: "closing-1", url: "https://notion.so/closing-1" };
+			return {
+				id: "closing-1",
+				url: "https://notion.so/closing-1",
+				// 正本スタンプ列(1-2)が作成済みのDBを想定(列が無い場合のスキップは
+				// approval-stamp.test.ts 側で担保)
+				properties: {
+					"承認スタンプ🤖": { type: "rich_text", rich_text: [] },
+				},
+			};
 		},
 	},
 	comments: {
@@ -64,14 +72,35 @@ async function main() {
 
 	const closingCreate = creates[0] as {
 		properties: {
-			承認ステータス: { select: { name: string } };
+			承認ステータス?: unknown;
 			関連案件: { relation: Array<{ id: string }> };
 			担当営業ユーザー: { people: Array<{ id: string }> };
 		};
 	};
-	assert.equal(closingCreate.properties.承認ステータス.select.name, "成約");
+	// 旧「承認ステータス: 成約」は実機DBに存在しない列(退役リネーム済み)のため、
+	// pages.create に含めない(含めると validation_error で成約報告の作成が落ちる)
+	assert.equal(closingCreate.properties.承認ステータス, undefined);
 	assert.equal(closingCreate.properties.関連案件.relation[0]?.id, "project-1");
 	assert.equal(closingCreate.properties.担当営業ユーザー.people[0]?.id, "existing-sales");
+
+	// 正本スタンプ(1-2): 成約確定の完了時点でWorkerが「承認者ID|ISO日時|操作|コミット」を書く
+	const stampUpdate = updates.find(
+		(u) =>
+			u.page_id === "closing-1" &&
+			(u.properties as Record<string, unknown>)["承認スタンプ🤖"] !== undefined,
+	);
+	assert.ok(stampUpdate, "成約確定の正本スタンプが書かれていない");
+	const stampText = (
+		(stampUpdate!.properties as Record<string, unknown>)["承認スタンプ🤖"] as {
+			rich_text: Array<{ text: { content: string } }>;
+		}
+	).rich_text
+		.map((r) => r.text.content)
+		.join("");
+	const stampParts = stampText.split("|");
+	assert.equal(stampParts.length, 4, `スタンプ書式が崩れている: ${stampText}`);
+	assert.equal(stampParts[0], "trigger-user");
+	assert.equal(stampParts[2], "成約確定");
 }
 
 main().catch((error) => {
