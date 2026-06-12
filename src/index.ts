@@ -9963,7 +9963,9 @@ async function processSalesPerformanceReview(
 	if (!evaluationReady && !auditOrTest) missing.push("評価準備OK");
 
 	const propertySource = buildSalesPerformanceReviewSource(properties);
-	const relatedSource = await buildSalesPerformanceRelatedSource(notion, properties);
+	const related = await buildSalesPerformanceRelatedSourceWithStats(notion, properties);
+	const relatedSource = related.source;
+	const qualitativeLogCounts = related.qualitativeLogCounts;
 	const source = buildSalesPerformanceEvaluationSource({
 		propertySource,
 		relatedSource,
@@ -10029,6 +10031,7 @@ async function processSalesPerformanceReview(
 			source,
 			missing,
 			auditOrTest,
+			qualitativeLogCounts,
 		});
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -10050,6 +10053,9 @@ async function processSalesPerformanceReview(
 			sourcePreview: [],
 		};
 	}
+
+	// 捏造ガード: 定性ログ0件なら定性評価をコード側で固定文に差し替える（テスト/監査データでも適用）
+	review = applySalesPerformanceQualitativeGuard(review, qualitativeLogCounts);
 
 	const status =
 		review.recommendedStatus === "要確認" && !auditOrTest ? "要確認" : "処理済";
@@ -10164,10 +10170,38 @@ function buildSalesPerformanceDryRunPreview(source: string): string[] {
 		.slice(0, 20);
 }
 
+type SalesPerformanceQualitativeLogCounts = {
+	speechLogs: number;
+	customerContactLogs: number;
+	contributionLogs: number;
+};
+
+function totalSalesPerformanceQualitativeLogs(
+	counts: SalesPerformanceQualitativeLogCounts,
+): number {
+	return counts.speechLogs + counts.customerContactLogs + counts.contributionLogs;
+}
+
 async function buildSalesPerformanceRelatedSource(
 	notion: NotionClient,
 	properties: Record<string, unknown>,
 ): Promise<string> {
+	const result = await buildSalesPerformanceRelatedSourceWithStats(notion, properties);
+	return result.source;
+}
+
+async function buildSalesPerformanceRelatedSourceWithStats(
+	notion: NotionClient,
+	properties: Record<string, unknown>,
+): Promise<{
+	source: string;
+	qualitativeLogCounts: SalesPerformanceQualitativeLogCounts;
+}> {
+	const qualitativeLogCounts: SalesPerformanceQualitativeLogCounts = {
+		speechLogs: 0,
+		customerContactLogs: 0,
+		contributionLogs: 0,
+	};
 	const sections: string[] = [];
 	const activityIds = uniqueIds([
 		...relationIdsFromProperty(properties["関連活動ログ"]),
@@ -10203,6 +10237,11 @@ async function buildSalesPerformanceRelatedSource(
 			const summary = await buildSalesActivityEvidenceSummary(notion, id);
 			if (summary.scoring) scoringLines.push(summary.scoring);
 			if (summary.support) supportLines.push(summary.support);
+			qualitativeLogCounts.speechLogs += summary.qualitativeCounts.speechLogs;
+			qualitativeLogCounts.customerContactLogs +=
+				summary.qualitativeCounts.customerContactLogs;
+			qualitativeLogCounts.contributionLogs +=
+				summary.qualitativeCounts.contributionLogs;
 		}
 		if (activityIds.length > 8) {
 			scoringLines.push(
@@ -10224,13 +10263,24 @@ async function buildSalesPerformanceRelatedSource(
 			"【データ不足・警告】\n活動ログ未集約: 直接ログはありますが、定性評価35点には使いません。活動ログDBへ集約してから評価材料にしてください。",
 		);
 	}
-	return sections.join("\n\n").slice(0, 10000);
+	return {
+		source: sections.join("\n\n").slice(0, 10000),
+		qualitativeLogCounts,
+	};
 }
 
 type SalesActivityEvidenceSummary = {
 	scoring: string;
 	support: string;
+	qualitativeCounts: SalesPerformanceQualitativeLogCounts;
 };
+
+const EMPTY_SALES_PERFORMANCE_QUALITATIVE_LOG_COUNTS: SalesPerformanceQualitativeLogCounts =
+	{
+		speechLogs: 0,
+		customerContactLogs: 0,
+		contributionLogs: 0,
+	};
 
 async function buildSalesActivityEvidenceSummary(
 	notion: NotionClient,
@@ -10241,10 +10291,18 @@ async function buildSalesActivityEvidenceSummary(
 		const properties = page.properties ?? {};
 		const support = buildActivitySupportEvidenceSummary(page, properties);
 		if (!checkboxValue(properties["評価対象"])) {
-			return { scoring: "", support };
+			return {
+				scoring: "",
+				support,
+				qualitativeCounts: EMPTY_SALES_PERFORMANCE_QUALITATIVE_LOG_COUNTS,
+			};
 		}
 		if (!hasActivityScoringSource(properties)) {
-			return { scoring: "", support };
+			return {
+				scoring: "",
+				support,
+				qualitativeCounts: EMPTY_SALES_PERFORMANCE_QUALITATIVE_LOG_COUNTS,
+			};
 		}
 		const base = [
 			page.url ? `URL: ${page.url}` : "",
@@ -10256,9 +10314,20 @@ async function buildSalesActivityEvidenceSummary(
 		return {
 			scoring: [base, childSummary].filter(Boolean).join("\n"),
 			support,
+			qualitativeCounts: {
+				speechLogs: relationIdsFromProperty(properties["関連発言"]).length,
+				customerContactLogs: relationIdsFromProperty(properties["関連顧客接点ログ"])
+					.length,
+				contributionLogs: relationIdsFromProperty(properties["関連営業貢献ログ"])
+					.length,
+			},
 		};
 	} catch (error) {
-		return { scoring: `取得失敗: ${String(error).slice(0, 120)}`, support: "" };
+		return {
+			scoring: `取得失敗: ${String(error).slice(0, 120)}`,
+			support: "",
+			qualitativeCounts: EMPTY_SALES_PERFORMANCE_QUALITATIVE_LOG_COUNTS,
+		};
 	}
 }
 
@@ -10353,6 +10422,7 @@ export {
 	buildSalesPerformanceDryRunPreview as buildSalesPerformanceDryRunPreviewForTest,
 	buildSalesPerformanceReviewSource as buildSalesPerformanceReviewSourceForTest,
 	buildSalesPerformanceRelatedSource as buildSalesPerformanceRelatedSourceForTest,
+	buildSalesPerformanceRelatedSourceWithStats as buildSalesPerformanceRelatedSourceWithStatsForTest,
 	buildSalesPerformanceReviewPatches as buildSalesPerformanceReviewPatchesForTest,
 	isHitomiMemoEvaluationEvidence as isHitomiMemoEvaluationEvidenceForTest,
 	isWaniPoMemoryEvaluationEvidence as isWaniPoMemoryEvaluationEvidenceForTest,
@@ -10492,16 +10562,37 @@ function buildSalesPerformanceConfirmationMemo(
 	return lines.join("\n").slice(0, 1800);
 }
 
-async function callOpenAISalesPerformanceReview(input: {
+const SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT =
+	"定性評価: 対象期間の活動ログ・顧客接点ログ・発言ログが未入力のため評価できません（データ不足）";
+
+function applySalesPerformanceQualitativeGuard(
+	review: SalesPerformanceReviewAIResponse,
+	qualitativeLogCounts: SalesPerformanceQualitativeLogCounts,
+): SalesPerformanceReviewAIResponse {
+	if (totalSalesPerformanceQualitativeLogs(qualitativeLogCounts) > 0) return review;
+	return {
+		...review,
+		actionGuidance: SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT,
+		contributionView: "",
+	};
+}
+
+type SalesPerformanceReviewPromptInput = {
 	title: string;
 	auditStatus: string;
 	targetPeriod: string;
 	source: string;
 	missing: string[];
 	auditOrTest: boolean;
-}): Promise<SalesPerformanceReviewAIResponse> {
-	const { apiKey, model } = resolveWajoOpenAiConfig(process.env);
-	if (!apiKey) throw new Error("WAJO_OPENAI_API_KEY / OPENAI_API_KEY が未設定です");
+	qualitativeLogCounts: SalesPerformanceQualitativeLogCounts;
+};
+
+function buildSalesPerformanceReviewPrompts(
+	input: SalesPerformanceReviewPromptInput,
+): { systemPrompt: string; userPrompt: string } {
+	const counts = input.qualitativeLogCounts;
+	const qualitativeUnavailable =
+		totalSalesPerformanceQualitativeLogs(counts) === 0;
 
 	const systemPrompt = [
 		"あなたは和上ホールディングスのAI人事評価担当「人見さん」です。",
@@ -10515,15 +10606,25 @@ async function callOpenAISalesPerformanceReview(input: {
 		"- テスト/監査除外データを本番評価根拠にしない",
 		"- 人格評価をしない",
 		"- 不明なことは要確認と明示する",
+		"- 入力の評価材料に存在しないログ・活動・発言・数値を引用や推測で創作しない",
+		"- 材料が無い項目は「データ不足のため評価不可」と書く",
 		"",
 		"出力方針:",
-		"- 評価は二軸で見る。定量評価（実績）65点、定性評価（活動ログ）35点を基本配分にする",
-		"- 定量評価は営業の実績数字だけを見る。売上、粗利、達成率、商談件数、成約件数、案件化件数、仕入れ件数、仕入れ金額など",
-		"- 定性評価は活動ログDBに集約された貢献ログ、顧客接点ログ、発言ログだけを見る",
+		...(qualitativeUnavailable
+			? [
+					"- 定性評価対象ログ（貢献ログ・顧客接点ログ・発言ログ）は0件。定性評価を行わない",
+					"- actionGuidance と contributionView には定性評価文を書かず「データ不足のため評価不可」とだけ書く",
+					"- 定量評価は営業の実績数字だけを見る。売上、粗利、達成率、商談件数、成約件数、案件化件数、仕入れ件数、仕入れ金額など",
+				]
+			: [
+					"- 評価は二軸で見る。定量評価（実績）65点、定性評価（活動ログ）35点を基本配分にする",
+					"- 定量評価は営業の実績数字だけを見る。売上、粗利、達成率、商談件数、成約件数、案件化件数、仕入れ件数、仕入れ金額など",
+					"- 定性評価は活動ログDBに集約された貢献ログ、顧客接点ログ、発言ログだけを見る",
+					"- 行動評価と貢献評価は、定性評価の確認論点としてマネージャー面談に落とす",
+				]),
 		"- AI活用ポイント、人見さんメモ、ワニポメモリー、本人コメント、マネージャーメモは主たる採点根拠にしない",
 		"- 月次ページ本文、自由記述、本人コメント、マネージャーメモは採点根拠にしない",
 		"- 既存の数値やスコアは、変更ではなく読み解きとして説明する",
-		"- 行動評価と貢献評価は、定性評価の確認論点としてマネージャー面談に落とす",
 		"- 本人に返す言葉は厳しさと成長支援を両立させる",
 		"- 次月改善ポイントは3件以内で具体化する",
 		"- evidence には、評価コメントの根拠になる数値、活動ログURL、データ不足警告を短く入れる",
@@ -10537,10 +10638,22 @@ async function callOpenAISalesPerformanceReview(input: {
 		`監査区分: ${input.auditStatus || "未設定"}`,
 		`監査/テスト扱い: ${input.auditOrTest ? "はい" : "いいえ"}`,
 		input.missing.length > 0 ? `不足情報: ${input.missing.join(" / ")}` : "不足情報: なし",
+		`定性評価対象ログ件数: 貢献ログ ${counts.contributionLogs}件 / 顧客接点ログ ${counts.customerContactLogs}件 / 発言ログ ${counts.speechLogs}件`,
 		"",
 		"=== 評価材料 ===",
 		input.source.slice(0, 16000),
 	].join("\n");
+
+	return { systemPrompt, userPrompt };
+}
+
+async function callOpenAISalesPerformanceReview(
+	input: SalesPerformanceReviewPromptInput,
+): Promise<SalesPerformanceReviewAIResponse> {
+	const { apiKey, model } = resolveWajoOpenAiConfig(process.env);
+	if (!apiKey) throw new Error("WAJO_OPENAI_API_KEY / OPENAI_API_KEY が未設定です");
+
+	const { systemPrompt, userPrompt } = buildSalesPerformanceReviewPrompts(input);
 
 	const response = await fetch("https://api.openai.com/v1/chat/completions", {
 		method: "POST",
@@ -10583,6 +10696,9 @@ function resolveWajoOpenAiConfig(
 
 export {
 	resolveWajoOpenAiConfig as resolveWajoOpenAiConfigForTest,
+	applySalesPerformanceQualitativeGuard as applySalesPerformanceQualitativeGuardForTest,
+	buildSalesPerformanceReviewPrompts as buildSalesPerformanceReviewPromptsForTest,
+	SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT as SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT_FOR_TEST,
 };
 
 function parseSalesPerformanceReviewAIResponse(
