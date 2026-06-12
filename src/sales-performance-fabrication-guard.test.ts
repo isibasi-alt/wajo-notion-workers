@@ -4,6 +4,10 @@ import {
 	buildSalesPerformanceRelatedSourceWithStatsForTest,
 	buildSalesPerformanceReviewPromptsForTest,
 	SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT_FOR_TEST,
+	SALES_PERFORMANCE_QUALITATIVE_MISSING_PERSON_COMMENT_FOR_TEST,
+	SALES_PERFORMANCE_QUALITATIVE_MISSING_IMPROVEMENT_FOR_TEST,
+	SALES_PERFORMANCE_QUALITATIVE_MISSING_MANAGER_ITEM_FOR_TEST,
+	SALES_PERFORMANCE_QUANTITATIVE_ONLY_CONCLUSION_PREFIX_FOR_TEST,
 } from "./index";
 
 function title(value: string) {
@@ -134,6 +138,17 @@ async function main() {
 	assert.match(zeroPrompts.systemPrompt, /定性評価を行わない/);
 	assert.match(zeroPrompts.systemPrompt, /データ不足のため評価不可/);
 
+	// 0件時は本人コメント/次月改善ポイント系の生成指示行も除去される
+	assert.doesNotMatch(zeroPrompts.systemPrompt, /次月改善ポイントは3件以内で具体化する/);
+	assert.doesNotMatch(
+		zeroPrompts.systemPrompt,
+		/本人に返す言葉は厳しさと成長支援を両立させる/,
+	);
+	assert.match(
+		zeroPrompts.systemPrompt,
+		/personComment、nextMonthImprovements、managerConfirmationItems にも定性評価に基づく内容を書かない/,
+	);
+
 	// 捏造禁止の明文（0件でも1件以上でも常に入る）
 	assert.match(
 		zeroPrompts.systemPrompt,
@@ -186,6 +201,12 @@ async function main() {
 		/定性評価は活動ログDBに集約された貢献ログ、顧客接点ログ、発言ログだけを見る/,
 	);
 	assert.doesNotMatch(normalPrompts.systemPrompt, /定性評価を行わない/);
+	// 1件以上なら本人コメント/次月改善ポイントの生成指示行は従来どおり残る
+	assert.match(normalPrompts.systemPrompt, /次月改善ポイントは3件以内で具体化する/);
+	assert.match(
+		normalPrompts.systemPrompt,
+		/本人に返す言葉は厳しさと成長支援を両立させる/,
+	);
 	// 捏造禁止の明文は従来動作側にも入る
 	assert.match(
 		normalPrompts.systemPrompt,
@@ -210,9 +231,42 @@ async function main() {
 		/定性評価: 対象期間の活動ログ・顧客接点ログ・発言ログが未入力のため評価できません（データ不足）/,
 	);
 	assert.equal(guarded.contributionView, "");
+	// 拡張分: 本人コメント（成長ポイント）も固定文に差し替え
+	assert.equal(
+		guarded.personComment,
+		SALES_PERFORMANCE_QUALITATIVE_MISSING_PERSON_COMMENT_FOR_TEST,
+	);
+	assert.match(guarded.personComment, /定性コメントなし（データ不足）/);
+	// 拡張分: 次月改善ポイント（次月テーマ）はデータ整備を促す1項目のみ
+	assert.deepEqual(guarded.nextMonthImprovements, [
+		SALES_PERFORMANCE_QUALITATIVE_MISSING_IMPROVEMENT_FOR_TEST,
+	]);
+	assert.match(
+		guarded.nextMonthImprovements[0],
+		/活動ログの入力から始めてください（現状データ不足のため改善点を特定できません）/,
+	);
+	// 拡張分: 上司確認事項はデータ整備確認の1項目のみ
+	assert.deepEqual(guarded.managerConfirmationItems, [
+		SALES_PERFORMANCE_QUALITATIVE_MISSING_MANAGER_ITEM_FOR_TEST,
+	]);
+	assert.match(
+		guarded.managerConfirmationItems[0],
+		/定性ログ（活動ログ・顧客接点ログ・発言ログ）が未入力のためデータ整備を確認してください/,
+	);
+	// 拡張分: 結論は定量実績のみに基づくことを明示する接頭辞付き（元の結論は残す）
+	assert.equal(
+		guarded.conclusion,
+		`${SALES_PERFORMANCE_QUANTITATIVE_ONLY_CONCLUSION_PREFIX_FOR_TEST}結論テキスト`,
+	);
+	assert.match(guarded.conclusion, /定量実績のみに基づく結論（定性データ不足）/);
+	// 接頭辞は二重に付かない（再適用しても冪等）
+	const reGuarded = applySalesPerformanceQualitativeGuardForTest(
+		guarded,
+		zeroCounts,
+	);
+	assert.equal(reGuarded.conclusion, guarded.conclusion);
 	// 定量部分は従来どおり残る
 	assert.equal(guarded.resultExplanation, "定量の説明");
-	assert.equal(guarded.conclusion, "結論テキスト");
 	assert.deepEqual(guarded.evidence, ["成約件数: 1"]);
 
 	// --- 5. コード側ガード: 1件以上なら一切書き換えない ---

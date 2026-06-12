@@ -10564,16 +10564,33 @@ function buildSalesPerformanceConfirmationMemo(
 
 const SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT =
 	"定性評価: 対象期間の活動ログ・顧客接点ログ・発言ログが未入力のため評価できません（データ不足）";
+const SALES_PERFORMANCE_QUALITATIVE_MISSING_PERSON_COMMENT =
+	"対象期間の活動ログ・顧客接点ログ・発言ログが未入力のため定性コメントなし（データ不足）";
+const SALES_PERFORMANCE_QUALITATIVE_MISSING_IMPROVEMENT =
+	"活動ログの入力から始めてください（現状データ不足のため改善点を特定できません）";
+const SALES_PERFORMANCE_QUALITATIVE_MISSING_MANAGER_ITEM =
+	"定性ログ（活動ログ・顧客接点ログ・発言ログ）が未入力のためデータ整備を確認してください";
+const SALES_PERFORMANCE_QUANTITATIVE_ONLY_CONCLUSION_PREFIX =
+	"【定量実績のみに基づく結論（定性データ不足）】";
 
 function applySalesPerformanceQualitativeGuard(
 	review: SalesPerformanceReviewAIResponse,
 	qualitativeLogCounts: SalesPerformanceQualitativeLogCounts,
 ): SalesPerformanceReviewAIResponse {
 	if (totalSalesPerformanceQualitativeLogs(qualitativeLogCounts) > 0) return review;
+	const conclusion = review.conclusion.trim();
 	return {
 		...review,
+		conclusion: conclusion.startsWith(
+			SALES_PERFORMANCE_QUANTITATIVE_ONLY_CONCLUSION_PREFIX,
+		)
+			? conclusion
+			: `${SALES_PERFORMANCE_QUANTITATIVE_ONLY_CONCLUSION_PREFIX}${conclusion}`,
 		actionGuidance: SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT,
 		contributionView: "",
+		personComment: SALES_PERFORMANCE_QUALITATIVE_MISSING_PERSON_COMMENT,
+		nextMonthImprovements: [SALES_PERFORMANCE_QUALITATIVE_MISSING_IMPROVEMENT],
+		managerConfirmationItems: [SALES_PERFORMANCE_QUALITATIVE_MISSING_MANAGER_ITEM],
 	};
 }
 
@@ -10625,8 +10642,14 @@ function buildSalesPerformanceReviewPrompts(
 		"- AI活用ポイント、人見さんメモ、ワニポメモリー、本人コメント、マネージャーメモは主たる採点根拠にしない",
 		"- 月次ページ本文、自由記述、本人コメント、マネージャーメモは採点根拠にしない",
 		"- 既存の数値やスコアは、変更ではなく読み解きとして説明する",
-		"- 本人に返す言葉は厳しさと成長支援を両立させる",
-		"- 次月改善ポイントは3件以内で具体化する",
+		...(qualitativeUnavailable
+			? [
+					"- personComment、nextMonthImprovements、managerConfirmationItems にも定性評価に基づく内容を書かない。データ不足を前提にする",
+				]
+			: [
+					"- 本人に返す言葉は厳しさと成長支援を両立させる",
+					"- 次月改善ポイントは3件以内で具体化する",
+				]),
 		"- evidence には、評価コメントの根拠になる数値、活動ログURL、データ不足警告を短く入れる",
 		"- recommendedStatus は、評価材料として使えるなら処理済、不足が大きいなら要確認にする",
 		"必ずJSONのみを返してください。",
@@ -10699,6 +10722,10 @@ export {
 	applySalesPerformanceQualitativeGuard as applySalesPerformanceQualitativeGuardForTest,
 	buildSalesPerformanceReviewPrompts as buildSalesPerformanceReviewPromptsForTest,
 	SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT as SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT_FOR_TEST,
+	SALES_PERFORMANCE_QUALITATIVE_MISSING_PERSON_COMMENT as SALES_PERFORMANCE_QUALITATIVE_MISSING_PERSON_COMMENT_FOR_TEST,
+	SALES_PERFORMANCE_QUALITATIVE_MISSING_IMPROVEMENT as SALES_PERFORMANCE_QUALITATIVE_MISSING_IMPROVEMENT_FOR_TEST,
+	SALES_PERFORMANCE_QUALITATIVE_MISSING_MANAGER_ITEM as SALES_PERFORMANCE_QUALITATIVE_MISSING_MANAGER_ITEM_FOR_TEST,
+	SALES_PERFORMANCE_QUANTITATIVE_ONLY_CONCLUSION_PREFIX as SALES_PERFORMANCE_QUANTITATIVE_ONLY_CONCLUSION_PREFIX_FOR_TEST,
 };
 
 function parseSalesPerformanceReviewAIResponse(
