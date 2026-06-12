@@ -8571,7 +8571,8 @@ async function findDealsByMeeting(
 			data_source_id: DEAL_DATA_SOURCE_ID,
 			page_size: 10,
 			filter: {
-				property: "関連会議",
+				// 商談管理DBの実プロパティ名は「関連ミーティング」（2026-06-12 スキーマ裏取り済み）
+				property: "関連ミーティング",
 				relation: { contains: meetingId },
 			},
 		});
@@ -8596,8 +8597,11 @@ async function createDealFromMeeting(
 	const patches: Record<string, SafePatch> = {
 		商談ステータス: { kind: "select", value: "実施済" },
 		商談概要: { kind: "text", value: buildDealSummaryFromMeeting(meeting) },
+		// 実プロパティ名は「関連ミーティング」「元ミーティングID」。旧名も併記（存在しない側はsafeUpdateが自動スキップ）
+		関連ミーティング: { kind: "relation", ids: [meeting.page.id] },
 		関連会議: { kind: "relation", ids: [meeting.page.id] },
 		関連企業: { kind: "relation", ids: meeting.relatedCompanyIds },
+		元ミーティングID: { kind: "text", value: meeting.page.id },
 		元会議議事録ID: { kind: "text", value: meeting.page.id },
 	};
 	if (meeting.meetingDate) {
@@ -8620,9 +8624,15 @@ async function linkMeetingAndDeal(
 	dealPage: Page,
 ): Promise<void> {
 	const dealProperties = dealPage.properties ?? {};
-	const currentMeetings = relationIdsFromProperty(dealProperties["関連会議"]);
+	// 実プロパティ名は「関連ミーティング」。旧名「関連会議」の過去レコードにもフォールバック
+	const currentMeetings = relationIdsFromProperty(
+		dealProperties["関連ミーティング"] ?? dealProperties["関連会議"],
+	);
+	const mergedMeetingIds = uniqueStrings([...currentMeetings, meeting.page.id]);
 	const dealPatches: Record<string, SafePatch> = {
-		関連会議: { kind: "relation", ids: uniqueStrings([...currentMeetings, meeting.page.id]) },
+		関連ミーティング: { kind: "relation", ids: mergedMeetingIds },
+		関連会議: { kind: "relation", ids: mergedMeetingIds },
+		元ミーティングID: { kind: "text", value: meeting.page.id },
 		元会議議事録ID: { kind: "text", value: meeting.page.id },
 	};
 	addPatchIfBlank(dealPatches, dealProperties, "商談概要", buildDealSummaryFromMeeting(meeting));
@@ -14470,7 +14480,10 @@ async function processDealFeedbackSecondReview(
 
 function readDeal(page: Page): DealInfo {
 	const properties = page.properties ?? {};
-	const meetingIds = relationIdsFromProperty(properties["関連会議"]);
+	// 商談管理DBの実プロパティ名は「関連ミーティング」。旧名「関連会議」にもフォールバック
+	const meetingIds = relationIdsFromProperty(
+		properties["関連ミーティング"] ?? properties["関連会議"],
+	);
 	const score = numberValue(properties["営業スコア"]);
 	return {
 		page,
@@ -14491,6 +14504,8 @@ function readDeal(page: Page): DealInfo {
 		closingHint: text(properties["成約へのヒント"]),
 	};
 }
+
+export { readDeal as readDealForTest };
 
 async function fetchMeetingContext(
 	notion: NotionClient,
