@@ -396,12 +396,14 @@ async function main() {
 
 	const noHubSource = await buildSalesPerformanceRelatedSourceForTest(
 		notion as never,
-		{ 関連発言ログ: relation(["speech-1"]) },
+		{ 関連発言ログ: relation(["speech-1"]), 関連日報ログ: relation(["daily-log-1"]) },
 	);
 	assert.match(noHubSource, /定性評価（活動ログ）｜35点/);
+	assert.match(noHubSource, /日報は承認済み日報から作成された日報ログだけを評価補助/);
 	assert.match(noHubSource, /活動ログ未接続/);
 	assert.match(noHubSource, /活動ログ未集約/);
 	assert.doesNotMatch(noHubSource, /価格条件の説明/);
+	assert.doesNotMatch(noHubSource, /daily-log-1/);
 
 	const legacyContributionOnlySource = await buildSalesPerformanceRelatedSourceForTest(
 		notion as never,
@@ -1201,7 +1203,6 @@ async function main() {
 				貢献カテゴリ: select("ナレッジ共有"),
 				貢献インパクト: select("中"),
 				AIコメント: richText("他メンバーの提案準備に寄与した。"),
-				承認ステータス: select("承認"),
 				評価反映状態: select("未反映"),
 				ポイント: rollupNumber(5),
 				日付: date("2026-06-02"),
@@ -1430,7 +1431,7 @@ async function main() {
 			query: async (args: Record<string, unknown>) => {
 				assert.equal(args.data_source_id, "f88056da-3052-418e-8cf4-e9b4197cd7ba");
 				assert.match(JSON.stringify(args.filter), /評価反映状態/);
-				assert.match(JSON.stringify(args.filter), /承認ステータス/);
+				assert.doesNotMatch(JSON.stringify(args.filter), /承認ステータス/);
 				return {
 					results: [
 						{
@@ -1440,7 +1441,6 @@ async function main() {
 							properties: {
 								貢献タイトル: title("蓄電池ナレッジ共有"),
 								AIコメント: richText("他メンバーの提案準備に寄与した。"),
-								承認ステータス: select("承認"),
 								評価反映状態: select("未反映"),
 								日付: date("2026-06-02"),
 								対象営業ユーザー: people(["sales-1"]),

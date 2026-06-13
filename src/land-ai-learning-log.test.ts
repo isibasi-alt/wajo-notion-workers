@@ -90,6 +90,7 @@ async function main() {
 	});
 	const properties = created.properties as Record<string, unknown>;
 	assert.ok(properties.判定名);
+	assert.match(JSON.stringify(properties.判定バージョン), /land-evaluation-v2/);
 	assert.ok(properties.関連土地);
 	assert.ok(properties.変電所距離km);
 	assert.ok(properties["土地面積（坪）"]);

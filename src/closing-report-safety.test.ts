@@ -64,12 +64,11 @@ async function main() {
 
 	const closingCreate = creates[0] as {
 		properties: {
-			承認ステータス: { select: { name: string } };
 			関連案件: { relation: Array<{ id: string }> };
 			担当営業ユーザー: { people: Array<{ id: string }> };
 		};
 	};
-	assert.equal(closingCreate.properties.承認ステータス.select.name, "成約");
+	assert.equal("承認ステータス" in closingCreate.properties, false);
 	assert.equal(closingCreate.properties.関連案件.relation[0]?.id, "project-1");
 	assert.equal(closingCreate.properties.担当営業ユーザー.people[0]?.id, "existing-sales");
 }

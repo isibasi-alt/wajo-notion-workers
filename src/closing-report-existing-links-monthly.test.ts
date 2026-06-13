@@ -11,12 +11,10 @@ const notion = {
 			queries.push(args);
 			if (queries.length === 1) {
 				return {
-					results: [{
-						id: "closing-existing",
-						properties: {
-							承認ステータス: { type: "select", select: { name: "成約" } },
-						},
-					}],
+						results: [{
+							id: "closing-existing",
+							properties: {},
+						}],
 				};
 			}
 			return {

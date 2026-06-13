@@ -14,12 +14,10 @@ async function main() {
 			query: async (args: Record<string, unknown>) => {
 				if (args.data_source_id === CLOSING_REPORT_DATA_SOURCE_ID) {
 					return {
-						results: [{
-							id: "closing-existing",
-							properties: {
-								承認ステータス: { type: "select", select: { name: "成約" } },
-							},
-						}],
+							results: [{
+								id: "closing-existing",
+								properties: {},
+							}],
 					};
 				}
 				if (args.data_source_id === DEAL_DATA_SOURCE_ID) return { results: [] };

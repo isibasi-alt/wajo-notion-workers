@@ -1308,11 +1308,15 @@ type LandInfo = {
 	page: Page;
 	name: string;
 	address: string;
+	parcel: string;
 	areaTsubo: number | null;
 	powerArea: string;
 	landUse: string;
 	road: string;
 	farmland: string;
+	farmlandStatus: string;
+	registryStatus: string;
+	neighborDistance: string;
 	substationDistance: string;
 };
 
@@ -1324,6 +1328,7 @@ type ProjectInfo = {
 type LandEvaluation = {
 	overallGrade: string;
 	score: number;
+	confidence: string;
 	bucket: string;
 	actionBucket: string;
 	caseStatus: string;
@@ -3772,7 +3777,7 @@ worker.webhook("processSalesTalkFinalizeWebhook", {
 worker.webhook("processClosingReportWebhook", {
 	title: "WAJO 成約報告Webhook",
 	description:
-		"案件管理DBの「🏆 成約報告する」ボタンから起動。重複ガード付きで成約報告DBに成約レコードを作成し、案件ステータスを「🏆 成約」に更新。マネージャーは後追いで差し戻し/取り消しを行います。",
+		"案件管理DBの「🏆 成約報告する」ボタンから起動。重複ガード付きで成約報告DBに成約レコードを作成し、案件ステータスを「🏆 成約」に即時更新します。",
 	execute: async (events, { notion }) => {
 		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
 		for (const event of events) {
@@ -3813,94 +3818,6 @@ worker.webhook("syncProjectClosingStatusWebhook", {
 	},
 });
 
-worker.webhook("processClosingCancelWebhook", {
-	title: "WAJO 成約取り消しWebhook",
-	description:
-		"成約報告DBの「🔄 取り消す」ボタンから起動。締め前の成約報告を「取り消し」状態にし、案件DBのステータスを「📋 提案中」に戻します。歩合確定済みは取り消し不可。",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			const body = event.body as Record<string, unknown>;
-			const closingPageId = extractClosingReportPageIdFromWebhook(body);
-			if (!closingPageId) {
-				throw new Error(
-					"closingPageId / pageId / entity.id のいずれからも成約報告ページIDを特定できませんでした。",
-				);
-			}
-			await cancelClosingReport(
-				closingPageId,
-				notion as unknown as NotionClient,
-				extractManagerActionReasonFromWebhook(body),
-			);
-		}
-	},
-});
-
-worker.webhook("processClosingDismissWebhook", {
-	title: "WAJO 成約差し戻しWebhook",
-	description:
-		"成約報告DBの「❌ 差し戻す」ボタンから起動。マネージャーが成約報告を差し戻し、承認ステータスを「差戻し」に変更。案件DBのステータスも「📋 提案中」に戻します。",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			const body = event.body as Record<string, unknown>;
-			const closingPageId = extractClosingReportPageIdFromWebhook(body);
-			if (!closingPageId) {
-				throw new Error(
-					"closingPageId / pageId / entity.id のいずれからも成約報告ページIDを特定できませんでした。",
-				);
-			}
-			await dismissClosingReport(
-				closingPageId,
-				notion as unknown as NotionClient,
-				extractManagerActionReasonFromWebhook(body),
-			);
-		}
-	},
-});
-
-worker.webhook("processProjectDismissWebhook", {
-	title: "WAJO 案件差し戻しWebhook",
-	description:
-		"案件管理DBのマネージャー用「差し戻し」ボタンから起動。案件を確認待ちに戻し、管理アクションメモを残します。成約報告DBや月次数字は直接変更しません。",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			const body = event.body as Record<string, unknown>;
-			const projectPageId = extractProjectPageIdFromWebhook(body);
-			if (!projectPageId) {
-				throw new Error(
-					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
-				);
-			}
-			await dismissProject(
-				projectPageId,
-				notion as unknown as NotionClient,
-				extractManagerActionReasonFromWebhook(body),
-			);
-		}
-	},
-});
-
-worker.webhook("processProjectCancelWebhook", {
-	title: "WAJO 案件取り消しWebhook",
-	description:
-		"案件管理DBのマネージャー用「取り消し」ボタンから起動。案件を失注扱いにし、管理アクションメモを残します。ページ削除や関連DBの一括更新は行いません。",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			const body = event.body as Record<string, unknown>;
-			const projectPageId = extractProjectPageIdFromWebhook(body);
-			if (!projectPageId) {
-				throw new Error(
-					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
-				);
-			}
-			await cancelProject(
-				projectPageId,
-				notion as unknown as NotionClient,
-				extractManagerActionReasonFromWebhook(body),
-			);
-		}
-	},
-});
-
 worker.webhook("processInquiryLostWebhook", {
 	title: "WAJO 問い合わせ失注Webhook",
 	description:
@@ -3923,10 +3840,10 @@ worker.webhook("processInquiryLostWebhook", {
 	},
 });
 
-worker.webhook("processProjectLostRequestWebhook", {
-	title: "WAJO 案件失注申請Webhook",
+worker.webhook("processProjectLostWebhook", {
+	title: "WAJO 案件失注Webhook",
 	description:
-		"案件管理DBの営業用「失注申請する」ボタンから起動。失注理由必須で、案件は失注確定ではなく失注申請中に止めます。申請事実は全員通知します。",
+		"案件管理DBの営業用「失注にする」ボタンから起動。失注理由必須で案件を失注へ即時確定し、全員通知します。",
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			const body = event.body as Record<string, unknown>;
@@ -3936,51 +3853,9 @@ worker.webhook("processProjectLostRequestWebhook", {
 					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
 				);
 			}
-			await processProjectLostRequest(projectPageId, notion as unknown as NotionClient, {
+			await processProjectLost(projectPageId, notion as unknown as NotionClient, {
 				reason: extractLostReasonFromWebhook(body),
 				memo: extractLostMemoFromWebhook(body),
-				triggerUserId: extractTriggerUserIdFromWebhook(body),
-			});
-		}
-	},
-});
-
-worker.webhook("processProjectLostApproveWebhook", {
-	title: "WAJO 案件失注承認Webhook",
-	description:
-		"マネージャー用の失注承認ボタンから起動。申請中の案件だけを正式に失注へ確定し、全員通知します。",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			const body = event.body as Record<string, unknown>;
-			const projectPageId = extractProjectPageIdFromWebhook(body);
-			if (!projectPageId) {
-				throw new Error(
-					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
-				);
-			}
-			await approveProjectLostRequest(projectPageId, notion as unknown as NotionClient, {
-				memo: extractLostMemoFromWebhook(body) || extractManagerActionReasonFromWebhook(body),
-				triggerUserId: extractTriggerUserIdFromWebhook(body),
-			});
-		}
-	},
-});
-
-worker.webhook("processProjectLostRejectWebhook", {
-	title: "WAJO 案件失注差し戻しWebhook",
-	description:
-		"マネージャー用の失注差し戻しボタンから起動。失注申請を差し戻し、案件を確認待ちへ戻して全員通知します。",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			const body = event.body as Record<string, unknown>;
-			const projectPageId = extractProjectPageIdFromWebhook(body);
-			if (!projectPageId) {
-				throw new Error(
-					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
-				);
-			}
-			await rejectProjectLostRequest(projectPageId, notion as unknown as NotionClient, {
-				memo: extractLostMemoFromWebhook(body) || extractManagerActionReasonFromWebhook(body),
 				triggerUserId: extractTriggerUserIdFromWebhook(body),
 			});
 		}
@@ -4533,7 +4408,6 @@ function buildActivityLogFromSalesContributionLog(
 	const contributionType = text(properties["種別"]);
 	const category = text(properties["貢献カテゴリ"]);
 	const impact = text(properties["貢献インパクト"]);
-	const approvalStatus = text(properties["承認ステータス"]);
 	const reflectionStatus = text(properties["評価反映状態"]);
 	const aiComment = text(properties["AIコメント"]);
 	const visibleComment = text(properties["本人への見える化コメント"]);
@@ -4551,7 +4425,6 @@ function buildActivityLogFromSalesContributionLog(
 		managerMemo,
 	].join(" ");
 	if (isInternalTestOrAuditText(joinedForAuditCheck)) return null;
-	if (approvalStatus && approvalStatus !== "承認" && reflectionStatus !== "反映候補") return null;
 	if (!aiComment && !visibleComment && !comment && !managerMemo) return null;
 	const body = [
 		titleText ? `貢献: ${titleText}` : "",
@@ -4928,19 +4801,9 @@ async function reflectSalesContributionLogsToActivityLogs(
 		data_source_id: SALES_CONTRIBUTION_LOG_DATA_SOURCE_ID,
 		page_size: limit,
 		filter: {
-			and: [
-				{
-					or: [
-						{ property: "評価反映状態", select: { equals: "未反映" } },
-						{ property: "評価反映状態", select: { equals: "反映候補" } },
-					],
-				},
-				{
-					or: [
-						{ property: "承認ステータス", select: { equals: "承認" } },
-						{ property: "評価反映状態", select: { equals: "反映候補" } },
-					],
-				},
+			or: [
+				{ property: "評価反映状態", select: { equals: "未反映" } },
+				{ property: "評価反映状態", select: { equals: "反映候補" } },
 			],
 		},
 	});
@@ -5880,7 +5743,7 @@ async function markAiLearningLogsOutcome(
 	input: {
 		relationProperty: "関連土地" | "関連問い合わせ" | "関連案件" | "関連商談" | "関連会議" | "関連成約";
 		pageId: string;
-		outcome: "案件化" | "成約" | "失注" | "見送り" | "保留" | "差し戻し" | "停滞";
+		outcome: "案件化" | "成約" | "失注" | "見送り" | "保留" | "停滞";
 		outcomeDate?: string;
 		scoreThreshold: number;
 		note: string;
@@ -9381,14 +9244,16 @@ async function buildSalesPerformanceRelatedSource(
 				`活動ログ件数超過: 関連活動ログ${activityIds.length}件中8件のみを評価材料として読みました。残り${activityIds.length - 8}件は人間確認または集約ルール見直しが必要です。`,
 			);
 		}
-		sections.push(`【定性評価（活動ログ）｜35点】\n貢献ログ・顧客接点ログ・発言ログだけを評価対象の定性根拠として読む。\n${scoringLines.length > 0 ? scoringLines.join("\n---\n") : "評価対象外または対象3ログ外の活動ログだけが紐づいています。"}`);
+		sections.push(`【定性評価（活動ログ）｜35点】\n貢献ログ・顧客接点ログ・発言ログだけを評価対象の定性根拠として読む。日報は承認済み日報から作成された日報ログだけを評価補助として扱い、日報原本や未承認日報は直接採点しない。\n${scoringLines.length > 0 ? scoringLines.join("\n---\n") : "評価対象外または対象3ログ外の活動ログだけが紐づいています。"}`);
 		if (supportLines.length > 0) {
 			sections.push(
 				`【補助確認事項（採点対象外）】\nAI活用ログ、人見さんメモ、ワニポメモリーは採点根拠にせず、面談前の確認材料としてだけ扱う。\n${supportLines.join("\n---\n")}`,
 			);
 		}
 	} else {
-		sections.push("【定性評価（活動ログ）｜35点】\n活動ログ未接続: 営業マンパフォーマンスDBに関連活動ログがありません。");
+		sections.push(
+			"【定性評価（活動ログ）｜35点】\n活動ログ未接続: 営業マンパフォーマンスDBに関連活動ログがありません。\n日報は承認済み日報から作成された日報ログだけを評価補助として扱い、日報原本や未承認日報は直接採点しない。",
+		);
 	}
 	const engagementSource = await buildSalesPerformanceEngagementSource(notion, properties);
 	if (engagementSource) {
@@ -15403,6 +15268,7 @@ function readLand(page: Page): LandInfo {
 		numberFromText(text(properties["面積（坪）"]) || text(properties["面積"]));
 	const powerArea =
 		text(properties["電力会社エリア"]) || inferPowerAreaFromAddress(address);
+	const substationDistanceKm = numberValue(properties["変電所距離（km）"]);
 
 	return {
 		page,
@@ -15412,6 +15278,10 @@ function readLand(page: Page): LandInfo {
 			text(properties["Name"]) ||
 			"土地候補",
 		address,
+		parcel:
+			text(properties["地番"]) ||
+			text(properties["土地地番"]) ||
+			text(properties["筆"]),
 		areaTsubo,
 		powerArea,
 		landUse: text(properties["用途地域"]),
@@ -15420,13 +15290,28 @@ function readLand(page: Page): LandInfo {
 			text(properties["接道状況"]) ||
 			text(properties["AI接道評価"]),
 		farmland:
+			text(properties["農地種別"]) ||
 			text(properties["農転/登記/近隣確認"]) ||
 			text(properties["農地判定"]) ||
 			text(properties["登記確認"]),
+		farmlandStatus:
+			text(properties["農地転用可否"]) ||
+			text(properties["農転ステータス"]) ||
+			text(properties["農振ステータス"]) ||
+			text(properties["農転/登記/近隣確認"]),
+		registryStatus:
+			text(properties["登記確認状況"]) ||
+			text(properties["登記確認"]) ||
+			text(properties["権利関係"]),
+		neighborDistance:
+			text(properties["近隣住宅距離（m）"]) ||
+			text(properties["近隣住宅距離"]) ||
+			text(properties["近隣住宅確認"]),
 		substationDistance:
 			text(properties["変電所距離"]) ||
 			text(properties["系統距離"]) ||
-			text(properties["最寄り変電所距離"]),
+			text(properties["最寄り変電所距離"]) ||
+			(substationDistanceKm !== null ? `${substationDistanceKm}km` : ""),
 	};
 }
 
@@ -15439,49 +15324,25 @@ function buildLandEvaluation(land: LandInfo): LandEvaluation {
 	if (!land.address) missing.push("所在地");
 	if (!land.areaTsubo || land.areaTsubo <= 0) missing.push("面積（坪）");
 
-	const area = land.areaTsubo ?? 0;
-	let score = 42;
-	if (land.address) score += 10;
-	if (area >= 5000) score += 22;
-	else if (area >= 2400) score += 18;
-	else if (area >= 1500) score += 14;
-	else if (area >= 600) score += 9;
-	else if (area >= 300) score += 4;
-	else if (area > 0) score -= 6;
-	if (land.powerArea) score += 6;
-	if (land.landUse) score += 4;
-	if (land.road) score += 5;
-	if (land.farmland) score += 4;
-	if (land.substationDistance) score += 7;
-	if (missing.length > 0) score = Math.min(score, 45);
-
-	score = Math.max(0, Math.min(100, score));
-
-	const overallGrade = score >= 80 ? "A" : score >= 65 ? "B" : "C";
-	const bucket =
-		missing.length > 0
-			? "要確認"
-			: score >= 80
-				? "案件化候補"
-				: score >= 65
-					? "優先確認"
-					: score >= 50
-						? "追加確認"
-						: "見送り候補";
-	const actionBucket = chooseLandActionBucket(land, score, missing.length > 0);
+	const branch = classifyLandBranch(land, missing);
+	const score = branch.score;
+	const overallGrade = branch.code;
+	const bucket = `${branch.code}: ${branch.label}`;
+	const actionBucket = branch.actionBucket;
 	const caseStatus =
-		missing.length > 0 || score < 50 ? "未案件化" : "案件化保留";
+		branch.code === "S" || branch.code === "A" ? "案件化保留" : "未案件化";
 	const projectType =
-		area >= 1500
+		(land.areaTsubo ?? 0) >= 1500
 			? "高圧系統用"
-			: area >= 300
+			: (land.areaTsubo ?? 0) >= 300
 				? "低圧バルク"
 				: "未判定";
 	const powerArea = land.powerArea || inferPowerAreaFromAddress(land.address) || "未確認";
+	const area = land.areaTsubo ?? 0;
 	const areaLabel = area > 0 ? `${Math.round(area).toLocaleString("ja-JP")}坪` : "面積未確認";
-	const landRating = score >= 80 ? "◎" : score >= 65 ? "○" : score >= 50 ? "△" : "×";
+	const landRating = branch.code === "S" ? "◎" : branch.code === "A" || branch.code === "B" ? "○" : branch.code === "C" ? "△" : "×";
 	const powerRating =
-		missing.length > 0
+		branch.code === "X"
 			? "×"
 			: land.substationDistance
 				? score >= 65
@@ -15493,14 +15354,18 @@ function buildLandEvaluation(land: LandInfo): LandEvaluation {
 	const roadRating = chooseRoadRating(land.road);
 	const subsidyRating = "要確認";
 	const demandRating = area >= 1500 ? "あり" : area >= 300 ? "不明" : "なし";
-	const reviewMemo =
-		missing.length > 0
-			? `${missing.join("、")}が不足。評価前に入力を確認してください。`
-			: "AI/Workerによる第一評価。系統、接道、農転、登記は人間確認が前提。";
+	const evidenceText = buildLandBranchEvidence(land, branch, missing);
+	const reviewMemo = [
+		`判定バージョン: land-evaluation-v2`,
+		`細分化分岐: ${branch.code} / ${branch.label}`,
+		`判定信頼度: ${branch.confidence}`,
+		branch.reason,
+	].join("\n");
 
 	return {
 		overallGrade,
 		score,
+		confidence: branch.confidence,
 		bucket,
 		actionBucket,
 		caseStatus,
@@ -15512,10 +15377,11 @@ function buildLandEvaluation(land: LandInfo): LandEvaluation {
 		subsidyRating,
 		demandRating,
 		landEvaluation: [
+			`判定バージョン: land-evaluation-v2`,
+			`細分化分岐: ${branch.code} / ${branch.label}`,
+			`判定信頼度: ${branch.confidence}`,
 			`${land.name}は、${areaLabel}・所在地「${land.address || "未確認"}」を起点にした土地評価です。`,
-			missing.length > 0
-				? `要確認: ${reviewMemo}`
-				: `推測ですが、面積規模からは「${projectType}」として一次確認する価値があります。`,
+			`分岐材料:\n${evidenceText}`,
 			`総合評価は${overallGrade}、AI総合スコアは${score}点です。`,
 		].join("\n"),
 		powerEvaluation:
@@ -15531,14 +15397,156 @@ function buildLandEvaluation(land: LandInfo): LandEvaluation {
 			area >= 1500
 				? "推測ですが、蓄電池・高圧/特高系の需要仮説を置けます。需要地距離と系統側の受け皿を優先確認してください。"
 				: "推測ですが、低圧集約、売却候補、近隣案件との組み合わせで価値を確認します。単独案件化は追加確認が必要です。",
-		nextAction:
-			missing.length > 0
-				? `まず${missing.join("、")}を入力し、再度「土地評価を開始」してください。`
-				: score >= 65
-					? "変電所距離、系統空き、接道、農転/登記、近隣住宅距離を確認し、案件化可否を人間が判断してください。"
-					: "不足条件を整理し、接道・用途地域・農転/登記・需要地距離を確認してから再評価してください。",
+		nextAction: buildLandNextAction(land, branch, missing),
 		reviewMemo,
 	};
+}
+
+type LandBranch = {
+	code: "S" | "A" | "B" | "C" | "D" | "X";
+	label: string;
+	score: number;
+	confidence: string;
+	actionBucket: string;
+	reason: string;
+};
+
+function classifyLandBranch(land: LandInfo, missing: string[]): LandBranch {
+	const joined = [
+		land.address,
+		land.parcel,
+		land.farmland,
+		land.farmlandStatus,
+		land.road,
+		land.registryStatus,
+		land.substationDistance,
+	].join(" ");
+	const area = land.areaTsubo ?? 0;
+	if (missing.length > 0 || /入力不一致|住所.*不一致|座標.*不一致|面積.*不一致/.test(joined)) {
+		return landBranch("X", "入力不一致・判定不能", 0, "低", "継続監視", "住所、面積、地番、座標、資料の整合性を先に直す必要があります。");
+	}
+	if (/無接道|未接道|接道なし|第三者地|進入不可|通行権未確認/.test(land.road)) {
+		return landBranch("D", "原則停止", 25, "中", "継続監視", "接道または進入経路が重大阻害です。現地訪問や追加費用は原則止めます。");
+	}
+	if (/差押|仮登記|抵当.*未整理|権利重大|所有者不明/.test(land.registryStatus)) {
+		return landBranch("D", "原則停止", 30, "中", "継続監視", "登記・権利に重大阻害があります。");
+	}
+	if (/農用地区域|農振農用/.test(land.farmland) && /除外必要|未確認|未申請|申請中/.test(land.farmlandStatus || land.farmland)) {
+		return landBranch("C", "責任者判断", 50, "中", "継続監視", "農振除外または農転の扱いに責任者判断が必要です。");
+	}
+
+	const weakItems = [
+		land.parcel ? "" : "地番",
+		isUnknownLandText(land.farmland) ? "農地種別" : "",
+		isUnknownLandText(land.farmlandStatus) ? "農地転用可否" : "",
+		isWeakRoad(land.road) ? "接道状況" : "",
+		isUnknownLandText(land.registryStatus) ? "登記確認状況" : "",
+		isUnknownLandText(land.substationDistance) ? "変電所距離" : "",
+	].filter(Boolean);
+	if (weakItems.length >= 3) {
+		return landBranch("B", "追加資料後に再判定", 68, "低", "接道確認", `${weakItems.join("、")}が不足しており、営業担当への資料依頼が必要です。`);
+	}
+	if (/共有あり|境界未確定|賃借権|水路|里道|私道|幅員3m|要確認/.test(joined)) {
+		return landBranch("C", "責任者判断", 58, "中", "継続監視", "権利、接道、境界などに人間判断が必要な材料があります。");
+	}
+
+	const strongFarmland = /許可済|不要|回答済|可能/.test(land.farmlandStatus);
+	const strongRoad = /幅員[4-9]|幅員[1-9][0-9]|4m|5m|6m|7m|8m|9m|大型車進入\s*可|接道.*OK/i.test(land.road);
+	const strongRegistry = /確認済|取得済|権利リスクなし|なし/.test(land.registryStatus);
+	const strongGrid = !isUnknownLandText(land.substationDistance);
+	if (area >= 1500 && strongFarmland && strongRoad && strongRegistry && strongGrid) {
+		return landBranch("S", "即アタック", 92, "高", "即アタック", "農転、接道、登記、系統、面積が初期条件として強いです。");
+	}
+	if (area >= 600 && (strongRoad || strongFarmland) && weakItems.length <= 2) {
+		return landBranch("A", "並行調査で進める", 82, "中", "現地確認", "未確認は残りますが、止めるより並行調査が妥当です。");
+	}
+	return landBranch("B", "追加資料後に再判定", 66, "低", "接道確認", "評価継続には追加資料が必要です。");
+}
+
+function landBranch(
+	code: LandBranch["code"],
+	label: string,
+	score: number,
+	confidence: string,
+	actionBucket: string,
+	reason: string,
+): LandBranch {
+	return { code, label, score, confidence, actionBucket, reason };
+}
+
+function isUnknownLandText(value: string): boolean {
+	return !value || /未確認|不明|なし|無し|未入力/.test(value);
+}
+
+function isWeakRoad(value: string): boolean {
+	return isUnknownLandText(value) || /Google Mapsのみ|幅員未確認|道路種別不明|要確認/.test(value);
+}
+
+function buildLandBranchEvidence(
+	land: LandInfo,
+	branch: LandBranch,
+	missing: string[],
+): string {
+	return [
+		`- 入力整合性: ${missing.length > 0 ? `${missing.join("、")}が不足` : "所在地・面積は入力あり"}。地番=${land.parcel || "未確認"}`,
+		`- 農地・農転: ${land.farmland || "未確認"} / ${land.farmlandStatus || "未確認"}`,
+		`- 接道: ${land.road || "未確認"}`,
+		`- 登記・権利: ${land.registryStatus || "未確認"}`,
+		`- 系統: 電力エリア=${land.powerArea || "未確認"} / 変電所距離=${land.substationDistance || "未確認"}`,
+		`- 事業性: 面積=${land.areaTsubo ? `${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪` : "未確認"} / 用途=${land.landUse || "未確認"} / 近隣=${land.neighborDistance || "未確認"}`,
+		`- WAJOナレッジ: 営業部データ未回収。第1次80点では仮ルールとして停止条件、確認順序、営業ナビに反映し、回収後に校正する。`,
+		`- 分岐理由: ${branch.reason}`,
+	].join("\n");
+}
+
+function buildLandNextAction(
+	land: LandInfo,
+	branch: LandBranch,
+	missing: string[],
+): string {
+	if (branch.code === "X") {
+		return [
+			"入力不一致・判定不能です。評価より先に入力修正をしてください。",
+			"土地DB「所在地」: 都道府県 + 市区町村 + 大字/字 + 地番。住居住所だけなら末尾に「地番未確認」。",
+			"土地DB「面積（坪）」: 数字だけ。㎡しかない場合は㎡値も案件化メモへ残す。",
+			"期限: 本日中。再判定: 入力修正後すぐ。",
+		].join("\n");
+	}
+	if (branch.code === "D") {
+		return [
+			"現地訪問や追加費用を原則止める。例外理由がある場合だけ責任者判断へ送ってください。",
+			`停止根拠: ${branch.reason}`,
+			"次に見るもの: 接道根拠、通行権、登記・権利、農振除外の可否。",
+			"期限: 本日中に責任者判断。再判定: 停止根拠が解消した後。",
+		].join("\n");
+	}
+	if (branch.code === "C") {
+		return [
+			"責任者判断へ送ってください。営業担当だけで進行判断しないでください。",
+			`判断根拠: ${branch.reason}`,
+			"必要資料: 農業委員会相談メモ、道路台帳または公図、登記簿、権利リスクメモ。",
+			"期限: 本日中。再判定: 責任者判断または資料追加入力後。",
+		].join("\n");
+	}
+	if (branch.code === "B") {
+		return [
+			"追加資料を入れて再判定してください。",
+			"土地DB「所在地」: 都道府県 + 市区町村 + 大字/字 + 地番。住居住所だけなら末尾に「地番未確認」。",
+			"土地DB「農地種別」: 地目 / 農振法区分 / 農地区分 / 都市計画法区分 / 所管農業委員会。",
+			"土地DB「農地転用可否」: 正式許可ではなく、未確認 / 未申請 / 申請中 / 許可済 / 不要 の現状態。",
+			"土地DB「接道状況」: 道路名 / 幅員○m / 道路種別 / 大型車進入 可・不可・未確認。",
+			"土地DB「登記確認状況」: 未確認 / 確認済み / 所有者不明 / 権利未整理。",
+			"期限: 原則2日以内。再判定: 入力後すぐ。",
+			land.substationDistance ? "" : "系統: 変電所距離または接続検討状況も分かる範囲で入力。",
+		].filter(Boolean).join("\n");
+	}
+	return [
+		branch.code === "S" ? "即アタック候補です。" : "並行調査で進める候補です。",
+		"所有者、接道、系統、価格調査を並行して進めてください。",
+		"農業委員会への照会資料も準備してください。正式許可とは書かないでください。",
+		"不足が出た場合は、土地DB「農地種別」「接道状況」「登記確認状況」へ未確認として残してください。",
+		"期限: 本日中に一次調査開始。再判定: 追加資料入力後すぐ。",
+	].join("\n");
 }
 
 function chooseLandActionBucket(
@@ -15688,7 +15696,7 @@ async function createLandEvaluationLearningLog(
 		対象領域: select("土地"),
 		判定日時: { date: { start: new Date().toISOString() } },
 		"AI/Worker名": richText("processLandEvaluation"),
-		判定バージョン: richText("land-evaluation-v1"),
+		判定バージョン: richText("land-evaluation-v2"),
 		判定スコア: { number: evaluation.score },
 		判定ラベル: richText(`${evaluation.overallGrade} / ${evaluation.bucket}`),
 		判定根拠: richText(reason),
@@ -18856,18 +18864,6 @@ function extractTriggerUserIdFromWebhook(body: Record<string, unknown>): string 
 	);
 }
 
-function extractManagerActionReasonFromWebhook(body: Record<string, unknown>): string {
-	return extractWebhookBodyText(body, [
-		"理由",
-		"差し戻し理由",
-		"取り消し理由",
-		"管理メモ",
-		"メモ",
-		"reason",
-		"message",
-	]);
-}
-
 function extractLostReasonFromWebhook(body: Record<string, unknown>): string {
 	return extractWebhookBodyText(body, [
 		"失注理由",
@@ -18882,7 +18878,6 @@ function extractLostReasonFromWebhook(body: Record<string, unknown>): string {
 function extractLostMemoFromWebhook(body: Record<string, unknown>): string {
 	return extractWebhookBodyText(body, [
 		"失注理由メモ",
-		"失注申請メモ",
 		"lostMemo",
 		"lost_memo",
 		"memo",
@@ -19418,7 +19413,7 @@ export {
 /**
  * 成約報告メイン処理
  * - 重複ガード（同一案件の有効な成約報告が既存なら skip）
- * - 成約報告DB に成約レコード作成（承認ステータス → 「成約」）
+ * - 成約報告DB に成約レコード作成
  * - 案件DB ステータス → 「🏆 成約」に更新
  * - ボタンを押したユーザーを担当営業に自動セット
  * - 営業部へコメント通知
@@ -19442,10 +19437,7 @@ async function processClosingReport(
 		},
 		page_size: 5,
 	});
-	const activeReports = ((existing.results ?? []) as Page[]).filter((p) => {
-		const s = text(p.properties?.["承認ステータス"]);
-		return s !== "取り消し" && s !== "差戻し" && s !== "差し戻し";
-	});
+	const activeReports = (existing.results ?? []) as Page[];
 	if (activeReports.length > 0) {
 		const existingId = activeReports[0]!.id;
 		const projectProperties = projectPage.properties ?? {};
@@ -19548,16 +19540,15 @@ async function processClosingReport(
 	const commissionRate = hasSeparateSourcing ? 0.02 : 0.04;
 	const commissionAmount = Math.round(grossProfit * commissionRate);
 
-	// 4. 案件ステータスは即時成約へ。後追いでマネージャーが差し戻し/取り消しを行う。
+	// 4. 案件ステータスは即時成約へ。成約側の管理ゲートは設けない。
 	await safeUpdateExistingProperties(notion, projectPage, {
 		ステータス: { kind: "select", value: "🏆 成約" },
 		成約日: { kind: "date", value: todayDateJST() },
 	});
 
-	// 5. 成約報告ページ作成（承認ステータス = 「成約」）
+	// 5. 成約報告ページ作成
 	const properties: Record<string, unknown> = {
 		成約名: title(`${projectName}｜成約報告`),
-		承認ステータス: select("成約"),
 		対象物種別: select(targetType || "その他"),
 		売買区分: select(closingDealType),
 		歩合対象: { checkbox: true },
@@ -19877,7 +19868,7 @@ function buildClosingSuccessMessage({
 		`歩合見込: ${formatYen(commissionAmount)}`,
 		"反映先: 営業マンパフォーマンスDB｜月次成績",
 		"",
-		"マネージャーは必要に応じて差し戻し/取り消しを行えます。",
+		"成約は営業判断で即時反映します。",
 		commissionNote,
 	].join("\n");
 }
@@ -20120,223 +20111,6 @@ function monthWindowJST(now: Date): {
 	};
 }
 
-/** 成約報告の取り消し
- * 締め前の「成約」はマネージャーが取り消せる。
- * 締め済み/歩合確定済み、または歩合確定額が入っているものは取り消さず、調整レコードで扱う。
- * 取り消し時は月次成績のリレーションも除去して数字を下げる。
- */
-async function cancelClosingReport(
-	closingPageId: string,
-	notion: NotionClient,
-	reason = "",
-): Promise<{ action: string; message: string }> {
-	const closingPage = await notion.pages.retrieve({ page_id: closingPageId });
-	const currentStatus = text(closingPage.properties?.["承認ステータス"]);
-	const fixedCommission = numberValue(closingPage.properties?.["歩合確定額"]) ?? 0;
-
-	// 既に取り消し済み
-	if (currentStatus === "取り消し") {
-		return {
-			action: "already-cancelled",
-			message: "既に取り消し済みです。",
-		};
-	}
-
-	if (
-		currentStatus === "締め済み" ||
-		currentStatus === "歩合確定済み" ||
-		fixedCommission > 0
-	) {
-		return {
-			action: "blocked",
-			message:
-				"歩合確定済みまたは締め済みのため取り消しできません。必要な場合は調整レコードで処理してください。",
-		};
-	}
-
-	// 1. 成約報告を取り消し状態に変更
-	const memo = [
-		`取り消し日: ${todayDateJST()}`,
-		reason ? `理由: ${reason.slice(0, 500)}` : "",
-	].filter(Boolean).join("\n");
-	await safeUpdateExistingProperties(notion, closingPage, {
-		承認ステータス: { kind: "select", value: "取り消し" },
-		管理メモ: { kind: "text", value: memo },
-	});
-
-	// 2. 案件DBのステータスを提案中に戻す
-	const projectIds = relationIdsFromProperty(closingPage.properties?.["関連案件"]);
-	if (projectIds.length > 0) {
-		const projectPage = await notion.pages.retrieve({ page_id: projectIds[0]! });
-		await safeUpdateExistingProperties(notion, projectPage, {
-			ステータス: { kind: "select", value: "📋 提案中" },
-			成約日: { kind: "clear" },
-			管理アクション状態: { kind: "select", value: "取り消し" },
-			管理アクション日: { kind: "date", value: todayDateJST() },
-			管理アクションメモ: { kind: "text", value: memo },
-			最終アクション日: { kind: "date", value: todayDateJST() },
-		});
-		await createPageComment(
-			notion,
-			projectPage.id,
-			`🔄 成約報告が取り消されました。\n${memo}`,
-		);
-	}
-
-	// 3. 月次成績のリレーションから除去（rollupの数字を即時減算）
-	await removeLinkFromMonthlyPerformanceRecords(closingPageId, notion).catch((err) => {
-		console.error("removeLinkFromMonthlyPerformanceRecords error:", String(err));
-	});
-
-	return {
-		action: "cancelled",
-		message: "成約報告を取り消しました。案件を「📋 提案中」に戻し、成績からも除外しました。",
-	};
-}
-
-/**
- * 営業マンパフォーマンスDBの月次成績から成約報告のリレーションを除去する
- * 成約取り消し時に呼び出し、rollupの数字（成約件数・粗利額・歩合）を自動減算させる
- */
-async function removeLinkFromMonthlyPerformanceRecords(
-	closingPageId: string,
-	notion: NotionClient,
-): Promise<void> {
-	const existing = await notion.dataSources.query({
-		data_source_id: SALES_PERFORMANCE_DATA_SOURCE_ID,
-		filter: {
-			property: "関連成約",
-			relation: { contains: closingPageId },
-		},
-		page_size: 5,
-	});
-
-	const pages = (existing.results ?? []) as Page[];
-	if (pages.length === 0) {
-		console.log(`月次成績に紐付けレコードが見つかりませんでした（成約ID: ${closingPageId}）`);
-		return;
-	}
-
-	for (const page of pages) {
-		const currentIds = relationIdsFromProperty(page.properties?.["関連成約"]);
-		const newIds = currentIds.filter((id) => id !== closingPageId);
-		await notion.pages.update({
-			page_id: page.id,
-			properties: {
-				関連成約: { relation: newIds.map((id) => ({ id })) },
-			},
-		});
-		console.log(`成約ID ${closingPageId} を月次成績（営業マンパフォーマンスDB ${page.id}）の関連成約から除去しました`);
-	}
-}
-
-export { cancelClosingReport as cancelClosingReportForTest };
-
-/** マネージャーによる成約報告の差し戻し */
-async function dismissClosingReport(
-	closingPageId: string,
-	notion: NotionClient,
-	reason = "",
-): Promise<{ action: string; message: string }> {
-	const closingPage = await notion.pages.retrieve({ page_id: closingPageId });
-	const memo = [
-		`差し戻し日: ${todayDateJST()}`,
-		reason ? `理由: ${reason.slice(0, 500)}` : "",
-	].filter(Boolean).join("\n");
-
-	await safeUpdateExistingProperties(notion, closingPage, {
-		承認ステータス: { kind: "select", value: "差戻し" },
-		管理メモ: { kind: "text", value: memo },
-	});
-
-	// 案件DBのステータスを提案中に戻す
-	const projectIds = relationIdsFromProperty(closingPage.properties?.["関連案件"]);
-	if (projectIds.length > 0) {
-		const projectPage = await notion.pages.retrieve({ page_id: projectIds[0]! });
-		await safeUpdateExistingProperties(notion, projectPage, {
-			ステータス: { kind: "select", value: "📋 提案中" },
-			成約日: { kind: "clear" },
-			管理アクション状態: { kind: "select", value: "差し戻し" },
-			管理アクション日: { kind: "date", value: todayDateJST() },
-			管理アクションメモ: { kind: "text", value: memo },
-			最終アクション日: { kind: "date", value: todayDateJST() },
-		});
-		await createPageComment(
-			notion,
-			projectPage.id,
-			`↩️ 成約報告が差し戻されました。\n${memo}`,
-		);
-	}
-
-	await removeLinkFromMonthlyPerformanceRecords(closingPageId, notion).catch((err) => {
-		console.error("removeLinkFromMonthlyPerformanceRecords error:", String(err));
-	});
-
-	return {
-		action: "dismissed",
-		message:
-			"成約報告を差し戻しました。案件のステータスを「📋 提案中」に戻しました。担当営業に内容の確認を促してください。",
-	};
-}
-
-async function dismissProject(
-	projectPageId: string,
-	notion: NotionClient,
-	reason = "",
-): Promise<{ action: string; message: string }> {
-	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
-	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
-	const memo = [
-		`${todayDateJST()} マネージャー差し戻し`,
-		reason ? `理由: ${reason.slice(0, 500)}` : "理由: 条件・権利関係・担当/共有範囲の再確認が必要",
-	].join("\n");
-
-	await safeUpdateExistingProperties(notion, projectPage, {
-		ステータス: { kind: "select", value: "⏳ 確認待ち" },
-		確認待ち内容: { kind: "text", value: memo },
-		管理アクション状態: { kind: "select", value: "差し戻し" },
-		管理アクション日: { kind: "date", value: todayDateJST() },
-		管理アクションメモ: { kind: "text", value: memo },
-		最終アクション日: { kind: "date", value: todayDateJST() },
-	});
-	await createPageComment(notion, projectPage.id, `↩️ 案件「${projectName}」を差し戻しました。\n${memo}`);
-
-	return {
-		action: "dismissed",
-		message: `案件「${projectName}」を確認待ちへ差し戻しました。`,
-	};
-}
-
-async function cancelProject(
-	projectPageId: string,
-	notion: NotionClient,
-	reason = "",
-): Promise<{ action: string; message: string }> {
-	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
-	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
-	const memo = [
-		`${todayDateJST()} マネージャー取り消し`,
-		reason ? `理由: ${reason.slice(0, 500)}` : "理由: 優先度低下／見送り",
-	].join("\n");
-
-	await safeUpdateExistingProperties(notion, projectPage, {
-		ステータス: { kind: "select", value: "❌ 失注" },
-		成約日: { kind: "clear" },
-		失注理由: { kind: "multi_select", values: ["優先度低下／見送り"] },
-		確認待ち内容: { kind: "text", value: memo },
-		管理アクション状態: { kind: "select", value: "取り消し" },
-		管理アクション日: { kind: "date", value: todayDateJST() },
-		管理アクションメモ: { kind: "text", value: memo },
-		最終アクション日: { kind: "date", value: todayDateJST() },
-	});
-	await createPageComment(notion, projectPage.id, `🔄 案件「${projectName}」を取り消しました。\n${memo}`);
-
-	return {
-		action: "cancelled",
-		message: `案件「${projectName}」を失注扱いで取り消しました。`,
-	};
-}
-
 type LostActionOptions = {
 	reason?: string;
 	memo?: string;
@@ -20447,7 +20221,7 @@ async function processInquiryLost(
 	};
 }
 
-async function processProjectLostRequest(
+async function processProjectLost(
 	projectPageId: string,
 	notion: NotionClient,
 	options: LostActionOptions = {},
@@ -20459,7 +20233,7 @@ async function processProjectLostRequest(
 		await createPageComment(
 			notion,
 			projectPage.id,
-			"⚠️ 失注理由が未入力のため、失注申請を出していません。失注理由を選んでからもう一度実行してください。",
+			"⚠️ 失注理由が未入力のため、案件を失注にしていません。失注理由を選んでからもう一度実行してください。",
 		);
 		return {
 			action: "needs-lost-reason",
@@ -20469,21 +20243,19 @@ async function processProjectLostRequest(
 
 	const previousPhase = projectLostPreviousPhase(projectPage);
 	const memo = buildLostAuditMemo({
-		actionLabel: "案件失注申請",
+		actionLabel: "案件失注",
 		reasons,
 		memo: options.memo,
 		previousPhase,
 	});
 	const patches: Record<string, SafePatch> = {
-		ステータス: { kind: "select", value: "失注申請中" },
+		ステータス: { kind: "select", value: "❌ 失注" },
 		失注理由: { kind: "multi_select", values: reasons },
 		失注理由メモ: { kind: "text", value: options.memo || lostReasonText(reasons) },
+		失注日: { kind: "date", value: todayDateJST() },
 		失注前フェーズ: { kind: "text", value: previousPhase },
-		失注申請状態: { kind: "select", value: "申請中" },
-		失注申請メモ: { kind: "text", value: memo },
-		管理アクション状態: { kind: "select", value: "失注申請中" },
-		管理アクション日: { kind: "date", value: todayDateJST() },
-		管理アクションメモ: { kind: "text", value: memo },
+		"退役｜失注申請状態（使用禁止）": { kind: "clear" },
+		"退役｜失注申請メモ（使用禁止）": { kind: "clear" },
 		最終アクション日: { kind: "date", value: todayDateJST() },
 	};
 	if (options.triggerUserId) {
@@ -20494,116 +20266,21 @@ async function processProjectLostRequest(
 		notion,
 		projectPage.id,
 		[
-			`📨 失注申請が出ました: ${projectName}`,
+			`📉 案件を失注にしました: ${projectName}`,
 			`理由: ${lostReasonText(reasons)}`,
 			options.memo ? `メモ: ${options.memo}` : "",
-			"この時点では正式な失注ではありません。マネージャー承認後に `❌ 失注` へ確定します。",
+			"営業判断で即時反映しました。",
 		].filter(Boolean).join("\n"),
 	);
 	return {
-		action: "requested",
-		message: "案件を失注申請中にし、マネージャー承認待ちとして記録しました。",
-	};
-}
-
-async function approveProjectLostRequest(
-	projectPageId: string,
-	notion: NotionClient,
-	options: LostActionOptions = {},
-): Promise<{ action: string; message: string }> {
-	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
-	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
-	const currentStatus = text(projectPage.properties?.["失注申請状態"]);
-	if (currentStatus && currentStatus !== "申請中") {
-		return {
-			action: "blocked",
-			message: `失注申請状態が「${currentStatus}」のため、承認処理は行いませんでした。`,
-		};
-	}
-	const reasons = normalizeLostReasons(text(projectPage.properties?.["失注理由"]));
-	const previousPhase =
-		text(projectPage.properties?.["失注前フェーズ"]) || projectLostPreviousPhase(projectPage);
-	const memo = [
-		buildLostAuditMemo({
-			actionLabel: "案件失注承認",
-			reasons: reasons.length > 0 ? reasons : ["未設定"],
-			memo: options.memo,
-			previousPhase,
-		}),
-	].join("\n");
-	const patches: Record<string, SafePatch> = {
-		ステータス: { kind: "select", value: "❌ 失注" },
-		成約日: { kind: "clear" },
-		失注申請状態: { kind: "select", value: "承認済" },
-		失注日: { kind: "date", value: todayDateJST() },
-		管理アクション状態: { kind: "select", value: "失注承認" },
-		管理アクション日: { kind: "date", value: todayDateJST() },
-		管理アクションメモ: { kind: "text", value: memo },
-		最終アクション日: { kind: "date", value: todayDateJST() },
-	};
-	if (options.triggerUserId) {
-		patches["失注処理者"] = { kind: "people", ids: [options.triggerUserId] };
-	}
-	await safeUpdateExistingProperties(notion, projectPage, patches);
-	await notifySalesTeam(
-		notion,
-		projectPage.id,
-		[
-			`📉 失注が承認されました: ${projectName}`,
-			reasons.length > 0 ? `理由: ${lostReasonText(reasons)}` : "",
-			options.memo ? `マネージャーメモ: ${options.memo}` : "",
-			"ステータスを `失注申請中` から `❌ 失注` へ確定しました。",
-		].filter(Boolean).join("\n"),
-	);
-	return {
-		action: "approved",
-		message: "案件の失注申請を承認し、正式に失注へ確定しました。",
-	};
-}
-
-async function rejectProjectLostRequest(
-	projectPageId: string,
-	notion: NotionClient,
-	options: LostActionOptions = {},
-): Promise<{ action: string; message: string }> {
-	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
-	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
-	const memo = [
-		`${todayDateJST()} 案件失注申請差し戻し`,
-		options.memo ? `理由: ${options.memo.slice(0, 500)}` : "理由: マネージャー確認により再対応が必要",
-	].join("\n");
-	const patches: Record<string, SafePatch> = {
-		ステータス: { kind: "select", value: "⏳ 確認待ち" },
-		失注申請状態: { kind: "select", value: "差し戻し" },
-		失注申請メモ: { kind: "text", value: memo },
-		管理アクション状態: { kind: "select", value: "失注差し戻し" },
-		管理アクション日: { kind: "date", value: todayDateJST() },
-		管理アクションメモ: { kind: "text", value: memo },
-		最終アクション日: { kind: "date", value: todayDateJST() },
-	};
-	await safeUpdateExistingProperties(notion, projectPage, patches);
-	await notifySalesTeam(
-		notion,
-		projectPage.id,
-		[
-			`↩️ 失注申請が差し戻されました: ${projectName}`,
-			options.memo ? `マネージャーメモ: ${options.memo}` : "",
-			"案件は `⏳ 確認待ち` に戻しました。担当者は次アクションを確認してください。",
-		].filter(Boolean).join("\n"),
-	);
-	return {
-		action: "rejected",
-		message: "案件の失注申請を差し戻し、確認待ちへ戻しました。",
+		action: "lost",
+		message: "案件を失注にし、理由・処理者・処理日・監査ログを残しました。",
 	};
 }
 
 export {
-	approveProjectLostRequest as approveProjectLostRequestForTest,
-	cancelProject as cancelProjectForTest,
-	dismissProject as dismissProjectForTest,
 	processInquiryLost as processInquiryLostForTest,
-	processProjectLostRequest as processProjectLostRequestForTest,
-	rejectProjectLostRequest as rejectProjectLostRequestForTest,
+	processProjectLost as processProjectLostForTest,
 };
 
 /**
@@ -21142,7 +20819,7 @@ async function linkUnclaimedClosingsToQuota(
 		}),
 	]);
 
-	// 重複除去してマージ（取り消し除外）
+	// 重複除去してマージ
 	const allResults = [
 		...((salesResult.results ?? []) as Page[]),
 		...((sourcingResult.results ?? []) as Page[]),
@@ -21151,8 +20828,7 @@ async function linkUnclaimedClosingsToQuota(
 	const closingPages = allResults.filter((p) => {
 		if (seenIds.has(p.id)) return false;
 		seenIds.add(p.id);
-		const s = text(p.properties?.["承認ステータス"]);
-		return s !== "取り消し";
+		return true;
 	});
 
 	if (closingPages.length === 0) {

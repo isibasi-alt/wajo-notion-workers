@@ -8,12 +8,10 @@ const comments: Array<Record<string, unknown>> = [];
 const notion = {
 	dataSources: {
 		query: async () => ({
-			results: [{
-				id: "closing-existing",
-				properties: {
-					承認ステータス: { type: "select", select: { name: "成約" } },
-				},
-			}],
+				results: [{
+					id: "closing-existing",
+					properties: {},
+				}],
 		}),
 	},
 	pages: {
