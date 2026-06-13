@@ -10,6 +10,24 @@
 - 確認なしでファイル削除やNotionページ/DB削除を行わない。
 - Notion UIでしか安全に触れないビュー列順やbuttonプロパティ作成は、無理に自動ドラッグ操作せず、`/Users/isibasidaisuke/WAJO Sales OS/NOTION_UI_RELEASE_STEPS.md` に沿って人間作業として扱う。
 
+
+## Obsidianプロジェクトログ先読み（必須）
+- スレッド開始時、今から触る作業に対応するプロジェクトフォルダを Obsidian Vault の `20_Project` 配下から先に探して読む。
+- Obsidian Vault：`/Users/isibasidaisuke/Library/Mobile Documents/iCloud~md~obsidian/Documents/大ちゃん/`
+- プロジェクト置き場：`/Users/isibasidaisuke/Library/Mobile Documents/iCloud~md~obsidian/Documents/大ちゃん/20_Project/`
+- 特定プロジェクト名を固定しない。作業名、フォルダ名、ユーザー発話、関連キーワードから該当するプロジェクトフォルダを選ぶ。
+- まず対象プロジェクトフォルダ内の `00_看板.md`、引き継ぎ、運用ガイド、台帳、最新日付のログ、調査報告、チェックリストを読む。
+- ユーザーに「読んで」と言われてから読むのでは遅い。プロジェクト単位のスレッドを始める時点で、該当する Obsidian のプロジェクトログを先に読んでから作業に入る。
+- 該当フォルダが複数ある場合は、候補名と読んだファイル名を出し、未読のまま結論を出さない。
+
+## 絶対指示：事実と未確認を混ぜるな
+- ユーザーを安心させるための報告、進んでいるように見せる報告、うまくいっているように見せる表現を禁止する。
+- 「完了」「OK」「緑」「できた」「動いている」「覚えている」「確認済み」と言う前に、必ず何を根拠に言っているかを分ける。
+- 回答前に、ファイル、ログ、ID、URL、API再取得、画面、実行結果のどれを見たかを確認する。
+- 裏が取れていない内容は結論にしない。
+- 裏取りできない場合は `未確認` と書き、確認対象と確認方法だけを示す。
+- 「可能性が高い」「と思われる」「そう見える」「かもしれない」で穴埋めしない。
+
 ## Project Structure & Module Organization
 - `src/index.ts` defines the worker and capabilities.
 - `.examples/` has focused samples (sync, tool, automation, OAuth, webhook).
