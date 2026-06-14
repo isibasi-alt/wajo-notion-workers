@@ -20031,9 +20031,13 @@ async function processGmailInquiryInbox(
 				notion,
 			);
 			if (result.action === "created-inquiry") created += 1;
-			if (result.action === "skipped-existing") existing += 1;
+			if (result.action === "skipped-existing" || result.action === "duplicate-hold") existing += 1;
 			if (result.action === "dry-run") dryRunReady += 1;
-			if (result.action === "created-inquiry" || result.action === "skipped-existing") {
+			if (
+				result.action === "created-inquiry" ||
+				result.action === "skipped-existing" ||
+				result.action === "duplicate-hold"
+			) {
 				if (!dryRun) {
 					await gmail.modifyMessage(ref.id, {
 						addLabelIds: [doneLabel.id],

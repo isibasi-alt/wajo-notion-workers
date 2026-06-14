@@ -312,6 +312,8 @@ Yoom 側で保持していた Gmail トリガー、Notion検索、分岐、Notio
 
 2026-06-14 追加修正: 問い合わせメール入口の重複防止が Gmail 個体ID / Message-ID / Thread-ID 寄りで、同一人物のフォーム本体・返信メール・資料請求違いを別問い合わせとして作る弱点を確認しました。`findExistingInquiryByEmail` に連絡先ベースの既存検索を追加し、`メールアドレス + お名前`、`電話番号 + メールアドレス`、`電話番号 + お名前`、または同一メールアドレスで14日以内の既存問い合わせを検出した場合は新規作成せず `skipped-existing` にします。再発防止テストは `npm run test:gmail-inquiry-intake` で、鎌田慎司さん相当の返信メールが既存問い合わせへ止まるケースを追加済みです。`npm run check`、`npm run build` 通過後、Worker `019e452d-22e7-7de1-b5ea-432a297bb478` へ再デプロイし、capability 一覧に `processGmailInquiryInbox` が出ることを確認しました。再デプロイ直後の `processGmailInquiryInbox` dry-run は `checked: 0 / created: 0 / existing: 0 / errors: 0` で、未処理の問い合わせラベル対象はありませんでした。
 
+2026-06-14 5分ごと自動実行: `scripts/run-gmail-inquiry-inbox.sh` と `scripts/install-gmail-inquiry-worker-launchagent.sh` を追加しました。LaunchAgent 名は `com.wajo.gmail-inquiry-worker`、間隔は300秒です。起動するのは Worker tool `processGmailInquiryInbox` だけで、Codex/AI/企業調査は起動しません。自動実行時の引数は `dryRun:false / limit:20 / query:newer_than:30d / sourceLabelName:問い合わせ / doneLabelName:INQUIRY_DONE / removeSourceLabel:true / linkCompany:false` です。ログは `/tmp/wajo-gmail-inquiry/run.log` と `/tmp/wajo-gmail-inquiry/run.err` に残します。重複起動は `/tmp/wajo-gmail-inquiry.lock` で防止します。停止は `npm run gmail:inquiry:uninstall-5min` です。
+
 同日整理: 既に作成済みだった重複候補は削除せず、AI専用の `重複判定ステータス` / `企業連携ステータス` を `重複疑い` にしてメモへ正本候補を残しました。対象は川上卓さんの `問-260613-002`（正本候補 `問-260613-001`）と、鎌田慎司さんの返信側 `問-260612-001`（正本候補 フォーム本体 `問-260612-002`）です。既に案件化済みのページが含まれるため、削除・アーカイブは未実施です。
 
 2026-05-30 追加: 問い合わせタイトルは短縮表記へ寄せる。形式は `問-YYMMDD-001｜売/買｜名前/会社名｜太陽光｜低/高/低バ/高バ｜⚠` を基本にする。`⚠` は太陽光の売却・売買案件で中を開いて確認が必要という意味に限定し、理由は存在する場合のみ `確認待ち内容` へ `太陽光案件のため中身確認が必要です。` として書き戻す。主な理由は、所在地未確認、販売価格未確認、FIT/FIP・売電単価未確認、現場写真未確認/未添付、バルク候補。購入相談だけの太陽光問い合わせは、販売側の必須情報不足とは扱わず、原則 `⚠` を付けない。

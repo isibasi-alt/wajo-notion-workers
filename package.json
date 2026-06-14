@@ -5,6 +5,9 @@
 	"scripts": {
 		"build": "tsc",
 		"check": "tsc --noEmit",
+		"gmail:inquiry:run": "zsh scripts/run-gmail-inquiry-inbox.sh",
+		"gmail:inquiry:install-5min": "zsh scripts/install-gmail-inquiry-worker-launchagent.sh",
+		"gmail:inquiry:uninstall-5min": "zsh scripts/uninstall-gmail-inquiry-worker-launchagent.sh",
 		"test:ai-learning-log-outcome": "tsx src/ai-learning-log-outcome.test.ts",
 		"test:closing-report-celebration": "tsx src/closing-report-celebration.test.ts",
 		"test:closing-report-cancel-safety": "tsx src/closing-report-cancel-safety.test.ts",
