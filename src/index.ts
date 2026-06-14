@@ -17363,6 +17363,208 @@ function roadLedgerSearchUrl(target: string): string {
 	return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
 }
 
+const SUZUKA_OFFICIAL_MAP_LINKS: LandGridCapacityOfficialLink[] = [
+	{
+		label: "鈴鹿市 地理情報システム",
+		url: "https://www.city.suzuka.lg.jp/shisei/cityprofile/1004204.html",
+	},
+	{
+		label: "農業振興地域・農用地区域",
+		url: "https://www.sonicweb-asp.jp/city_suzuka/map?theme=th_34&layers=th_6,dm#layers=dm%2Cth_6&scale=3750&pos=136.58531946229436%2C34.881639760885584",
+	},
+	{
+		label: "都市計画",
+		url: "https://www.sonicweb-asp.jp/city_suzuka/map?theme=th_43&layers=th_3,dm#layers=dm%2Cth_3&scale=3750",
+	},
+	{
+		label: "指定道路図",
+		url: "https://www.sonicweb-asp.jp/city_suzuka/map?theme=th_34&layers=th_24,dm#layers=dm%2Cth_24&scale=3750&pos=136.58442896890142%2C34.88194340316046",
+	},
+];
+
+const SUZUKA_FARM_LAYER_CHECKS: Array<{ typename: string; label: string }> = [
+	{ typename: "2931(th_6)", label: "市街化区域" },
+	{ typename: "2936(th_6)", label: "農業振興地域" },
+	{ typename: "20265(th_6)", label: "樹園地" },
+	{ typename: "20380(th_6)", label: "畑" },
+	{ typename: "20387(th_6)", label: "水田" },
+	{ typename: "20910(th_6)", label: "農業用施設用地" },
+];
+
+const SUZUKA_CITY_PLANNING_LAND_USE_CHECKS: Array<{ typename: string; label: string }> = [
+	{ typename: "1104(th_3)", label: "第一種低層住居専用地域" },
+	{ typename: "1105(th_3)", label: "第二種低層住居専用地域" },
+	{ typename: "1106(th_3)", label: "第一種中高層住居専用地域" },
+	{ typename: "1107(th_3)", label: "第二種中高層住居専用地域" },
+	{ typename: "1108(th_3)", label: "第一種住居地域" },
+	{ typename: "1109(th_3)", label: "第二種住居地域" },
+	{ typename: "1110(th_3)", label: "準住居地域" },
+	{ typename: "1111(th_3)", label: "近隣商業地域" },
+	{ typename: "1112(th_3)", label: "商業地域" },
+	{ typename: "1113(th_3)", label: "準工業地域" },
+	{ typename: "1114(th_3)", label: "工業地域" },
+	{ typename: "1115(th_3)", label: "工業専用地域" },
+];
+
+async function fetchMunicipalOfficialContext(
+	address: string,
+	latitude: number | null,
+	longitude: number | null,
+): Promise<LandMunicipalOfficialContext> {
+	const source = "鈴鹿市公式地理情報 / SonicWeb API";
+	const municipality = municipalityFromAddress(address) || "鈴鹿市";
+	if (!/鈴鹿市/.test(address) && !/鈴鹿市/.test(municipality)) {
+		return {
+			status: "unsupported",
+			source,
+			message: "自治体公式GIS: 未対応（現在の自動API確認は鈴鹿市のみ）",
+			municipality,
+			officialLinks: [],
+			farmChecks: [],
+			cityPlanningChecks: [],
+		};
+	}
+	if (latitude === null || longitude === null) {
+		return {
+			status: "no-coordinate",
+			source,
+			message: "鈴鹿市公式地理情報: 未実行（緯度経度なし）",
+			municipality: "鈴鹿市",
+			officialLinks: SUZUKA_OFFICIAL_MAP_LINKS,
+			farmChecks: [],
+			cityPlanningChecks: [],
+		};
+	}
+	try {
+		const farmChecks = await Promise.all(
+			SUZUKA_FARM_LAYER_CHECKS.map((check) => fetchSuzukaOfficialLayerCheck(check, latitude, longitude)),
+		);
+		const cityPlanningChecks = await Promise.all(
+			SUZUKA_CITY_PLANNING_LAND_USE_CHECKS.map((check) =>
+				fetchSuzukaOfficialLayerCheck(check, latitude, longitude),
+			),
+		);
+		const containingCount = municipalOfficialContainingCount({
+			status: "connected",
+			source,
+			message: "",
+			municipality: "鈴鹿市",
+			officialLinks: SUZUKA_OFFICIAL_MAP_LINKS,
+			farmChecks,
+			cityPlanningChecks,
+		});
+		return {
+			status: "connected",
+			source,
+			message: `鈴鹿市公式地理情報: API確認（対象点包含ヒット${containingCount}件。農転可否・用途地域確定ではない）`,
+			municipality: "鈴鹿市",
+			officialLinks: SUZUKA_OFFICIAL_MAP_LINKS,
+			farmChecks,
+			cityPlanningChecks,
+		};
+	} catch {
+		return {
+			status: "error",
+			source,
+			message: "鈴鹿市公式地理情報: API取得失敗（公式GISリンクで確認）",
+			municipality: "鈴鹿市",
+			officialLinks: SUZUKA_OFFICIAL_MAP_LINKS,
+			farmChecks: [],
+			cityPlanningChecks: [],
+		};
+	}
+}
+
+async function fetchSuzukaOfficialLayerCheck(
+	check: { typename: string; label: string },
+	latitude: number,
+	longitude: number,
+): Promise<LandMunicipalOfficialLayerCheck> {
+	const delta = 0.08;
+	const url = new URL(`https://www.sonicweb-asp.jp/city_suzuka/api/feature/${check.typename}/instance`);
+	url.searchParams.set("files", "0");
+	url.searchParams.set("max", "200");
+	url.searchParams.set("bbox", `${longitude - delta},${latitude - delta},${longitude + delta},${latitude + delta}`);
+	url.searchParams.set("ver", "1.0.190");
+	url.searchParams.set("geom", "1");
+	url.searchParams.set("rgeom", "1");
+	const body = await fetchJson(url);
+	const records = municipalOfficialRecords(body);
+	const containingCount = records.filter((record) =>
+		pointInGeoJsonGeometry(municipalOfficialRecordGeometry(record), longitude, latitude),
+	).length;
+	return {
+		typename: check.typename,
+		label: check.label,
+		bboxResultCount: records.length,
+		containingCount,
+	};
+}
+
+function municipalOfficialRecords(body: unknown | null): Array<Record<string, unknown>> {
+	if (Array.isArray(body)) return objectArray(body);
+	const root = readObject(body);
+	if (root.type === "FeatureCollection") {
+		return objectArray(root.features).map((feature) => {
+			const props = readObject(feature.properties);
+			return {
+				...props,
+				geometry: feature.geometry,
+			};
+		});
+	}
+	if (root.type === "Feature") return [root];
+	return objectArray(root.data || root.Data || root.results || root.result || root.features || root.Features);
+}
+
+function municipalOfficialRecordGeometry(record: Record<string, unknown>): unknown {
+	return parseGeoJsonMaybe(
+		record.geom ||
+			record.geometry ||
+			record.rgeom ||
+			record.Geometry ||
+			record.the_geom ||
+			readObject(record.feature).geometry,
+	);
+}
+
+function parseGeoJsonMaybe(value: unknown): unknown {
+	if (typeof value !== "string") return value;
+	const trimmed = value.trim();
+	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return value;
+	try {
+		return JSON.parse(trimmed) as unknown;
+	} catch {
+		return value;
+	}
+}
+
+function municipalOfficialContainingCount(context: LandMunicipalOfficialContext): number {
+	return [...context.farmChecks, ...context.cityPlanningChecks].reduce(
+		(total, check) => total + check.containingCount,
+		0,
+	);
+}
+
+function municipalOfficialEvidence(context: LandMunicipalOfficialContext): string {
+	if (context.status !== "connected") return context.message;
+	return [
+		context.message,
+		`鈴鹿市公式地理情報元: ${context.source}`,
+		`公式確認先: ${context.officialLinks.map((link) => `${link.label} ${link.url}`).join(" / ")}`,
+		`農振・農用地区域API: ${formatMunicipalLayerChecks(context.farmChecks)}`,
+		`都市計画・用途地域API: ${formatMunicipalLayerChecks(context.cityPlanningChecks)}`,
+		"注意: SonicWeb APIの一次確認であり、農転可否・用途地域確定ではない。農業委員会、農林水産課、都市計画課、建築指導課で確認。",
+	].join("\n");
+}
+
+function formatMunicipalLayerChecks(checks: LandMunicipalOfficialLayerCheck[]): string {
+	if (checks.length === 0) return "未取得";
+	return checks
+		.map((check) => `${check.label}=候補${check.bboxResultCount}件/対象点包含${check.containingCount}件`)
+		.join(" / ");
+}
+
 async function fetchGridCapacityContext(
 	powerArea: string,
 	latitude: number | null = null,
@@ -18384,6 +18586,16 @@ function buildLandQuickEvidence(mapContext: LandMapContext, address = ""): strin
 			].filter(Boolean).join(" / "),
 		);
 	}
+	if (mapContext.municipalOfficial.status === "connected") {
+		parts.push(
+			[
+				"鈴鹿市公式地理情報",
+				"SonicWeb API",
+				`対象点包含ヒット${municipalOfficialContainingCount(mapContext.municipalOfficial)}件`,
+				"農転可否・用途地域確定ではない",
+			].join(" / "),
+		);
+	}
 	const gridRecord = mapContext.gridCapacity.records[0] ?? null;
 	if (gridRecord) {
 		parts.push(
@@ -18628,6 +18840,7 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 		const reinfolibText = reinfolibEvidence(mapContext.reinfolib);
 		const parcelCadastreText = parcelCadastreEvidence(mapContext.parcelCadastre);
 		const gsiRoadText = gsiRoadEvidence(mapContext.gsiRoad, land.address);
+		const municipalOfficialText = municipalOfficialEvidence(mapContext.municipalOfficial);
 		const gridCapacityText = gridCapacityEvidence(mapContext.gridCapacity);
 		const surroundingPlacesText = surroundingPlacesEvidence(mapContext.surroundingPlaces);
 		const quickEvidence = buildLandQuickEvidence(mapContext, land.address);
@@ -18660,6 +18873,7 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			mapContext.geocodeSource ? `座標取得: ${mapContext.geocodeSource}` : "",
 			mapContext.roadAccess ? `Google道路アクセス: ${mapContext.roadAccess}` : "",
 			surroundingPlacesText,
+			municipalOfficialText,
 			gridCapacityText,
 			gsiRoadText,
 			parcelCadastreText,
