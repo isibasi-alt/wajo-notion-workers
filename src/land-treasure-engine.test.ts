@@ -140,6 +140,22 @@ function addressOnlyPage() {
 	};
 }
 
+function mieGridCapacityAddressOnlyPage() {
+	const page = addressOnlyPage();
+	return {
+		...page,
+		id: "land-mie-grid-capacity-bundled-1",
+		properties: {
+			...page.properties,
+			土地名称: titleProp("【TDD】三重県鈴鹿市・公式系統公表値候補"),
+			所在地: richTextProp("三重県鈴鹿市神戸"),
+			緯度: numberProp(34.906456),
+			経度: numberProp(136.570953),
+			電力会社エリア: selectProp("中部電力"),
+		},
+	};
+}
+
 async function main() {
 	const updates: Array<Record<string, unknown>> = [];
 	const createdPages: Array<Record<string, unknown>> = [];
@@ -845,6 +861,24 @@ async function main() {
 	const prefectureMismatchMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
 	assert.doesNotMatch(prefectureMismatchMemo, /神戸変電所/);
 	assert.match(prefectureMismatchMemo, /公表値候補0件|公表値候補未取得/);
+
+	delete process.env.GRID_CAPACITY_PUBLIC_JSON_URLS;
+	delete process.env.GRID_CAPACITY_PUBLIC_JSON_URL;
+	delete process.env.GRID_CAPACITY_PUBLIC_JSON;
+	activePage = mieGridCapacityAddressOnlyPage();
+	await processLandEvaluationForTest(
+		{ pageId: "land-mie-grid-capacity-bundled-1", dryRun: false },
+		notion as never,
+	);
+	const bundledGridCapacityMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
+	assert.doesNotMatch(bundledGridCapacityMemo, /公表値候補未取得/);
+	assert.match(bundledGridCapacityMemo, /神戸変電所/);
+	assert.match(bundledGridCapacityMemo, /38MW/);
+	assert.match(bundledGridCapacityMemo, /入力地点から約2\.52km/);
+	assert.match(bundledGridCapacityMemo, /中部電力パワーグリッド/);
+	assert.match(bundledGridCapacityMemo, /gridmap\.powergrid\.chuden\.co\.jp\/geo_data\/KRSIH013/);
+	assert.match(bundledGridCapacityMemo, /更新=2026-06-08/);
+	assert.match(bundledGridCapacityMemo, /接続可否確定ではない/);
 
 	const addressOnlyFinalUpdate = updates.at(-1)?.properties as Record<string, unknown>;
 	assert.deepEqual(addressOnlyFinalUpdate.処理ステータス, { select: { name: "要確認" } });

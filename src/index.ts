@@ -15,6 +15,7 @@ import {
 	type LandInitialInputEvidence,
 	type LandInitialInputMetric,
 } from "./land-initial-input-score.js";
+import { chubuMieGridCapacitySnapshot } from "./land-grid-capacity-chubu-mie-snapshot.js";
 
 const worker = new Worker();
 export default worker;
@@ -17353,7 +17354,12 @@ async function fetchGridCapacityContext(
 	const source = "資源エネルギー庁 / OCCTO / 各送配電会社の系統空容量公開情報";
 	const officialLinks = gridCapacityOfficialLinks(normalizedPowerArea);
 	const publicInputs = gridCapacityPublicInputs();
-	if (publicInputs.urls.length === 0 && publicInputs.inlineJsonBodies.length === 0) {
+	const bundledBodies = bundledGridCapacityBodies(normalizedPowerArea, targetPrefecture);
+	if (
+		publicInputs.urls.length === 0 &&
+		publicInputs.inlineJsonBodies.length === 0 &&
+		bundledBodies.length === 0
+	) {
 		return {
 			status: "no-url",
 			source,
@@ -17369,6 +17375,18 @@ async function fetchGridCapacityContext(
 		const body = parseGridCapacityInlineJson(bodyText);
 		for (const item of gridCapacityRecords(body)) {
 			const record = readGridCapacityRecord(item, "GRID_CAPACITY_PUBLIC_JSON");
+			if (
+				record &&
+				powerAreaMatchesGridCapacity(record, normalizedPowerArea) &&
+				gridCapacityPrefectureMatches(record, targetPrefecture)
+			) {
+				records.push(record);
+			}
+		}
+	}
+	for (const body of bundledBodies) {
+		for (const item of gridCapacityRecords(body)) {
+			const record = readGridCapacityRecord(item, "中部電力PG公式CSV同梱スナップショット");
 			if (
 				record &&
 				powerAreaMatchesGridCapacity(record, normalizedPowerArea) &&
@@ -17546,6 +17564,13 @@ function gridCapacityCoordinates(
 		numberFromUnknown(mapCoordinates.lng) ??
 		(typeof geometryCoordinates[0] === "number" ? geometryCoordinates[0] : null);
 	return { latitude, longitude };
+}
+
+function bundledGridCapacityBodies(powerArea: string, prefecture: string): unknown[] {
+	if (/中部/.test(powerArea) && prefecture === "三重県") {
+		return [chubuMieGridCapacitySnapshot];
+	}
+	return [];
 }
 
 function withGridCapacityDistance(
