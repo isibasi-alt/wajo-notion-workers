@@ -16638,12 +16638,13 @@ async function resolveLandMapContext(land: LandInfo): Promise<LandMapContext> {
 	let geocodeSource = "";
 	let roadAccess = "";
 
-	if ((latitude === null || longitude === null) && land.substationDistanceKm === null && key && land.address) {
-		const geocoded = await geocodeLandAddress(land.address, key);
+	if ((latitude === null || longitude === null) && land.address) {
+		const googleGeocoded = key ? await geocodeLandAddress(land.address, key) : null;
+		const geocoded = googleGeocoded ?? await geocodeLandAddressWithGsi(land.address);
 		if (geocoded) {
 			latitude = geocoded.latitude;
 			longitude = geocoded.longitude;
-			geocodeSource = "Google Geocoding API";
+			geocodeSource = geocoded.source;
 		}
 	}
 
@@ -18080,7 +18081,7 @@ async function fetchJsonPostWithHeaders(
 async function geocodeLandAddress(
 	address: string,
 	key: string,
-): Promise<{ latitude: number; longitude: number } | null> {
+): Promise<{ latitude: number; longitude: number; source: string } | null> {
 	const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
 	url.searchParams.set("address", address);
 	url.searchParams.set("language", "ja");
@@ -18092,7 +18093,23 @@ async function geocodeLandAddress(
 	const location = readObject(readObject(first?.geometry).location);
 	const latitude = numberOrNull(location.lat);
 	const longitude = numberOrNull(location.lng);
-	return latitude !== null && longitude !== null ? { latitude, longitude } : null;
+	return latitude !== null && longitude !== null ? { latitude, longitude, source: "Google Geocoding API" } : null;
+}
+
+async function geocodeLandAddressWithGsi(
+	address: string,
+): Promise<{ latitude: number; longitude: number; source: string } | null> {
+	const url = new URL("https://msearch.gsi.go.jp/address-search/AddressSearch");
+	url.searchParams.set("q", address);
+	const body = await fetchJson(url);
+	const first = objectArray(body)[0];
+	const coordinates = readObject(first?.geometry).coordinates;
+	if (!Array.isArray(coordinates)) return null;
+	const longitude = numberOrNull(coordinates[0]);
+	const latitude = numberOrNull(coordinates[1]);
+	return latitude !== null && longitude !== null
+		? { latitude, longitude, source: "国土地理院住所検索" }
+		: null;
 }
 
 async function fetchGoogleRoadAccess(

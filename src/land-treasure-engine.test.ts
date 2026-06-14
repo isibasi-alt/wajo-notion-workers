@@ -239,24 +239,93 @@ async function main() {
 	process.env.GSI_ROAD_TILE_ENABLED = "0";
 	delete process.env.GRID_CAPACITY_PUBLIC_JSON_URLS;
 	delete process.env.GRID_CAPACITY_PUBLIC_JSON_URL;
+	globalThis.fetch = (async (input: RequestInfo | URL) => {
+		const url = String(input);
+		if (url.includes("msearch.gsi.go.jp/address-search/AddressSearch")) {
+			return new Response(
+				JSON.stringify([
+					{
+						geometry: { type: "Point", coordinates: [137.1801, 35.3556] },
+						properties: { title: "岐阜県土岐市土岐津町" },
+					},
+				]),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		}
+		return new Response("{}", { status: 404 });
+	}) as typeof fetch;
 	activePage = { ...addressOnlyPage(), id: "land-initial-input-only-10" };
 	const initialInputOnlyResult = await processLandEvaluationForTest(
 		{ pageId: "land-initial-input-only-10", dryRun: false },
 		notion as never,
 	);
-	assert.equal(initialInputOnlyResult.score, 10);
+	assert.equal(initialInputOnlyResult.score, 18);
 	assert.equal(initialInputOnlyResult.overallGrade, "C");
 	assert.notEqual(initialInputOnlyResult.bucket, "即アタック");
 	const initialInputOnlyMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
-	assert.match(initialInputOnlyMemo, /初回入力ゲート: 10\/100/);
+	assert.match(initialInputOnlyMemo, /初回入力ゲート: 18\/100/);
+	assert.match(initialInputOnlyMemo, /国土地理院住所検索/);
 	assert.match(initialInputOnlyMemo, /面積: 10\/15/);
 	assert.match(initialInputOnlyMemo, /接道: 0\/15/);
 	assert.match(initialInputOnlyMemo, /系統情報: 0\/15/);
-	assert.match(initialInputOnlyMemo, /変電所・連系点からの距離: 0\/10/);
+	assert.match(initialInputOnlyMemo, /変電所・連系点からの距離: 8\/10/);
 	assert.match(initialInputOnlyMemo, /農地転用: 0\/20/);
 	assert.match(initialInputOnlyMemo, /ハザード: 0\/10/);
 	assert.match(initialInputOnlyMemo, /地目・用地: 0\/15/);
-	assert.match(initialInputOnlyMemo, /自動取得証拠: なし/);
+	assert.match(initialInputOnlyMemo, /自動取得証拠: 変電所・連系点からの距離=住所ジオコードから最寄り変電所候補算出/);
+
+	delete process.env.GSI_ROAD_TILE_ENABLED;
+	globalThis.fetch = (async (input: RequestInfo | URL) => {
+		const url = String(input);
+		if (url.includes("msearch.gsi.go.jp/address-search/AddressSearch")) {
+			return new Response(
+				JSON.stringify([
+					{
+						geometry: { type: "Point", coordinates: [137.1801, 35.3556] },
+						properties: { title: "岐阜県土岐市土岐津町" },
+					},
+				]),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		}
+		if (url.includes("/experimental_rdcl/")) {
+			return new Response(
+				JSON.stringify({
+					type: "FeatureCollection",
+					features: [
+						{
+							type: "Feature",
+							geometry: {
+								type: "LineString",
+								coordinates: [
+									[137.1799, 35.3553],
+									[137.1804, 35.3558],
+								],
+							},
+							properties: {
+								name: "市道テスト線",
+								rdCtg: "市町村道等",
+								rnkWidth: "5.5m以上13m未満",
+							},
+						},
+					],
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		}
+		return new Response("{}", { status: 404 });
+	}) as typeof fetch;
+	activePage = { ...addressOnlyPage(), id: "land-gsi-road-material-26" };
+	const gsiRoadMaterialResult = await processLandEvaluationForTest(
+		{ pageId: "land-gsi-road-material-26", dryRun: false },
+		notion as never,
+	);
+	assert.equal(gsiRoadMaterialResult.score, 26);
+	const gsiRoadMaterialMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
+	assert.match(gsiRoadMaterialMemo, /初回入力ゲート: 26\/100/);
+	assert.match(gsiRoadMaterialMemo, /接道: 8\/15/);
+	assert.match(gsiRoadMaterialMemo, /国土地理院道路中心線/);
+	assert.match(gsiRoadMaterialMemo, /道路台帳で確認/);
 
 	process.env.GOOGLE_MAPS_API_KEY = "test-google-key";
 	process.env.WAGRI_ACCESS_TOKEN = "test-wagri-token";
