@@ -16580,6 +16580,7 @@ type LandMunicipalOfficialContext = {
 	farmChecks: LandMunicipalOfficialLayerCheck[];
 	cityPlanningChecks: LandMunicipalOfficialLayerCheck[];
 	hazardChecks: LandMunicipalOfficialLayerCheck[];
+	designatedRoadChecks: LandMunicipalOfficialLayerCheck[];
 };
 
 type LandGridCapacityRecord = {
@@ -17429,6 +17430,12 @@ const SUZUKA_HAZARD_LAYER_CHECKS: Array<{ typename: string; label: string }> = [
 	{ typename: "9027(th_19)", label: "東南海地震震度分布6" },
 ];
 
+const SUZUKA_DESIGNATED_ROAD_LAYER_CHECKS: Array<{ typename: string; label: string }> = [
+	{ typename: "9141(th_24)", label: "42条1項三号道路" },
+	{ typename: "9142(th_24)", label: "42条1項四号道路" },
+	{ typename: "9143(th_24)", label: "42条1項五号道路" },
+];
+
 async function fetchMunicipalOfficialContext(
 	address: string,
 	latitude: number | null,
@@ -17446,6 +17453,7 @@ async function fetchMunicipalOfficialContext(
 			farmChecks: [],
 			cityPlanningChecks: [],
 			hazardChecks: [],
+			designatedRoadChecks: [],
 		};
 	}
 	if (latitude === null || longitude === null) {
@@ -17458,6 +17466,7 @@ async function fetchMunicipalOfficialContext(
 			farmChecks: [],
 			cityPlanningChecks: [],
 			hazardChecks: [],
+			designatedRoadChecks: [],
 		};
 	}
 	try {
@@ -17472,6 +17481,9 @@ async function fetchMunicipalOfficialContext(
 		const hazardChecks = await Promise.all(
 			SUZUKA_HAZARD_LAYER_CHECKS.map((check) => fetchSuzukaOfficialLayerCheck(check, latitude, longitude)),
 		);
+		const designatedRoadChecks = await Promise.all(
+			SUZUKA_DESIGNATED_ROAD_LAYER_CHECKS.map((check) => fetchSuzukaOfficialLayerCheck(check, latitude, longitude)),
+		);
 		const containingCount = municipalOfficialContainingCount({
 			status: "connected",
 			source,
@@ -17481,6 +17493,7 @@ async function fetchMunicipalOfficialContext(
 			farmChecks,
 			cityPlanningChecks,
 			hazardChecks,
+			designatedRoadChecks,
 		});
 		return {
 			status: "connected",
@@ -17491,6 +17504,7 @@ async function fetchMunicipalOfficialContext(
 			farmChecks,
 			cityPlanningChecks,
 			hazardChecks,
+			designatedRoadChecks,
 		};
 	} catch {
 		return {
@@ -17502,6 +17516,7 @@ async function fetchMunicipalOfficialContext(
 			farmChecks: [],
 			cityPlanningChecks: [],
 			hazardChecks: [],
+			designatedRoadChecks: [],
 		};
 	}
 }
@@ -17571,7 +17586,12 @@ function parseGeoJsonMaybe(value: unknown): unknown {
 }
 
 function municipalOfficialContainingCount(context: LandMunicipalOfficialContext): number {
-	return [...context.farmChecks, ...context.cityPlanningChecks, ...context.hazardChecks].reduce(
+	return [
+		...context.farmChecks,
+		...context.cityPlanningChecks,
+		...context.hazardChecks,
+		...context.designatedRoadChecks,
+	].reduce(
 		(total, check) => total + check.containingCount,
 		0,
 	);
@@ -17586,7 +17606,8 @@ function municipalOfficialEvidence(context: LandMunicipalOfficialContext): strin
 		`農振・農用地区域API: ${formatMunicipalLayerChecks(context.farmChecks)}`,
 		`都市計画・用途地域API: ${formatMunicipalLayerChecks(context.cityPlanningChecks)}`,
 		`防災情報API: ${formatMunicipalLayerChecks(context.hazardChecks)}（ハザード安全確定ではない）`,
-		"注意: SonicWeb APIの一次確認であり、農転可否・用途地域確定、ハザード安全確定ではない。農業委員会、農林水産課、都市計画課、建築指導課、防災担当課で確認。",
+		`指定道路図API: ${formatMunicipalLayerChecks(context.designatedRoadChecks)}（接道証明ではない）`,
+		"注意: SonicWeb APIの一次確認であり、農転可否・用途地域確定、ハザード安全確定、接道証明ではない。農業委員会、農林水産課、都市計画課、建築指導課、防災担当課、道路管理課で確認。",
 	].join("\n");
 }
 

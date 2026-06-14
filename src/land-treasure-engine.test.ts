@@ -890,6 +890,8 @@ async function main() {
 	assert.match(bundledGridCapacityMemo, /農転可否・用途地域確定ではない/);
 	assert.match(bundledGridCapacityMemo, /防災情報API/);
 	assert.match(bundledGridCapacityMemo, /ハザード安全確定ではない/);
+	assert.match(bundledGridCapacityMemo, /指定道路図API/);
+	assert.match(bundledGridCapacityMemo, /接道証明ではない/);
 
 	const addressOnlyFinalUpdate = updates.at(-1)?.properties as Record<string, unknown>;
 	assert.deepEqual(addressOnlyFinalUpdate.処理ステータス, { select: { name: "要確認" } });
