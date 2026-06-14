@@ -512,9 +512,9 @@ async function main() {
 				{ status: 200, headers: { "content-type": "application/json" } },
 			);
 		}
-		if (url.includes("/XKT002")) {
-			return new Response(
-				JSON.stringify({
+			if (url.includes("/XKT002")) {
+				return new Response(
+					JSON.stringify({
 					type: "FeatureCollection",
 					features: [
 						{
@@ -541,12 +541,18 @@ async function main() {
 						},
 					],
 				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		}
-		if (url.includes("/XKT026")) {
-			return new Response(
-				JSON.stringify({
+					{ status: 200, headers: { "content-type": "application/json" } },
+				);
+			}
+			if (url.includes("sonicweb-asp.jp/city_suzuka/api/feature/")) {
+				return new Response(JSON.stringify([]), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			if (url.includes("/XKT026")) {
+				return new Response(
+					JSON.stringify({
 					type: "FeatureCollection",
 					features: [
 						{
@@ -879,6 +885,9 @@ async function main() {
 	assert.match(bundledGridCapacityMemo, /gridmap\.powergrid\.chuden\.co\.jp\/geo_data\/KRSIH013/);
 	assert.match(bundledGridCapacityMemo, /更新=2026-06-08/);
 	assert.match(bundledGridCapacityMemo, /接続可否確定ではない/);
+	assert.match(bundledGridCapacityMemo, /鈴鹿市公式地理情報/);
+	assert.match(bundledGridCapacityMemo, /対象点包含ヒット0件/);
+	assert.match(bundledGridCapacityMemo, /農転可否・用途地域確定ではない/);
 
 	const addressOnlyFinalUpdate = updates.at(-1)?.properties as Record<string, unknown>;
 	assert.deepEqual(addressOnlyFinalUpdate.処理ステータス, { select: { name: "要確認" } });

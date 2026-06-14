@@ -16470,6 +16470,7 @@ type LandMapContext = {
 	googleMapsUrl: string;
 	roadAccess: string;
 	geocodeSource: string;
+	municipalOfficial: LandMunicipalOfficialContext;
 	farmlandNavi: LandFarmlandNaviContext;
 	surroundingPlaces: LandSurroundingPlacesContext;
 	reinfolib: LandReinfolibContext;
@@ -16561,6 +16562,23 @@ type LandGsiRoadContext = {
 	source: string;
 	message: string;
 	candidates: LandGsiRoadCandidate[];
+};
+
+type LandMunicipalOfficialLayerCheck = {
+	typename: string;
+	label: string;
+	bboxResultCount: number;
+	containingCount: number;
+};
+
+type LandMunicipalOfficialContext = {
+	status: "connected" | "unsupported" | "no-coordinate" | "error";
+	source: string;
+	message: string;
+	municipality: string;
+	officialLinks: LandGridCapacityOfficialLink[];
+	farmChecks: LandMunicipalOfficialLayerCheck[];
+	cityPlanningChecks: LandMunicipalOfficialLayerCheck[];
 };
 
 type LandGridCapacityRecord = {
@@ -16661,6 +16679,7 @@ async function resolveLandMapContext(land: LandInfo): Promise<LandMapContext> {
 	const reinfolib = await fetchReinfolibContext(latitude, longitude, land.areaTsubo);
 	const parcelCadastre = await fetchParcelCadastreContext(latitude, longitude);
 	const gsiRoad = await fetchGsiRoadContext(latitude, longitude);
+	const municipalOfficial = await fetchMunicipalOfficialContext(land.address, latitude, longitude);
 	const powerArea = land.powerArea || inferPowerAreaFromAddress(land.address) || "未確認";
 	const gridCapacity = await fetchGridCapacityContext(powerArea, latitude, longitude, land.address);
 
@@ -16671,9 +16690,10 @@ async function resolveLandMapContext(land: LandInfo): Promise<LandMapContext> {
 			latitude !== null && longitude !== null
 				? `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`
 				: "",
-		roadAccess,
-		geocodeSource,
-		farmlandNavi,
+			roadAccess,
+			geocodeSource,
+			municipalOfficial,
+			farmlandNavi,
 		surroundingPlaces,
 		reinfolib,
 		parcelCadastre,
