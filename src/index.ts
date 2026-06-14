@@ -9,6 +9,12 @@ import {
 	type LandTreasureEvaluation,
 	type LandTreasureSubstationCandidate,
 } from "./land-treasure-engine.js";
+import {
+	scoreInitialLandInputCapability,
+	type LandInitialInputCapabilityScore,
+	type LandInitialInputEvidence,
+	type LandInitialInputMetric,
+} from "./land-initial-input-score.js";
 
 const worker = new Worker();
 export default worker;
@@ -18290,6 +18296,131 @@ function buildLandQuickEvidence(mapContext: LandMapContext, address = ""): strin
 	return parts.join(" / ");
 }
 
+const INITIAL_INPUT_METRICS: LandInitialInputMetric[] = [
+	"area",
+	"road",
+	"grid",
+	"substationDistance",
+	"farmland",
+	"hazard",
+	"landUse",
+];
+
+const INITIAL_INPUT_PLACEHOLDER_VALUES = new Set([
+	"",
+	"未確認",
+	"未処理",
+	"未判定",
+	"要確認",
+	"△",
+	"×",
+	"不明",
+	"なし",
+	"継続監視",
+	"未案件化",
+]);
+
+function hasManualLandEvidence(value: string): boolean {
+	const normalized = value.trim();
+	return Boolean(normalized) && !INITIAL_INPUT_PLACEHOLDER_VALUES.has(normalized);
+}
+
+function isInitialInputOnlyLand(land: LandInfo): boolean {
+	const inferredPowerArea = inferPowerAreaFromAddress(land.address);
+	const hasManualPowerArea =
+		hasManualLandEvidence(land.powerArea) && land.powerArea !== inferredPowerArea;
+	return (
+		!hasManualPowerArea &&
+		!hasManualLandEvidence(land.landUse) &&
+		!hasManualLandEvidence(land.road) &&
+		!hasManualLandEvidence(land.farmland) &&
+		!hasManualLandEvidence(land.farmlandType) &&
+		!hasManualLandEvidence(land.registry) &&
+		!hasManualLandEvidence(land.nearbyResidentialCheck) &&
+		!hasManualLandEvidence(land.transmissionLine) &&
+		!hasManualLandEvidence(land.substationDistance) &&
+		land.substationDistanceKm === null &&
+		land.nearbyResidentialDistanceM === null &&
+		land.latitude === null &&
+		land.longitude === null
+	);
+}
+
+function landInitialInputEvidenceFromContext(
+	mapContext: LandMapContext,
+	treasure: LandTreasureEvaluation,
+): LandInitialInputEvidence[] {
+	const evidence: LandInitialInputEvidence[] = [];
+	const add = (metric: LandInitialInputMetric, label: string, condition: boolean) => {
+		if (condition) evidence.push({ metric, kind: "automatic-source", label });
+	};
+
+	add("road", "Google Roads API", Boolean(mapContext.roadAccess));
+	add(
+		"road",
+		"国土地理院道路中心線",
+		mapContext.gsiRoad.status === "connected" && mapContext.gsiRoad.candidates.length > 0,
+	);
+	add(
+		"grid",
+		"系統空容量公開JSON",
+		mapContext.gridCapacity.status === "connected" && mapContext.gridCapacity.records.length > 0,
+	);
+	add(
+		"substationDistance",
+		"住所ジオコードから最寄り変電所候補算出",
+		Boolean(mapContext.geocodeSource) && treasure.substationCandidates.length > 0,
+	);
+	add(
+		"farmland",
+		"eMAFF/WAGRI農地ナビ",
+		mapContext.farmlandNavi.status === "connected" &&
+			(mapContext.farmlandNavi.records.length > 0 || mapContext.farmlandNavi.fieldPolygons.length > 0),
+	);
+	add(
+		"hazard",
+		"不動産情報ライブラリ防災情報",
+		mapContext.reinfolib.status === "connected" && mapContext.reinfolib.hazards.length > 0,
+	);
+	add(
+		"landUse",
+		"不動産情報ライブラリ用途地域",
+		mapContext.reinfolib.status === "connected" && Boolean(mapContext.reinfolib.zoning?.useArea),
+	);
+	add(
+		"landUse",
+		"eMAFF/WAGRI農地地目",
+		mapContext.farmlandNavi.status === "connected" &&
+			Boolean(mapContext.farmlandNavi.nearest?.landCategory || mapContext.farmlandNavi.fieldPolygons[0]?.landCategory),
+	);
+
+	return evidence;
+}
+
+function formatLandInitialInputGate(score: LandInitialInputCapabilityScore): string {
+	const metricText = INITIAL_INPUT_METRICS.map((metric) => {
+		const item = score.metrics[metric];
+		return `${item.label}: ${item.score}/${item.max}（${item.reason}）`;
+	}).join(" / ");
+	const acceptedText =
+		score.acceptedEvidence.length > 0
+			? score.acceptedEvidence.map((item) => `${score.metrics[item.metric].label}=${item.label}`).join(" / ")
+			: "なし";
+	const rejectedText =
+		score.rejectedEvidence.length > 0
+			? `\n不採用証拠: ${score.rejectedEvidence
+					.map((item) => `${score.metrics[item.metric].label}=${item.label}`)
+					.join(" / ")}`
+			: "";
+
+	return [
+		`初回入力ゲート: ${score.total}/${score.maxTotal}`,
+		`採点ルール: ${score.rule}`,
+		`内訳: ${metricText}`,
+		`自動取得証拠: ${acceptedText}${rejectedText}`,
+	].join("\n");
+}
+
 async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 	const missing: string[] = [];
 	if (!land.address) missing.push("所在地");
@@ -18347,21 +18478,31 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			reinfolibText,
 			farmlandNaviText,
 		].filter(Boolean).join("\n");
+		const initialInputScore = scoreInitialLandInputCapability({
+			address: land.address,
+			areaTsubo: land.areaTsubo,
+			evidence: landInitialInputEvidenceFromContext(mapContext, treasure),
+		});
+		const initialInputGate = formatLandInitialInputGate(initialInputScore);
+		const initialInputOnly = isInitialInputOnlyLand(land);
 		const investigationGaps = landInvestigationGaps(treasure.blockers);
-		if (investigationGaps.length > 0) {
+		if (initialInputOnly || investigationGaps.length > 0) {
+			const scopedInvestigationGaps = initialInputOnly
+				? Array.from(new Set(["初回入力ゲート", ...investigationGaps]))
+				: investigationGaps;
 			const scout = buildLandScoutReport({
 				land,
 				treasure,
 				mapEvidence,
 				quickEvidence,
-				investigationGaps,
+				investigationGaps: scopedInvestigationGaps,
 			});
 			return {
 				overallGrade: "C",
-				score: Math.min(treasure.score, 45),
+				score: initialInputOnly ? initialInputScore.total : Math.min(treasure.score, 45),
 				bucket: "要確認",
 				requiresInvestigation: true,
-				investigationGaps,
+				investigationGaps: scopedInvestigationGaps,
 				actionBucket: "継続監視",
 				caseStatus: "未案件化",
 				projectType: treasure.projectType,
@@ -18371,13 +18512,13 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 				roadRating: treasure.roadRating,
 				subsidyRating: "要確認",
 				demandRating: treasure.demandRating,
-				landEvaluation: scout.landEvaluation,
+				landEvaluation: initialInputOnly ? `${initialInputGate}\n${scout.landEvaluation}` : scout.landEvaluation,
 				powerEvaluation: treasure.powerEvaluation,
 				roadEvaluation: treasure.roadEvaluation,
 				subsidyEvaluation: treasure.subsidyEvaluation,
 				demandEvaluation: treasure.demandEvaluation,
 				nextAction: scout.nextAction,
-				reviewMemo: scout.reviewMemo,
+				reviewMemo: initialInputOnly ? `${initialInputGate}\n${scout.reviewMemo}` : scout.reviewMemo,
 				nearestSubstationName: treasure.nearestSubstationName,
 				nearestSubstationDistanceKm: treasure.nearestSubstationDistanceKm,
 				nearestSubstationOperator: treasure.nearestSubstationOperator,

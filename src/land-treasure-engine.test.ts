@@ -146,8 +146,13 @@ async function main() {
 	let activePage = highValueLandPage();
 	const originalFetch = globalThis.fetch;
 	const originalGoogleKey = process.env.GOOGLE_MAPS_API_KEY;
+	const originalGoogleApiKey = process.env.GOOGLE_API_KEY;
 	const originalWagriToken = process.env.WAGRI_ACCESS_TOKEN;
+	const originalWagriApiToken = process.env.WAGRI_API_TOKEN;
+	const originalWagriTokenAlt = process.env.WAGRI_TOKEN;
 	const originalReinfolibKey = process.env.REINFOLIB_API_KEY;
+	const originalRealEstateLibraryApiKey = process.env.REAL_ESTATE_LIBRARY_API_KEY;
+	const originalMlitReinfolibApiKey = process.env.MLIT_REINFOLIB_API_KEY;
 	const originalMojChizuGeoJsonUrls = process.env.MOJ_CHIZU_GEOJSON_URLS;
 	const originalMojChizuGeoJsonUrl = process.env.MOJ_CHIZU_GEOJSON_URL;
 	const originalGsiRoadTileEnabled = process.env.GSI_ROAD_TILE_ENABLED;
@@ -220,6 +225,38 @@ async function main() {
 	assert.match(blockedMemo, /農転事前判定/);
 	assert.match(blockedMemo, /見込みランク: 低/);
 	assert.match(blockedMemo, /停止・責任者判断/);
+
+	delete process.env.GOOGLE_MAPS_API_KEY;
+	delete process.env.GOOGLE_API_KEY;
+	delete process.env.WAGRI_ACCESS_TOKEN;
+	delete process.env.WAGRI_API_TOKEN;
+	delete process.env.WAGRI_TOKEN;
+	delete process.env.REINFOLIB_API_KEY;
+	delete process.env.REAL_ESTATE_LIBRARY_API_KEY;
+	delete process.env.MLIT_REINFOLIB_API_KEY;
+	delete process.env.MOJ_CHIZU_GEOJSON_URLS;
+	delete process.env.MOJ_CHIZU_GEOJSON_URL;
+	process.env.GSI_ROAD_TILE_ENABLED = "0";
+	delete process.env.GRID_CAPACITY_PUBLIC_JSON_URLS;
+	delete process.env.GRID_CAPACITY_PUBLIC_JSON_URL;
+	activePage = { ...addressOnlyPage(), id: "land-initial-input-only-10" };
+	const initialInputOnlyResult = await processLandEvaluationForTest(
+		{ pageId: "land-initial-input-only-10", dryRun: false },
+		notion as never,
+	);
+	assert.equal(initialInputOnlyResult.score, 10);
+	assert.equal(initialInputOnlyResult.overallGrade, "C");
+	assert.notEqual(initialInputOnlyResult.bucket, "即アタック");
+	const initialInputOnlyMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
+	assert.match(initialInputOnlyMemo, /初回入力ゲート: 10\/100/);
+	assert.match(initialInputOnlyMemo, /面積: 10\/15/);
+	assert.match(initialInputOnlyMemo, /接道: 0\/15/);
+	assert.match(initialInputOnlyMemo, /系統情報: 0\/15/);
+	assert.match(initialInputOnlyMemo, /変電所・連系点からの距離: 0\/10/);
+	assert.match(initialInputOnlyMemo, /農地転用: 0\/20/);
+	assert.match(initialInputOnlyMemo, /ハザード: 0\/10/);
+	assert.match(initialInputOnlyMemo, /地目・用地: 0\/15/);
+	assert.match(initialInputOnlyMemo, /自動取得証拠: なし/);
 
 	process.env.GOOGLE_MAPS_API_KEY = "test-google-key";
 	process.env.WAGRI_ACCESS_TOKEN = "test-wagri-token";
@@ -553,7 +590,16 @@ async function main() {
 	assert.notEqual(addressOnlyResult.overallGrade, "S");
 	assert.notEqual(addressOnlyResult.bucket, "即アタック");
 	assert.ok(addressOnlyResult.score < 65);
+	assert.equal(addressOnlyResult.score, 60);
 	const addressOnlyMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
+	assert.match(addressOnlyMemo, /初回入力ゲート: 60\/100/);
+	assert.match(addressOnlyMemo, /面積: 10\/15/);
+	assert.match(addressOnlyMemo, /接道: 8\/15/);
+	assert.match(addressOnlyMemo, /系統情報: 6\/15/);
+	assert.match(addressOnlyMemo, /変電所・連系点からの距離: 8\/10/);
+	assert.match(addressOnlyMemo, /農地転用: 12\/20/);
+	assert.match(addressOnlyMemo, /ハザード: 6\/10/);
+	assert.match(addressOnlyMemo, /地目・用地: 10\/15/);
 	assert.match(addressOnlyMemo, /Google Geocoding API/);
 	assert.match(addressOnlyMemo, /Google Roads/);
 	assert.match(addressOnlyMemo, /Google Maps/);
@@ -707,10 +753,20 @@ async function main() {
 	globalThis.fetch = originalFetch;
 	if (originalGoogleKey === undefined) delete process.env.GOOGLE_MAPS_API_KEY;
 	else process.env.GOOGLE_MAPS_API_KEY = originalGoogleKey;
+	if (originalGoogleApiKey === undefined) delete process.env.GOOGLE_API_KEY;
+	else process.env.GOOGLE_API_KEY = originalGoogleApiKey;
 	if (originalWagriToken === undefined) delete process.env.WAGRI_ACCESS_TOKEN;
 	else process.env.WAGRI_ACCESS_TOKEN = originalWagriToken;
+	if (originalWagriApiToken === undefined) delete process.env.WAGRI_API_TOKEN;
+	else process.env.WAGRI_API_TOKEN = originalWagriApiToken;
+	if (originalWagriTokenAlt === undefined) delete process.env.WAGRI_TOKEN;
+	else process.env.WAGRI_TOKEN = originalWagriTokenAlt;
 	if (originalReinfolibKey === undefined) delete process.env.REINFOLIB_API_KEY;
 	else process.env.REINFOLIB_API_KEY = originalReinfolibKey;
+	if (originalRealEstateLibraryApiKey === undefined) delete process.env.REAL_ESTATE_LIBRARY_API_KEY;
+	else process.env.REAL_ESTATE_LIBRARY_API_KEY = originalRealEstateLibraryApiKey;
+	if (originalMlitReinfolibApiKey === undefined) delete process.env.MLIT_REINFOLIB_API_KEY;
+	else process.env.MLIT_REINFOLIB_API_KEY = originalMlitReinfolibApiKey;
 	delete process.env.REINFOLIB_LAND_PRICE_YEAR;
 	delete process.env.REINFOLIB_TRANSACTION_YEAR;
 	if (originalMojChizuGeoJsonUrls === undefined) delete process.env.MOJ_CHIZU_GEOJSON_URLS;
