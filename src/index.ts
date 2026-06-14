@@ -13,6 +13,19 @@ import {
 const worker = new Worker();
 export default worker;
 
+const googleGmailAuth = worker.oauth("googleGmailAuth", {
+	name: "googleGmailAuth",
+	authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
+	tokenEndpoint: "https://oauth2.googleapis.com/token",
+	scope: "https://www.googleapis.com/auth/gmail.modify",
+	clientId: process.env.GOOGLE_CLIENT_ID ?? "",
+	clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+	authorizationParams: {
+		access_type: "offline",
+		prompt: "consent",
+	},
+});
+
 const BUSINESS_CARD_DATA_SOURCE_ID =
 	process.env.BUSINESS_CARD_DATA_SOURCE_ID ??
 	"0634132a-c6cf-458d-b63c-b357489f227e";
@@ -123,6 +136,18 @@ const SALES_TEAM_USER_IDS = (process.env.SALES_TEAM_USER_IDS ?? "")
 	.split(",")
 	.map((id) => id.trim())
 	.filter(Boolean);
+const GMAIL_INQUIRY_SOURCE_LABEL_NAME =
+	process.env.GMAIL_INQUIRY_SOURCE_LABEL_NAME ?? "問い合わせ";
+const GMAIL_INQUIRY_DONE_LABEL_NAME =
+	process.env.GMAIL_INQUIRY_DONE_LABEL_NAME ?? "INQUIRY_DONE";
+const GMAIL_INQUIRY_DEFAULT_QUERY =
+	process.env.GMAIL_INQUIRY_DEFAULT_QUERY ?? "newer_than:7d";
+const GMAIL_INQUIRY_REMOVE_SOURCE_LABEL =
+	process.env.GMAIL_INQUIRY_REMOVE_SOURCE_LABEL !== "false";
+const GMAIL_INQUIRY_POLL_LIMIT = Math.min(
+	Math.max(Number.parseInt(process.env.GMAIL_INQUIRY_POLL_LIMIT ?? "10", 10) || 10, 1),
+	50,
+);
 
 const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY;
 // クオリティ優先(大ちゃん方針2026-06-11): 既定をsonar-proに(wajo-intel CLIと同格の深掘り品質)。
@@ -1134,7 +1159,7 @@ type InquiryResult = {
 
 type InquiryProjectCreationResult = {
 	inquiryPageId: string;
-	action: "created-project" | "skipped-existing" | "dry-run" | "error";
+	action: "created-project" | "skipped-existing" | "enriched-existing" | "dry-run" | "error";
 	projectId: string | null;
 	created: number;
 	message: string;
@@ -1151,6 +1176,49 @@ type InquiryEmailIntakeResult = {
 		| "error";
 	companyAction: string | null;
 	message: string;
+};
+
+type GmailInquiryInboxInput = {
+	dryRun?: boolean;
+	limit?: number;
+	query?: string;
+	sourceLabelName?: string;
+	doneLabelName?: string;
+	removeSourceLabel?: boolean;
+	linkCompany?: boolean;
+};
+
+type GmailInquiryInboxResult = {
+	action: "processed" | "dry-run";
+	checked: number;
+	created: number;
+	existing: number;
+	ignored: number;
+	labelled: number;
+	errors: number;
+	dryRunReady: number;
+	message: string;
+	samples: string[];
+};
+
+type GmailLabel = {
+	id: string;
+	name: string;
+};
+
+type GmailMessageRef = {
+	id: string;
+};
+
+type GmailApiClient = {
+	listLabels(): Promise<GmailLabel[]>;
+	createLabel(name: string): Promise<GmailLabel>;
+	listMessages(query: string, limit: number): Promise<GmailMessageRef[]>;
+	getMessage(id: string): Promise<Record<string, unknown>>;
+	modifyMessage(
+		id: string,
+		input: { addLabelIds?: string[]; removeLabelIds?: string[] },
+	): Promise<void>;
 };
 
 type CustomerContactLogInput = {
@@ -1660,6 +1728,7 @@ type LandEvaluation = {
 	reviewMemo: string;
 	nearestSubstationName?: string;
 	nearestSubstationDistanceKm?: number | null;
+	shouldPatchSubstationDistance?: boolean;
 	nearestSubstationOperator?: string;
 	nearestSubstationGridStatus?: string;
 	substationCandidates?: LandTreasureSubstationCandidate[];
@@ -2481,6 +2550,29 @@ worker.tool("processInquiryProjectCreationById", {
 	},
 });
 
+worker.tool("processProjectDealStartById", {
+	title: "WAJO 案件から商談を作る",
+	description:
+		"案件管理DBのページIDから商談管理DBへ商談を1件だけ作成します。案件・関連企業・担当営業を引き継ぎます。進行中の商談が既にある場合は新規作成せず、二重作成を防ぎます（成約/失注済みは進行中扱いしません）。",
+	schema: j.object({
+		projectPageId: j.string().describe("案件管理DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		projectPageId: j.string(),
+		dealPageId: j.string().nullable(),
+		dealUrl: j.string().nullable(),
+		action: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ projectPageId, dryRun }, { notion }) => {
+		return processProjectDealStart(
+			{ projectPageId, dryRun: Boolean(dryRun) },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
 worker.tool("processInquiryEmailIntake", {
 	title: "WAJO 問い合わせメール入口",
 	description:
@@ -2509,6 +2601,40 @@ worker.tool("processInquiryEmailIntake", {
 		return processInquiryEmailIntake(
 			input as InquiryEmailIntakeInput,
 			notion as unknown as NotionClient,
+		);
+	},
+});
+
+worker.tool("processGmailInquiryInbox", {
+	title: "WAJO Gmail問い合わせ直読み",
+	description:
+		"Gmailの問い合わせラベルから未処理メールを読み、問い合わせメール入口へ渡します。成功時はINQUIRY_DONEラベルを付け、元の問い合わせラベルを外します。",
+	schema: j.object({
+		dryRun: j.boolean().describe("trueならNotion作成やGmailラベル変更を行いません"),
+		limit: j.integer().describe("一度に処理する最大件数。未指定時10、最大50"),
+		query: j.string().describe("Gmail検索条件。空ならnewer_than:7d"),
+		sourceLabelName: j.string().describe("読み取り元ラベル。空なら問い合わせ"),
+		doneLabelName: j.string().describe("完了ラベル。空ならINQUIRY_DONE"),
+		removeSourceLabel: j.boolean().describe("成功時に読み取り元ラベルを外すか"),
+		linkCompany: j.boolean().describe("問い合わせ作成後に企業連携まで実行するか"),
+	}),
+	outputSchema: j.object({
+		action: j.string(),
+		checked: j.integer(),
+		created: j.integer(),
+		existing: j.integer(),
+		ignored: j.integer(),
+		labelled: j.integer(),
+		errors: j.integer(),
+		dryRunReady: j.integer(),
+		message: j.string(),
+		samples: j.array(j.string()),
+	}),
+	execute: async (input, { notion }) => {
+		return processGmailInquiryInbox(
+			input as GmailInquiryInboxInput,
+			notion as unknown as NotionClient,
+			createGmailApiClient(await googleGmailAuth.accessToken()),
 		);
 	},
 });
@@ -3573,6 +3699,28 @@ worker.webhook("processInquiryProjectCreationWebhook", {
 				notion as unknown as NotionClient,
 				extractTriggerUserIdFromWebhook(body),
 				false,
+			);
+		}
+	},
+});
+
+worker.webhook("processProjectDealStartWebhook", {
+	title: "WAJO 案件 商談化Webhook",
+	description:
+		"案件管理DBの「商談をする」ボタンから起動。商談管理DBへ商談を1件作成し、案件・関連企業・担当を引き継ぎます。進行中の商談が既にある場合は新規作成せず、二重作成を防ぎます。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const projectPageId = extractProjectPageIdFromWebhook(body);
+			if (!projectPageId) {
+				throw new Error(
+					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
+				);
+			}
+			await processProjectDealStart(
+				{ projectPageId, dryRun: false },
+				notion as unknown as NotionClient,
+				extractTriggerUserIdFromWebhook(body),
 			);
 		}
 	},
@@ -6202,6 +6350,10 @@ export {
 	buildInquiryAttentionMemo as buildInquiryAttentionMemoForTest,
 	buildInquiryReceptionNumber as buildInquiryReceptionNumberForTest,
 	inferInquiryCategoryCode as inferInquiryCategoryCodeForTest,
+	buildGmailInquirySearchQuery as buildGmailInquirySearchQueryForTest,
+	processGmailInquiryInbox as processGmailInquiryInboxForTest,
+	readGmailInquiryInput as readGmailInquiryInputForTest,
+	shouldIgnoreGmailInquiryInput as shouldIgnoreGmailInquiryInputForTest,
 };
 
 function buildCustomerContactLogTitle(input: {
@@ -16464,6 +16616,7 @@ type LandMapContext = {
 	googleMapsUrl: string;
 	roadAccess: string;
 	geocodeSource: string;
+	geocodeCandidateRequiresReview: boolean;
 	farmlandNavi: LandFarmlandNaviContext;
 	surroundingPlaces: LandSurroundingPlacesContext;
 	reinfolib: LandReinfolibContext;
@@ -16630,14 +16783,20 @@ async function resolveLandMapContext(land: LandInfo): Promise<LandMapContext> {
 	let latitude = land.latitude;
 	let longitude = land.longitude;
 	let geocodeSource = "";
+	let geocodeCandidateRequiresReview = false;
 	let roadAccess = "";
 
-	if ((latitude === null || longitude === null) && land.substationDistanceKm === null && key && land.address) {
-		const geocoded = await geocodeLandAddress(land.address, key);
+	if ((latitude === null || longitude === null) && land.address) {
+		const googleGeocoded = key ? await geocodeLandAddress(land.address, key) : null;
+		const gsiGeocoded = googleGeocoded ? null : await geocodeLandAddressByGsi(land.address);
+		const geocoded = googleGeocoded || gsiGeocoded;
 		if (geocoded) {
 			latitude = geocoded.latitude;
 			longitude = geocoded.longitude;
-			geocodeSource = "Google Geocoding API";
+			geocodeSource = googleGeocoded
+				? "Google Geocoding API"
+				: `国土地理院住所検索（住所候補: ${gsiGeocoded?.title || "名称未取得"} / 正式住所・地番の確定結果ではない）`;
+			geocodeCandidateRequiresReview = Boolean(gsiGeocoded && !googleGeocoded);
 		}
 	}
 
@@ -16662,6 +16821,7 @@ async function resolveLandMapContext(land: LandInfo): Promise<LandMapContext> {
 				: "",
 		roadAccess,
 		geocodeSource,
+		geocodeCandidateRequiresReview,
 		farmlandNavi,
 		surroundingPlaces,
 		reinfolib,
@@ -18089,6 +18249,24 @@ async function geocodeLandAddress(
 	return latitude !== null && longitude !== null ? { latitude, longitude } : null;
 }
 
+async function geocodeLandAddressByGsi(
+	address: string,
+): Promise<{ latitude: number; longitude: number; title: string } | null> {
+	const url = new URL("https://msearch.gsi.go.jp/address-search/AddressSearch");
+	url.searchParams.set("q", address);
+	const body = await fetchJson(url);
+	const first = objectArray(body)[0];
+	const coordinates = Array.isArray(readObject(first?.geometry).coordinates)
+		? (readObject(first?.geometry).coordinates as unknown[])
+		: [];
+	const longitude = numberOrNull(coordinates[0]);
+	const latitude = numberOrNull(coordinates[1]);
+	const title = stringOrBlank(readObject(first?.properties).title);
+	return latitude !== null && longitude !== null
+		? { latitude, longitude, title }
+		: null;
+}
+
 async function fetchGoogleRoadAccess(
 	latitude: number,
 	longitude: number,
@@ -18347,7 +18525,10 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			reinfolibText,
 			farmlandNaviText,
 		].filter(Boolean).join("\n");
-		const investigationGaps = landInvestigationGaps(treasure.blockers);
+		const investigationGaps = uniqueStrings([
+			...(mapContext.geocodeCandidateRequiresReview ? ["所在地・地番確認"] : []),
+			...landInvestigationGaps(treasure.blockers),
+		]);
 		if (investigationGaps.length > 0) {
 			const scout = buildLandScoutReport({
 				land,
@@ -18380,6 +18561,7 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 				reviewMemo: scout.reviewMemo,
 				nearestSubstationName: treasure.nearestSubstationName,
 				nearestSubstationDistanceKm: treasure.nearestSubstationDistanceKm,
+				shouldPatchSubstationDistance: !mapContext.geocodeCandidateRequiresReview,
 				nearestSubstationOperator: treasure.nearestSubstationOperator,
 				nearestSubstationGridStatus: treasure.nearestSubstationGridStatus,
 				substationCandidates: treasure.substationCandidates,
@@ -18411,6 +18593,7 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			reviewMemo: mapEvidence ? `${treasure.reviewMemo} / ${mapEvidence.replace(/\n/g, " / ")}` : treasure.reviewMemo,
 			nearestSubstationName: treasure.nearestSubstationName,
 			nearestSubstationDistanceKm: treasure.nearestSubstationDistanceKm,
+			shouldPatchSubstationDistance: true,
 			nearestSubstationOperator: treasure.nearestSubstationOperator,
 			nearestSubstationGridStatus: treasure.nearestSubstationGridStatus,
 			substationCandidates: treasure.substationCandidates,
@@ -18690,7 +18873,11 @@ async function markLandNeedsReview(
 		Webhook引き継ぎステータス: { kind: "select", value: "要確認で停止" },
 		Webhook引き継ぎメモ: { kind: "text", value: evaluation.reviewMemo },
 	};
-	if (evaluation.nearestSubstationDistanceKm !== undefined && evaluation.nearestSubstationDistanceKm !== null) {
+	if (
+		evaluation.shouldPatchSubstationDistance !== false &&
+		evaluation.nearestSubstationDistanceKm !== undefined &&
+		evaluation.nearestSubstationDistanceKm !== null
+	) {
 		patches["変電所距離（km）"] = {
 			kind: "number",
 			value: Math.round(evaluation.nearestSubstationDistanceKm * 100) / 100,
@@ -19593,6 +19780,291 @@ function readInquiryEmailIntakeInputFromWebhook(
 	};
 }
 
+function buildGmailInquirySearchQuery(input: {
+	sourceLabelName?: string;
+	doneLabelName?: string;
+	query?: string;
+}): string {
+	const base = input.query?.trim() || GMAIL_INQUIRY_DEFAULT_QUERY;
+	const sourceLabel = input.sourceLabelName?.trim();
+	const doneLabel = input.doneLabelName?.trim();
+	return [
+		sourceLabel ? `label:${sourceLabel}` : "",
+		base,
+		doneLabel ? `-label:${doneLabel}` : "",
+	]
+		.filter(Boolean)
+		.join(" ");
+}
+
+function readGmailInquiryInput(
+	message: Record<string, unknown>,
+	labelNamesById: Map<string, string> = new Map(),
+): InquiryEmailIntakeInput {
+	const payload = (message.payload as Record<string, unknown> | undefined) ?? {};
+	const headers = Array.isArray(payload.headers) ? payload.headers : [];
+	const headerValue = (name: string): string => {
+		const found = headers.find((header) => {
+			if (!header || typeof header !== "object") return false;
+			return String((header as Record<string, unknown>).name ?? "").toLowerCase() === name.toLowerCase();
+		}) as Record<string, unknown> | undefined;
+		return String(found?.value ?? "");
+	};
+	const id = String(message.id ?? "");
+	const threadId = String(message.threadId ?? "");
+	const labelIds = Array.isArray(message.labelIds) ? message.labelIds.map((label) => String(label)) : [];
+	const labels = labelIds
+		.map((labelId) => labelNamesById.get(labelId) ?? labelId)
+		.filter(Boolean)
+		.join(", ");
+	return {
+		subject: headerValue("Subject"),
+		from: headerValue("From"),
+		to: headerValue("To"),
+		body: readGmailPlainTextBody(payload),
+		receivedAt: gmailInternalDateToIso(message.internalDate) || headerValue("Date"),
+		gmailMessageId: id,
+		messageId: normalizeRfcMessageId(headerValue("Message-ID")),
+		threadId,
+		labels,
+		sourceUrl: threadId
+			? `https://mail.google.com/mail/u/0/#inbox/${threadId}`
+			: id
+				? `https://mail.google.com/mail/u/0/#inbox/${id}`
+				: "",
+	};
+}
+
+function readGmailPlainTextBody(payload: Record<string, unknown>): string {
+	const body = payload.body as Record<string, unknown> | undefined;
+	const direct = decodeGmailBase64(body?.data);
+	if (direct) return direct;
+	const parts = Array.isArray(payload.parts) ? payload.parts : [];
+	for (const part of parts) {
+		if (!part || typeof part !== "object") continue;
+		const item = part as Record<string, unknown>;
+		if (String(item.mimeType ?? "").includes("text/plain")) {
+			const partBody = item.body as Record<string, unknown> | undefined;
+			const decoded = decodeGmailBase64(partBody?.data);
+			if (decoded) return decoded;
+		}
+		const nested = readGmailPlainTextBody(item);
+		if (nested) return nested;
+	}
+	return "";
+}
+
+function decodeGmailBase64(value: unknown): string {
+	if (typeof value !== "string" || !value) return "";
+	try {
+		const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+		return Buffer.from(normalized, "base64").toString("utf8");
+	} catch {
+		return "";
+	}
+}
+
+function gmailInternalDateToIso(value: unknown): string {
+	if (typeof value !== "string" && typeof value !== "number") return "";
+	const date = new Date(Number(value));
+	return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+function shouldIgnoreGmailInquiryInput(input: InquiryEmailIntakeInput): boolean {
+	const source = `${input.subject ?? ""}\n${input.from ?? ""}\n${input.body ?? ""}`;
+	if (/notify@yoom\.fun|Yoom/i.test(input.from ?? "")) {
+		return /お問合せmail→notion|フローボット|Yoomから|エラー発生/i.test(source);
+	}
+	return false;
+}
+
+function normalizeGmailPollLimit(value: number | undefined): number {
+	if (!Number.isFinite(value ?? 0)) return GMAIL_INQUIRY_POLL_LIMIT;
+	return Math.min(Math.max(Math.floor(value ?? GMAIL_INQUIRY_POLL_LIMIT), 1), 50);
+}
+
+function createGmailApiClient(token: string): GmailApiClient {
+	const request = async (
+		path: string,
+		options: { method?: string; body?: Record<string, unknown> } = {},
+	): Promise<Record<string, unknown>> => {
+		const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me${path}`, {
+			method: options.method ?? "GET",
+			headers: {
+				Authorization: `Bearer ${token}`,
+				"Content-Type": "application/json",
+			},
+			...(options.body ? { body: JSON.stringify(options.body) } : {}),
+		});
+		if (!response.ok) {
+			throw new Error(`Gmail API ${options.method ?? "GET"} ${path} failed: ${response.status}`);
+		}
+		return response.status === 204 ? {} : ((await response.json()) as Record<string, unknown>);
+	};
+	return {
+		listLabels: async () => {
+			const response = await request("/labels");
+			return Array.isArray(response.labels)
+				? response.labels
+					.map((label) => label as Record<string, unknown>)
+					.map((label) => ({
+						id: String(label.id ?? ""),
+						name: String(label.name ?? ""),
+					}))
+					.filter((label) => label.id && label.name)
+				: [];
+		},
+		createLabel: async (name: string) => {
+			const response = await request("/labels", {
+				method: "POST",
+				body: {
+					name,
+					labelListVisibility: "labelShow",
+					messageListVisibility: "show",
+				},
+			});
+			return {
+				id: String(response.id ?? ""),
+				name: String(response.name ?? name),
+			};
+		},
+		listMessages: async (query: string, limit: number) => {
+			const params = new URLSearchParams({
+				q: query,
+				maxResults: String(limit),
+			});
+			const response = await request(`/messages?${params.toString()}`);
+			return Array.isArray(response.messages)
+				? response.messages
+					.map((message) => message as Record<string, unknown>)
+					.map((message) => ({ id: String(message.id ?? "") }))
+					.filter((message) => message.id)
+				: [];
+		},
+		getMessage: async (id: string) => request(`/messages/${encodeURIComponent(id)}?format=full`),
+		modifyMessage: async (id: string, input: { addLabelIds?: string[]; removeLabelIds?: string[] }) => {
+			await request(`/messages/${encodeURIComponent(id)}/modify`, {
+				method: "POST",
+				body: {
+					addLabelIds: input.addLabelIds ?? [],
+					removeLabelIds: input.removeLabelIds ?? [],
+				},
+			});
+		},
+	};
+}
+
+async function resolveGmailInquiryLabels(
+	gmail: GmailApiClient,
+	sourceLabelName: string,
+	doneLabelName: string,
+): Promise<{
+	sourceLabel: GmailLabel | null;
+	doneLabel: GmailLabel;
+	labelNamesById: Map<string, string>;
+}> {
+	const labels = await gmail.listLabels();
+	const labelNamesById = new Map(labels.map((label) => [label.id, label.name]));
+	const sourceLabel = labels.find((label) => label.name === sourceLabelName) ?? null;
+	let doneLabel = labels.find((label) => label.name === doneLabelName);
+	if (!doneLabel) {
+		doneLabel = await gmail.createLabel(doneLabelName);
+		labelNamesById.set(doneLabel.id, doneLabel.name);
+	}
+	return { sourceLabel, doneLabel, labelNamesById };
+}
+
+async function processGmailInquiryInbox(
+	input: GmailInquiryInboxInput,
+	notion: NotionClient,
+	gmail: GmailApiClient,
+): Promise<GmailInquiryInboxResult> {
+	const dryRun = input.dryRun !== false;
+	const limit = normalizeGmailPollLimit(input.limit);
+	const sourceLabelName = input.sourceLabelName?.trim() || GMAIL_INQUIRY_SOURCE_LABEL_NAME;
+	const doneLabelName = input.doneLabelName?.trim() || GMAIL_INQUIRY_DONE_LABEL_NAME;
+	const removeSourceLabel =
+		typeof input.removeSourceLabel === "boolean"
+			? input.removeSourceLabel
+			: GMAIL_INQUIRY_REMOVE_SOURCE_LABEL;
+	const { sourceLabel, doneLabel, labelNamesById } = await resolveGmailInquiryLabels(
+		gmail,
+		sourceLabelName,
+		doneLabelName,
+	);
+	const query = buildGmailInquirySearchQuery({
+		sourceLabelName,
+		doneLabelName,
+		query: input.query,
+	});
+	const refs = await gmail.listMessages(query, limit);
+	let created = 0;
+	let existing = 0;
+	let ignored = 0;
+	let labelled = 0;
+	let errors = 0;
+	let dryRunReady = 0;
+	const samples: string[] = [];
+
+	for (const ref of refs) {
+		try {
+			const message = await gmail.getMessage(ref.id);
+			const emailInput = readGmailInquiryInput(message, labelNamesById);
+			if (shouldIgnoreGmailInquiryInput(emailInput)) {
+				ignored += 1;
+				samples.push(`ignored:${emailInput.subject || ref.id}`);
+				if (!dryRun) {
+					await gmail.modifyMessage(ref.id, {
+						addLabelIds: [doneLabel.id],
+						removeLabelIds: removeSourceLabel && sourceLabel?.id ? [sourceLabel.id] : [],
+					});
+					labelled += 1;
+				}
+				continue;
+			}
+			const result = await processInquiryEmailIntake(
+				{
+					...emailInput,
+					dryRun,
+					linkCompany: input.linkCompany,
+				},
+				notion,
+			);
+			if (result.action === "created-inquiry") created += 1;
+			if (result.action === "skipped-existing") existing += 1;
+			if (result.action === "dry-run") dryRunReady += 1;
+			if (result.action === "created-inquiry" || result.action === "skipped-existing") {
+				if (!dryRun) {
+					await gmail.modifyMessage(ref.id, {
+						addLabelIds: [doneLabel.id],
+						removeLabelIds: removeSourceLabel && sourceLabel?.id ? [sourceLabel.id] : [],
+					});
+					labelled += 1;
+				}
+			}
+			samples.push(`${result.action}:${emailInput.subject || ref.id}`);
+		} catch (error) {
+			errors += 1;
+			samples.push(`error:${ref.id}:${String(error).slice(0, 120)}`);
+		}
+	}
+
+	return {
+		action: dryRun ? "dry-run" : "processed",
+		checked: refs.length,
+		created,
+		existing,
+		ignored,
+		labelled,
+		errors,
+		dryRunReady,
+		samples: samples.slice(0, 10),
+		message: dryRun
+			? `dry-run: Gmail問い合わせ ${refs.length} 件を確認しました。Notion作成とGmailラベル変更は行っていません。`
+			: `Gmail問い合わせ ${refs.length} 件を処理しました。作成${created}、既存${existing}、除外${ignored}、ラベル付与${labelled}、エラー${errors}。`,
+	};
+}
+
 function readCustomerContactLogInputFromWebhook(
 	body: Record<string, unknown>,
 ): CustomerContactLogInput {
@@ -20241,7 +20713,70 @@ async function findExistingInquiryByEmail(
 			})),
 		);
 	}
+	const contactCandidates = await findExistingInquiryByContact(notion, emailInfo);
+	pages.push(...contactCandidates);
 	return uniquePages(pages);
+}
+
+async function findExistingInquiryByContact(
+	notion: NotionClient,
+	emailInfo: InquiryEmailInfo,
+): Promise<Page[]> {
+	const candidates: Page[] = [];
+	if (emailInfo.contactEmail) {
+		candidates.push(
+			...(await safeInquiryQuery(notion, {
+				property: "メールアドレス",
+				email: { equals: emailInfo.contactEmail },
+			})),
+		);
+	}
+	if (emailInfo.phone) {
+		candidates.push(
+			...(await safeInquiryQuery(notion, {
+				property: "電話番号",
+				phone_number: { equals: emailInfo.phone },
+			})),
+		);
+	}
+	if (emailInfo.contactName) {
+		candidates.push(
+			...(await safeInquiryQuery(notion, {
+				property: "お名前",
+				rich_text: { equals: emailInfo.contactName },
+			})),
+		);
+	}
+	return uniquePages(candidates).filter((page) =>
+		isSameInquiryContactCandidate(page, emailInfo),
+	);
+}
+
+function isSameInquiryContactCandidate(page: Page, emailInfo: InquiryEmailInfo): boolean {
+	const properties = page.properties ?? {};
+	const candidateEmail = text(properties["メールアドレス"]).toLowerCase();
+	const candidatePhone = digits(text(properties["電話番号"]));
+	const candidateName = normalizeLookupText(text(properties["お名前"]) || text(properties["氏名"]));
+	const emailMatches = Boolean(emailInfo.contactEmail && candidateEmail === emailInfo.contactEmail);
+	const phoneMatches = Boolean(emailInfo.phone && candidatePhone === emailInfo.phone);
+	const nameMatches = Boolean(
+		emailInfo.contactName &&
+			candidateName === normalizeLookupText(emailInfo.contactName),
+	);
+	if (phoneMatches && (emailMatches || nameMatches)) return true;
+	if (emailMatches && nameMatches) return true;
+	if (!emailMatches) return false;
+	const candidateDate = dateStartFromProperty(properties["受信日時"]);
+	return isNearbyInquiryDate(candidateDate, emailInfo.receivedAt);
+}
+
+function isNearbyInquiryDate(left: string, right: string): boolean {
+	const leftDate = left ? new Date(left) : null;
+	const rightDate = right ? new Date(right) : null;
+	if (!leftDate || !rightDate) return true;
+	if (Number.isNaN(leftDate.getTime()) || Number.isNaN(rightDate.getTime())) return true;
+	const diffMs = Math.abs(leftDate.getTime() - rightDate.getTime());
+	return diffMs <= 14 * 24 * 60 * 60 * 1000;
 }
 
 async function createInquiryFromEmail(
@@ -20299,11 +20834,12 @@ async function createInquiryFromEmail(
 	if (emailInfo.phone) {
 		properties["電話番号"] = phoneNumber(emailInfo.phone);
 	}
-	const created = await notion.pages.create({
-		parent: { data_source_id: INQUIRY_DATA_SOURCE_ID },
+	const created = await createNotionPageWithMissingPropertyFallback(
+		notion,
+		INQUIRY_DATA_SOURCE_ID,
 		properties,
-		template: pageTemplate(INQUIRY_TEMPLATE_ID),
-	});
+		pageTemplate(INQUIRY_TEMPLATE_ID),
+	);
 	await appendBlocksIfAny(notion, created.id, [
 		{
 			object: "block",
@@ -20323,6 +20859,66 @@ async function createInquiryFromEmail(
 		return notion.pages.retrieve({ page_id: created.id });
 	}
 	return createdPage;
+}
+
+async function createNotionPageWithMissingPropertyFallback(
+	notion: NotionClient,
+	dataSourceId: string,
+	properties: Record<string, unknown>,
+	template?: Record<string, unknown>,
+): Promise<Page> {
+	const mutableProperties: Record<string, unknown> = { ...properties };
+	let retry = 0;
+	const maxRetry = 6;
+	while (true) {
+		try {
+			return await notion.pages.create({
+				parent: { data_source_id: dataSourceId },
+				properties: mutableProperties,
+				...(template ? { template } : {}),
+			});
+		} catch (error) {
+			const missingProperties = parseMissingPropertiesFromNotionError(error);
+			if (missingProperties.length === 0 || retry >= maxRetry) {
+				throw error;
+			}
+			let removed = 0;
+			for (const missingProperty of missingProperties) {
+				if (Object.prototype.hasOwnProperty.call(mutableProperties, missingProperty)) {
+					delete mutableProperties[missingProperty];
+					removed += 1;
+				}
+			}
+			if (removed === 0) {
+				throw error;
+			}
+			retry += 1;
+		}
+	}
+}
+
+function parseMissingPropertiesFromNotionError(error: unknown): string[] {
+	const text = extractNotionErrorText(error);
+	const names = new Set<string>();
+	const pattern = /(?:^|[.。:\s])([^:.\n。、]+?)\s+is not a property that exists/g;
+	let match: RegExpExecArray | null;
+	while ((match = pattern.exec(text)) !== null) {
+		const name = match[1]?.trim();
+		if (name) names.add(name);
+	}
+	return [...names];
+}
+
+function extractNotionErrorText(error: unknown): string {
+	if (error instanceof Error) return error.message;
+	if (typeof error === "string") return error;
+	if (error && typeof error === "object") {
+		const raw = error as { message?: unknown; msg?: unknown; toString?: () => string };
+		if (typeof raw.message === "string") return raw.message;
+		if (typeof raw.msg === "string") return raw.msg;
+		if (typeof raw.toString === "function") return raw.toString();
+	}
+	return String(error);
 }
 
 function buildInquiryEmailSummary(emailInfo: InquiryEmailInfo): string {
@@ -22349,25 +22945,32 @@ async function processInquiryProjectCreation(
 
 	if (existingProjectIds.length > 0) {
 		if (!dryRun) {
+			const targetProjectId = existingProjectIds[0]!;
+			try {
+				const existingProjectPage = await notion.pages.retrieve({ page_id: targetProjectId });
+				await enrichProjectFromInquiry(notion, existingProjectPage, inquiryPage, triggerUserId);
+			} catch (error) {
+				console.log("inquiry project enrich skipped", String(error));
+			}
 			await markInquiryProjectLinked(
 				notion,
 				inquiryPage,
 				existingProjectIds,
 				triggerUserId,
-				"既存の紐づき案件を検出したため、新規案件は作成していません。",
+				"既存の案件を検出し、問い合わせ内容を引き継ぎ（更新）しました。重複案件は作成していません。",
 			);
 			await createPageComment(
 				notion,
 				inquiryPage.id,
-				"⚠️ 案件化は行いませんでした。\nこの問い合わせには既に紐づき案件があります。重複案件を作らず、既存案件へのリンクだけ整理しました。",
+				"✅ 既存の案件に問い合わせ内容を引き継ぎました。重複案件は作成していません。",
 			);
 		}
 		return {
 			inquiryPageId,
-			action: dryRun ? "dry-run" : "skipped-existing",
+			action: dryRun ? "dry-run" : "enriched-existing",
 			projectId: existingProjectIds[0] ?? null,
 			created: 0,
-			message: `既存の紐づき案件 ${existingProjectIds.length} 件を検出。新規作成は行いません。`,
+			message: `既存案件 ${existingProjectIds.length} 件を検出。新規作成せず、問い合わせ内容を引き継ぎました。`,
 		};
 	}
 
@@ -22492,7 +23095,6 @@ async function createProjectFromInquiry(
 	inquiryPage: Page,
 	triggerUserId?: string,
 ): Promise<Page> {
-	const properties = inquiryPage.properties ?? {};
 	const inquiryTitle = readGenericPageTitle(inquiryPage) || "問い合わせ";
 	const projectName = buildInquiryProjectName(inquiryTitle);
 	const created = await createProjectRecord(notion, {
@@ -22504,6 +23106,19 @@ async function createProjectFromInquiry(
 		最終アクション日: { date: { start: todayDateJST() } },
 	});
 	const projectPage = await notion.pages.retrieve({ page_id: created.id });
+	await enrichProjectFromInquiry(notion, projectPage, inquiryPage, triggerUserId);
+	return notion.pages.retrieve({ page_id: created.id });
+}
+
+// 案件ページ（新規でも、純正ボタンが先に作った既存でも）へ、問い合わせ内容を確実に引き継ぐ。
+async function enrichProjectFromInquiry(
+	notion: NotionClient,
+	projectPage: Page,
+	inquiryPage: Page,
+	triggerUserId?: string,
+): Promise<void> {
+	const properties = inquiryPage.properties ?? {};
+	const inquiryTitle = readGenericPageTitle(inquiryPage) || "問い合わせ";
 	const existingAssignedUserIds = personIdsFromProperty(properties["担当営業ユーザー"]);
 	const assignedUserIds =
 		existingAssignedUserIds.length > 0
@@ -22516,7 +23131,6 @@ async function createProjectFromInquiry(
 	const plannedGrossProfit = numberValue(properties["予定粗利額"]);
 	const projectDealType = projectDealTypeFromInquiryDealType(text(properties["売買区分"]));
 	const inquiryAttentionMemo = text(properties["確認待ち内容"]);
-	const today = todayDateJST();
 	const memo = [
 		"お問い合わせDBからWorker案件化。",
 		`元問い合わせ: ${inquiryTitle}`,
@@ -22524,6 +23138,7 @@ async function createProjectFromInquiry(
 		"次に確認すること: 対象物、売買条件、必要資料、価格、所有者/決裁者。",
 	].join("\n");
 	const patches: Record<string, SafePatch> = {
+		案件名: { kind: "text", value: buildInquiryProjectName(inquiryTitle) },
 		案件詳細: { kind: "text", value: memo },
 		情報ソース: { kind: "text", value: "お問い合わせDB / Worker案件化" },
 		確認待ち内容: {
@@ -22549,12 +23164,36 @@ async function createProjectFromInquiry(
 	if (contactLogIds.length > 0) {
 		patches["顧客接点ログ"] = { kind: "relation", ids: contactLogIds };
 	}
+	// 案件化時、お問い合わせ内容を案件側の専用引き継ぎ列へ写す（DB設計者が用意した受け皿）。
+	const inquirySummary = text(properties["メール要約"]);
+	if (inquirySummary) {
+		patches["問い合わせ要約"] = { kind: "text", value: inquirySummary };
+	}
+	const inquiryActivityLog =
+		text(properties["📝 活動ログ"]) || text(properties["活動ログ"]) || text(properties["本文"]);
+	if (inquiryActivityLog) {
+		patches["問い合わせ活動ログ"] = { kind: "text", value: inquiryActivityLog };
+	}
 	if (plannedGrossProfit !== null && plannedGrossProfit > 0) {
 		patches["予定粗利額"] = { kind: "number", value: plannedGrossProfit };
-		patches["予定粗利の根拠"] = { kind: "select", value: "価格あり" };
+		// 問い合わせ側で入力された根拠をそのまま引き継ぐ（固定の「価格あり」で上書きしない）。
+		patches["予定粗利の根拠"] = {
+			kind: "select",
+			value: projectGrossBasisFromInquiry(text(properties["予定粗利の根拠"])),
+		};
 	}
 	if (projectDealType) {
 		patches["売買区分"] = { kind: "select", value: projectDealType };
+	}
+	// 問い合わせ分類コードから案件種別・対象物種別を引き継ぐ（読み取れる区分だけ）。
+	const inquiryCategoryCode = text(properties["問い合わせ分類コード"]);
+	const projectCaseType = projectCaseTypeFromInquiryCategory(inquiryCategoryCode);
+	if (projectCaseType) {
+		patches["案件種別"] = { kind: "select", value: projectCaseType };
+	}
+	const projectAssetType = projectAssetTypeFromInquiryCategory(inquiryCategoryCode);
+	if (projectAssetType) {
+		patches["対象物種別"] = { kind: "select", value: projectAssetType };
 	}
 	patches["営業サマリー"] = {
 		kind: "text",
@@ -22566,15 +23205,34 @@ async function createProjectFromInquiry(
 		value: "設備詳細を作成し、資料作成に必要な情報を埋める。",
 	};
 	await safeUpdateExistingProperties(notion, projectPage, patches);
-	await appendBlocksIfAny(
-		notion,
-		created.id,
-		buildInquiryProjectFollowupChildren({
-			inquiryTitle,
-			inquiryAttentionMemo,
-		}),
-	);
-	return notion.pages.retrieve({ page_id: created.id });
+	// 押し直し対策：既に引き継ぎ済みなら本文ブロックを二重追記しない。
+	const existingProjectBody = await fetchPageBlockPlainText(notion, projectPage.id);
+	if (!existingProjectBody.includes("営業サマリーと次の一手")) {
+		await appendBlocksIfAny(
+			notion,
+			projectPage.id,
+			buildInquiryProjectFollowupChildren({
+				inquiryTitle,
+				inquiryAttentionMemo,
+			}),
+		);
+		// 問い合わせ本文（手入力の土地詳細・活動メモ等）を案件本文へ丸ごとコピーする。
+		const inquiryBody = (await fetchPageBlockPlainText(notion, inquiryPage.id)).trim();
+		const inquiryBodyMeaningful = inquiryBody.replace(/[—\-\s]/g, "").replace(/問い合わせ画面/g, "");
+		if (inquiryBodyMeaningful.length > 0) {
+			const bodyBlocks: Record<string, unknown>[] = [
+				headingBlock("問い合わせ本文（引き継ぎ）", 2),
+			];
+			for (const line of inquiryBody
+				.split("\n")
+				.map((entry) => entry.trim())
+				.filter(Boolean)
+				.slice(0, 80)) {
+				bodyBlocks.push(paragraphBlock(line.slice(0, 1800)));
+			}
+			await appendBlocksIfAny(notion, projectPage.id, bodyBlocks);
+		}
+	}
 }
 
 function buildInquiryProjectFollowupChildren(input: {
@@ -22624,9 +23282,232 @@ function projectDealTypeFromInquiryDealType(inquiryDealType: string): string | n
 	return null;
 }
 
+// 問い合わせの「予定粗利の根拠」を案件側へそのまま引き継ぐ。両DBで選択肢は同一。
+// 不明な値だけ案件化必須を満たすため「価格あり」へ寄せる。
+const PROJECT_GROSS_BASIS_OPTIONS = new Set([
+	"価格あり",
+	"相場見込み",
+	"案件多数見込み",
+	"仮置き",
+]);
+
+function projectGrossBasisFromInquiry(inquiryGrossBasis: string): string {
+	return PROJECT_GROSS_BASIS_OPTIONS.has(inquiryGrossBasis) ? inquiryGrossBasis : "価格あり";
+}
+
+// 問い合わせ分類コード(① 売却査定〜⑦ その他)から案件種別(高圧/低圧/蓄電池/その他)へ。
+// 設備種別が読み取れる③④⑤だけ写し、売却/購入/法人/その他は案件種別を断定しない(null)。
+function projectCaseTypeFromInquiryCategory(categoryCode: string): string | null {
+	if (categoryCode.includes("高圧")) return "高圧";
+	if (categoryCode.includes("低圧")) return "低圧";
+	if (categoryCode.includes("蓄電池")) return "蓄電池";
+	return null;
+}
+
+// 問い合わせ分類コードから対象物種別(土地/太陽光発電所/系統用蓄電池/その他)を推定。
+// 低圧/高圧=太陽光発電所、蓄電池=系統用蓄電池。読めない区分はnull(断定しない)。
+function projectAssetTypeFromInquiryCategory(categoryCode: string): string | null {
+	if (categoryCode.includes("高圧") || categoryCode.includes("低圧")) return "太陽光発電所";
+	if (categoryCode.includes("蓄電池")) return "系統用蓄電池";
+	return null;
+}
+
 function buildInquiryProjectName(inquiryTitle: string): string {
 	const clean = inquiryTitle.replace(/\s+/g, " ").trim();
 	return (clean || `問い合わせ案件 ${todayDateJST()}`).slice(0, 1800);
+}
+
+// ===== 案件 → 商談（「商談をする」ボタン）=====
+type ProjectDealStartResult = {
+	projectPageId: string;
+	dealPageId: string | null;
+	dealUrl: string | null;
+	action: "created" | "existing" | "dry-run" | "error";
+	message: string;
+};
+
+// 既に終わった商談(成約/失注)は重複判定の対象外。これら以外の進行中商談があれば新規作成しない。
+const CLOSED_DEAL_STATUSES = new Set(["成約", "失注"]);
+
+function buildProjectDealName(projectName: string): string {
+	const clean = projectName.replace(/\s+/g, " ").trim() || "案件";
+	return `${clean}｜商談`.slice(0, 1800);
+}
+
+// 案件の対象物種別・案件種別・売買区分から商談タグを推定（読み取れるものだけ）。
+function projectDealTags(projectProperties: Record<string, unknown>): string[] {
+	const tags: string[] = [];
+	const assetType = text(projectProperties["対象物種別"]);
+	const caseType = text(projectProperties["案件種別"]);
+	if (assetType === "太陽光発電所" || caseType === "高圧" || caseType === "低圧") {
+		tags.push("太陽光");
+	}
+	if (assetType === "系統用蓄電池" || caseType === "蓄電池") {
+		tags.push("蓄電池");
+	}
+	const dealType = text(projectProperties["売買区分"]);
+	if (dealType === "売却案件") tags.push("売りたい商談");
+	if (dealType === "購入希望") tags.push("買いたい商談");
+	return uniqueStrings(tags);
+}
+
+function buildProjectDealSummary(
+	projectName: string,
+	projectProperties: Record<string, unknown>,
+): string {
+	const lines = [
+		`案件「${projectName}」起点の商談。`,
+		"案件管理DBの内容を引き継ぎ。詳細は関連案件を参照。",
+	];
+	const grossProfit = numberValue(projectProperties["予定粗利額"]);
+	if (grossProfit !== null && grossProfit > 0) {
+		lines.push(`予定粗利額: ${Math.round(grossProfit).toLocaleString("ja-JP")}円`);
+	}
+	const dealType = text(projectProperties["売買区分"]);
+	if (dealType) lines.push(`売買区分: ${dealType}`);
+	const inquirySummary = text(projectProperties["問い合わせ要約"]);
+	if (inquirySummary) lines.push(`問い合わせ要約: ${inquirySummary}`);
+	return lines.join("\n");
+}
+
+// 商談ページ本文の雛形（案件からの引き継ぎサマリー＋商談メモ枠）。
+function buildProjectDealChildren(
+	projectName: string,
+	summary: string,
+): Record<string, unknown>[] {
+	const blocks: Record<string, unknown>[] = [
+		headingBlock("商談メモ（案件から引き継ぎ）", 2),
+		paragraphBlock(`元案件: ${projectName}`),
+	];
+	for (const line of summary.split("\n").map((entry) => entry.trim()).filter(Boolean)) {
+		blocks.push(paragraphBlock(line.slice(0, 1800)));
+	}
+	blocks.push(headingBlock("決定事項 / 合意事項", 3));
+	blocks.push(paragraphBlock(""));
+	blocks.push(headingBlock("次アクション（誰が・いつまで）", 3));
+	blocks.push(paragraphBlock(""));
+	return blocks;
+}
+
+async function findDealsByProject(
+	notion: NotionClient,
+	projectPageId: string,
+): Promise<Page[]> {
+	try {
+		const response = await notion.dataSources.query({
+			data_source_id: DEAL_DATA_SOURCE_ID,
+			page_size: 20,
+			filter: {
+				property: "関連案件",
+				relation: { contains: projectPageId },
+			},
+		});
+		return (response.results ?? []) as Page[];
+	} catch (error) {
+		console.log("project deal lookup skipped", String(error));
+		return [];
+	}
+}
+
+// 案件ページから商談管理DBへ商談を1件作成し、案件・関連企業・担当を引き継ぐ。
+// 進行中の商談が既にあれば新規作成しない（成約/失注済みは進行中扱いしない）。案件ページは更新しない。
+async function processProjectDealStart(
+	input: { projectPageId: string; dryRun?: boolean },
+	notion: NotionClient,
+	triggerUserId?: string,
+): Promise<ProjectDealStartResult> {
+	const projectPage = await notion.pages.retrieve({ page_id: input.projectPageId });
+	const projectName = readGenericPageTitle(projectPage) || "案件";
+	const existingDeals = await findDealsByProject(notion, input.projectPageId);
+	const openDeal = existingDeals.find((deal) => {
+		const status = text((deal as Page).properties?.["商談ステータス"]);
+		return !CLOSED_DEAL_STATUSES.has(status);
+	});
+	if (openDeal) {
+		if (!input.dryRun) {
+			await createPageComment(
+				notion,
+				input.projectPageId,
+				"✅ 進行中の商談を検出しました。重複商談は作成していません。",
+			);
+		}
+		return {
+			projectPageId: input.projectPageId,
+			dealPageId: openDeal.id,
+			dealUrl: (openDeal as { url?: string }).url ?? null,
+			action: "existing",
+			message: "進行中の商談が既にあるため、新規作成しませんでした。",
+		};
+	}
+
+	if (input.dryRun) {
+		return {
+			projectPageId: input.projectPageId,
+			dealPageId: null,
+			dealUrl: null,
+			action: "dry-run",
+			message: `dry-run: 商談管理DBへ「${projectName}」の商談を1件作成できます。`,
+		};
+	}
+
+	const properties = projectPage.properties ?? {};
+	const relatedCompanyIds = relationIdsFromProperty(properties["関連企業"]);
+	const existingAssignedUserIds = personIdsFromProperty(properties["担当営業ユーザー"]);
+	const assignedUserIds =
+		existingAssignedUserIds.length > 0
+			? uniqueStrings(existingAssignedUserIds)
+			: triggerUserId
+				? [triggerUserId]
+				: [];
+	// 商談ページは作成後に取得しない方針なので、プロパティは作成時にまとめて設定する。
+	const dealSummary = buildProjectDealSummary(projectName, properties);
+	const dealProperties: Record<string, unknown> = {
+		商談名: title(buildProjectDealName(projectName)),
+		商談ステータス: select("準備中"),
+		商談日: { date: { start: todayDateJST() } },
+		関連案件: relation(input.projectPageId),
+		商談概要: richText(dealSummary),
+	};
+	if (relatedCompanyIds.length > 0) {
+		dealProperties["関連企業"] = relationIds(relatedCompanyIds);
+	}
+	if (assignedUserIds.length > 0) {
+		dealProperties["担当営業ユーザー"] = {
+			people: assignedUserIds.slice(0, 5).map((id) => ({ id })),
+		};
+	}
+	const dealTags = projectDealTags(properties);
+	if (dealTags.length > 0) {
+		dealProperties["タグ"] = multiSelect(dealTags);
+	}
+	const created = await notion.pages.create({
+		parent: { data_source_id: DEAL_DATA_SOURCE_ID },
+		icon: { type: "icon", icon: { name: "chart-area", color: "gray" } },
+		properties: dealProperties,
+		template: pageTemplate(DEAL_TEMPLATE_ID),
+	});
+	// 商談本文に案件引き継ぎサマリー＋商談メモ枠を追加（blocks API が無い環境では黙ってスキップ）。
+	try {
+		await appendBlocksIfAny(
+			notion,
+			created.id,
+			buildProjectDealChildren(projectName, dealSummary),
+		);
+	} catch (error) {
+		console.log("deal body scaffold skipped", String(error));
+	}
+	await createPageComment(
+		notion,
+		input.projectPageId,
+		"✅ 商談管理DBへ商談を作成しました。案件・関連企業・担当を引き継いでいます。",
+	);
+	return {
+		projectPageId: input.projectPageId,
+		dealPageId: created.id,
+		dealUrl: (created as { url?: string }).url ?? null,
+		action: "created",
+		message: "商談管理DBへ商談を1件作成し、案件と相互リンクしました。",
+	};
 }
 
 async function markInquiryProjectLinked(
@@ -22677,6 +23558,7 @@ async function markInquiryProjectLinked(
 export { processInquiryAssignOwner as processInquiryAssignOwnerForTest };
 export { processInquiryEmailIntake as processInquiryEmailIntakeForTest };
 export { processInquiryProjectCreation as processInquiryProjectCreationForTest };
+export { processProjectDealStart as processProjectDealStartForTest };
 export { processBusinessCard as processBusinessCardForTest };
 export { processInquiryCompanyLink as processInquiryCompanyLinkForTest };
 export {

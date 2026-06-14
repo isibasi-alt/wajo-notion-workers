@@ -10,6 +10,14 @@
 - 確認なしでファイル削除やNotionページ/DB削除を行わない。
 - Notion UIでしか安全に触れないビュー列順やbuttonプロパティ作成は、無理に自動ドラッグ操作せず、`/Users/isibasidaisuke/WAJO Sales OS/NOTION_UI_RELEASE_STEPS.md` に沿って人間作業として扱う。
 
+## ⚠️ 調べ方・答え方の鉄則（2026-06-13 大ちゃんの強い指摘・最優先）
+- **横着して、確認する前に「答え」を断定口調で出すな。** 大ちゃんが一番嫌うのが、表面だけ「さらっと」見て適当に答えること。
+- **「ちゃんと見てこい／調べろ」と言われたものは、最後まで読む。** ぺろっと表面だけ見て分かった気になるな。
+- **ボタン/Worker/webhook/案件化の挙動を聞かれたら、まず `~/wajo-notion-workers/src/index.ts` と Vault `20_Project/名刺一枚で企業丸裸/台帳/全数台帳_W_Webhook対応表.md` を読んでから答える。** 読む前に結論を出さない。
+- **このリポジトリは Notion 純正の「Notion Worker」（`@notionhq/workers` SDK＋`ntn` CLI）。** Cloudflare Worker ではない・Make ではない（大ちゃんは2か月以上Makeを使っていない）・Netlify(sales-workflow-app)はボタン本体ではない。webhook URLは `notion.so/webhooks/worker/...` 形式。
+- **ボタンが実際にどのwebhook URLに紐づくか・DBオートメーションは、Notion UI専用でAPIから見えない。** コードを読むだけで「動かない原因はこれ」と断定しない。実機の挙動はWorker実行ログ／Chrome／大ちゃんのボタン設定画面で確定する。
+- **未確認は「未確認」と必ず明示。推測を事実のように言わない。嘘をつかない。** 速度より正確さ。遅くてもいいから一発で正しく。後から訂正する方が手間で、信頼を失う。
+
 ## Project Structure & Module Organization
 - `src/index.ts` defines the worker and capabilities.
 - `.examples/` has focused samples (sync, tool, automation, OAuth, webhook).

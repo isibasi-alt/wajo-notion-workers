@@ -288,7 +288,9 @@ Yoom は重複判定や企業作成の本体ではなく、Worker を起こす�
 
 初回セットアップでは、Google Cloud Console の OAuth クライアントに Gmail API を有効化し、Worker 側の `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` を使って `NOTION_KEYRING=0 npx ntn workers oauth start googleGmailAuth` を実行します。認可するGoogleアカウントは、問い合わせメールと `問い合わせ` / `INQUIRY_DONE` ラベルを持つGmailアカウントです。
 
-2026-06-01 本番接続済み。Google Cloud project `wajo-tochi` / `981901408071` で Gmail API を有効化し、`googleGmailAuth` を `isibasi@gmail.com` で認可しました。`processGmailInquiryInbox` の本番実行では、直近7日・`問い合わせ` ラベルの3件を処理し、新規2件、既存1件、エラー0件、完了ラベル3件でした。直後のdry-runで対象0件を確認済み。`syncGmailInquiryInbox` は healthy、5分間隔で稼働します。
+2026-06-01 本番接続済み。Google Cloud project `wajo-tochi` / `981901408071` で Gmail API を有効化し、`googleGmailAuth` を `isibasi@gmail.com` で認可しました。`processGmailInquiryInbox` の本番実行では、直近7日・`問い合わせ` ラベルの3件を処理し、新規2件、既存1件、エラー0件、完了ラベル3件でした。直後のdry-runで対象0件を確認済み。
+
+2026-06-14 訂正: `syncGmailInquiryInbox` が healthy で5分間隔稼働している、という上の旧報告は誤りでした。現行ソースに `syncGmailInquiryInbox` / `worker.sync` は存在せず、5分ごとの LaunchAgent も作成していません。Gmail直読みの実体は手動実行可能な `processGmailInquiryInbox` です。
 
 ### 旧Yoom Webhook入口（退避）
 
@@ -303,6 +305,14 @@ Yoom は重複判定や企業作成の本体ではなく、Worker を起こす�
 Yoom 側で保持していた Gmail トリガー、Notion検索、分岐、Notionページ作成は停止対象です。`gmail:{GmailメールID}` の保存、既存問い合わせの確認、問い合わせDB作成、必要時の企業連携は Worker 側で行います。
 
 2026-05-23 の追加確認では、旧 `検証｜お問合せmail→notion v2 重複防止` が Notion 操作でエラー通知を出していました。5/19以降の明確なフォーム問い合わせ9件は `processInquiryEmailIntake` で手動バックフィル済みです。以後は v2 の Notion検索/分岐/Notion作成を使わず、この Webhook へ渡す構成に切り替えます。
+
+2026-06-14 確認: Yoom から `フローボット停止2週間前` 通知が届いていた旧 `検証｜お問合せmail→notion v2 重複防止` は、画面で以下6件の停止済みを確認しました: `32695622`, `32674003`, `32644910`, `32599058`, `32566628`, `32519379`。問い合わせメール入口の正本は引き続き Worker の Gmail 直読みで、Yoom側の旧 Notion 検索/分岐/Notion作成フローは復活させないでください。
+
+同日確認: Yoom `【本番】名刺管理DB -> Notion Worker起動`（template `401076` / trigger `212974`）は画面上で `トリガーOFF`、かつ「現在のプランでは実行できないオペレーションが含まれています」と表示されていました。過去通知の `object_not_found` は旧 database ID `3634d017-81e7-8177-b796-000b96b5d885` を参照したためのエラーで、2026-06-14時点ではこのYoomフローは自動起動しない状態です。
+
+2026-06-14 追加修正: 問い合わせメール入口の重複防止が Gmail 個体ID / Message-ID / Thread-ID 寄りで、同一人物のフォーム本体・返信メール・資料請求違いを別問い合わせとして作る弱点を確認しました。`findExistingInquiryByEmail` に連絡先ベースの既存検索を追加し、`メールアドレス + お名前`、`電話番号 + メールアドレス`、`電話番号 + お名前`、または同一メールアドレスで14日以内の既存問い合わせを検出した場合は新規作成せず `skipped-existing` にします。再発防止テストは `npm run test:gmail-inquiry-intake` で、鎌田慎司さん相当の返信メールが既存問い合わせへ止まるケースを追加済みです。`npm run check`、`npm run build` 通過後、Worker `019e452d-22e7-7de1-b5ea-432a297bb478` へ再デプロイし、capability 一覧に `processGmailInquiryInbox` が出ることを確認しました。再デプロイ直後の `processGmailInquiryInbox` dry-run は `checked: 0 / created: 0 / existing: 0 / errors: 0` で、未処理の問い合わせラベル対象はありませんでした。
+
+同日整理: 既に作成済みだった重複候補は削除せず、AI専用の `重複判定ステータス` / `企業連携ステータス` を `重複疑い` にしてメモへ正本候補を残しました。対象は川上卓さんの `問-260613-002`（正本候補 `問-260613-001`）と、鎌田慎司さんの返信側 `問-260612-001`（正本候補 フォーム本体 `問-260612-002`）です。既に案件化済みのページが含まれるため、削除・アーカイブは未実施です。
 
 2026-05-30 追加: 問い合わせタイトルは短縮表記へ寄せる。形式は `問-YYMMDD-001｜売/買｜名前/会社名｜太陽光｜低/高/低バ/高バ｜⚠` を基本にする。`⚠` は太陽光の売却・売買案件で中を開いて確認が必要という意味に限定し、理由は存在する場合のみ `確認待ち内容` へ `太陽光案件のため中身確認が必要です。` として書き戻す。主な理由は、所在地未確認、販売価格未確認、FIT/FIP・売電単価未確認、現場写真未確認/未添付、バルク候補。購入相談だけの太陽光問い合わせは、販売側の必須情報不足とは扱わず、原則 `⚠` を付けない。
 

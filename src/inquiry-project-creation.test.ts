@@ -38,8 +38,9 @@ function inquiryPage(projectIds: string[] = []) {
 			関連企業: relationProp(["company-1"]),
 			顧客接点ログ: relationProp(["log-1"]),
 			予定粗利額: numberProp(3000000),
-			"予定粗利の根拠": selectProp("価格あり"),
+			"予定粗利の根拠": selectProp("案件多数見込み"),
 			売買区分: selectProp("売却相談"),
+			問い合わせ分類コード: selectProp("④ 高圧"),
 			紐づき案件: relationProp(projectIds),
 			ステータス: selectProp("担当確定"),
 			進捗フェーズ: selectProp("担当確定"),
@@ -51,6 +52,8 @@ function inquiryPage(projectIds: string[] = []) {
 			"営業サマリー": richTextProp(""),
 			"次の一手": richTextProp(""),
 			確認待ち内容: richTextProp("現地写真と設備IDの確認待ち"),
+			メール要約: richTextProp("FIT24円・1MW・2023年稼働・売却希望"),
+			"📝 活動ログ": richTextProp("6/1 初回TEL：資料送付依頼あり"),
 			最終アクション日: dateProp(),
 		},
 	};
@@ -70,6 +73,8 @@ function projectPage(id: string) {
 			予定粗利額: numberProp(),
 			"予定粗利の根拠": selectProp(""),
 			売買区分: selectProp(""),
+			案件種別: selectProp(""),
+			対象物種別: selectProp(""),
 			作成日: dateProp(),
 			最終アクション日: dateProp(),
 			案件詳細: richTextProp(""),
@@ -77,6 +82,8 @@ function projectPage(id: string) {
 			"営業サマリー": richTextProp(""),
 			"次の一手": richTextProp(""),
 			確認待ち内容: richTextProp(""),
+			問い合わせ要約: richTextProp(""),
+			問い合わせ活動ログ: richTextProp(""),
 		},
 	};
 }
@@ -180,14 +187,27 @@ async function main() {
 	assert.equal((projectProperties.予定粗利額 as { number: number }).number, 3000000);
 	assert.equal(
 		(projectProperties["予定粗利の根拠"] as { select: { name: string } }).select.name,
-		"価格あり",
+		"案件多数見込み",
+		"問い合わせの予定粗利の根拠をそのまま引き継ぐ（価格あり固定で上書きしない）",
 	);
 	assert.equal(
 		(projectProperties.売買区分 as { select: { name: string } }).select.name,
 		"売却案件",
 	);
+	assert.equal(
+		(projectProperties.案件種別 as { select: { name: string } }).select.name,
+		"高圧",
+		"問い合わせ分類コード④ 高圧から案件種別=高圧を引き継ぐ",
+	);
+	assert.equal(
+		(projectProperties.対象物種別 as { select: { name: string } }).select.name,
+		"太陽光発電所",
+		"高圧/低圧は対象物種別=太陽光発電所として引き継ぐ",
+	);
 	assert.match(JSON.stringify(projectProperties["営業サマリー"]), /情報収集中/);
 	assert.match(JSON.stringify(projectProperties["次の一手"]), /設備詳細を作成/);
+	assert.match(JSON.stringify(projectProperties["問い合わせ要約"]), /FIT24円/);
+	assert.match(JSON.stringify(projectProperties["問い合わせ活動ログ"]), /初回TEL/);
 
 	const inquiryUpdate = updates.find((update) => update.page_id === "inquiry-1");
 	assert.ok(inquiryUpdate);
@@ -235,9 +255,15 @@ async function main() {
 		"click-user",
 	);
 
-	assert.equal(skipped.action, "skipped-existing");
+	assert.equal(skipped.action, "enriched-existing");
 	assert.equal(skipped.projectId, "project-existing");
-	assert.equal(creates.length, 0);
+	assert.equal(creates.length, 0, "既存案件があれば新規作成しない");
+	const enrichedProjectUpdate = updates.find((update) => update.page_id === "project-existing");
+	assert.ok(enrichedProjectUpdate, "既存案件へ問い合わせ内容の引き継ぎ更新が走る");
+	assert.match(
+		JSON.stringify((enrichedProjectUpdate!.properties as Record<string, unknown>)["問い合わせ要約"]),
+		/FIT24円/,
+	);
 	const existingInquiryUpdate = updates.find((update) => update.page_id === "inquiry-1");
 	assert.ok(existingInquiryUpdate);
 	assert.equal(comments.length, 1);

@@ -67,6 +67,39 @@ function highValueLandPage() {
 	};
 }
 
+function highValueLandPageWithoutExactCoordinates() {
+	const page = highValueLandPage();
+	const properties = { ...page.properties };
+	delete properties.緯度;
+	delete properties.経度;
+	delete properties["変電所距離（km）"];
+	return {
+		...page,
+		id: "land-gsi-candidate-must-review-1",
+		properties: {
+			...properties,
+			土地名称: titleProp("【TDD】GSI候補座標は完了扱いしない"),
+			所在地: richTextProp("岐阜県土岐市土岐津町"),
+		},
+	};
+}
+
+function highValueLandPageWithoutExactCoordinatesButWithDistance() {
+	const page = highValueLandPage();
+	const properties = { ...page.properties };
+	delete properties.緯度;
+	delete properties.経度;
+	return {
+		...page,
+		id: "land-gsi-candidate-with-distance-1",
+		properties: {
+			...properties,
+			土地名称: titleProp("【TDD】距離入力済みでもGSI候補は取得する"),
+			所在地: richTextProp("岐阜県土岐市土岐津町"),
+		},
+	};
+}
+
 function nearSubstationButBlockedPage() {
 	return {
 		id: "land-blocked-1",
@@ -146,6 +179,7 @@ async function main() {
 	let activePage = highValueLandPage();
 	const originalFetch = globalThis.fetch;
 	const originalGoogleKey = process.env.GOOGLE_MAPS_API_KEY;
+	const originalGoogleApiKey = process.env.GOOGLE_API_KEY;
 	const originalWagriToken = process.env.WAGRI_ACCESS_TOKEN;
 	const originalReinfolibKey = process.env.REINFOLIB_API_KEY;
 	const originalMojChizuGeoJsonUrls = process.env.MOJ_CHIZU_GEOJSON_URLS;
@@ -244,6 +278,22 @@ async function main() {
 						},
 					],
 				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		}
+		if (url.includes("msearch.gsi.go.jp/address-search/AddressSearch")) {
+			return new Response(
+				JSON.stringify([
+					{
+						geometry: {
+							type: "Point",
+							coordinates: [137.19249, 35.353012],
+						},
+						properties: {
+							title: "岐阜県土岐市土岐津町高山",
+						},
+					},
+				]),
 				{ status: 200, headers: { "content-type": "application/json" } },
 			);
 		}
@@ -664,6 +714,83 @@ async function main() {
 	assert.deepEqual(addressOnlyFinalUpdate.総合評価, { select: { name: "C" } });
 	assert.doesNotMatch(addressOnlyMemo, /この土地、?1億|判定が全部出た|即アタック|農転不可|危険|接道OK/);
 
+	const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY;
+	const googleApiKey = process.env.GOOGLE_API_KEY;
+	delete process.env.GOOGLE_MAPS_API_KEY;
+	delete process.env.GOOGLE_API_KEY;
+	activePage = addressOnlyPage();
+	const gsiGeocodeResult = await processLandEvaluationForTest(
+		{ pageId: "land-gsi-geocode-1", dryRun: false },
+		notion as never,
+	);
+	assert.equal(gsiGeocodeResult.action, "needs-review");
+	const gsiGeocodeMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
+	assert.match(gsiGeocodeMemo, /国土地理院住所検索/);
+	assert.match(gsiGeocodeMemo, /住所候補: 岐阜県土岐市土岐津町高山/);
+	assert.match(gsiGeocodeMemo, /国土地理院道路候補/);
+	assert.ok(
+		fetchedUrls.some((url) =>
+			url.startsWith("https://msearch.gsi.go.jp/address-search/AddressSearch?"),
+		),
+	);
+	if (googleMapsApiKey) process.env.GOOGLE_MAPS_API_KEY = googleMapsApiKey;
+	if (googleApiKey) process.env.GOOGLE_API_KEY = googleApiKey;
+
+	const googleMapsApiKeyForCandidate = process.env.GOOGLE_MAPS_API_KEY;
+	const googleApiKeyForCandidate = process.env.GOOGLE_API_KEY;
+	delete process.env.GOOGLE_MAPS_API_KEY;
+	delete process.env.GOOGLE_API_KEY;
+	activePage = highValueLandPageWithoutExactCoordinates();
+	const gsiCandidateResult = await processLandEvaluationForTest(
+		{ pageId: "land-gsi-candidate-must-review-1", dryRun: false },
+		notion as never,
+	);
+	assert.equal(gsiCandidateResult.action, "needs-review");
+	assert.equal(gsiCandidateResult.overallGrade, "C");
+	const gsiCandidateMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
+	assert.match(gsiCandidateMemo, /国土地理院住所検索/);
+	assert.match(gsiCandidateMemo, /正式住所・地番の確定結果ではない/);
+	assert.match(gsiCandidateMemo, /所在地・地番確認/);
+	if (googleMapsApiKeyForCandidate) {
+		process.env.GOOGLE_MAPS_API_KEY = googleMapsApiKeyForCandidate;
+	}
+	if (googleApiKeyForCandidate) process.env.GOOGLE_API_KEY = googleApiKeyForCandidate;
+
+	const googleMapsApiKeyForDistanceCandidate = process.env.GOOGLE_MAPS_API_KEY;
+	const googleApiKeyForDistanceCandidate = process.env.GOOGLE_API_KEY;
+	delete process.env.GOOGLE_MAPS_API_KEY;
+	delete process.env.GOOGLE_API_KEY;
+	const gsiCallCountBeforeDistanceCandidate = fetchedUrls.filter((url) =>
+		url.startsWith("https://msearch.gsi.go.jp/address-search/AddressSearch?"),
+	).length;
+	activePage = highValueLandPageWithoutExactCoordinatesButWithDistance();
+	const gsiDistanceCandidateResult = await processLandEvaluationForTest(
+		{ pageId: "land-gsi-candidate-with-distance-1", dryRun: false },
+		notion as never,
+	);
+	assert.equal(gsiDistanceCandidateResult.action, "needs-review");
+	assert.equal(gsiDistanceCandidateResult.overallGrade, "C");
+	const gsiCallCountAfterDistanceCandidate = fetchedUrls.filter((url) =>
+		url.startsWith("https://msearch.gsi.go.jp/address-search/AddressSearch?"),
+	).length;
+	assert.equal(gsiCallCountAfterDistanceCandidate, gsiCallCountBeforeDistanceCandidate + 1);
+	const gsiDistanceCandidateMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
+	assert.match(gsiDistanceCandidateMemo, /国土地理院住所検索/);
+	assert.match(gsiDistanceCandidateMemo, /正式住所・地番の確定結果ではない/);
+	assert.match(gsiDistanceCandidateMemo, /所在地・地番確認/);
+	const gsiDistanceCandidateUpdate = updates.at(-1)?.properties as Record<string, unknown>;
+	assert.equal(
+		Object.hasOwn(gsiDistanceCandidateUpdate, "変電所距離（km）"),
+		false,
+		"GSI候補座標では手入力済みの変電所距離を上書きしない",
+	);
+	if (googleMapsApiKeyForDistanceCandidate) {
+		process.env.GOOGLE_MAPS_API_KEY = googleMapsApiKeyForDistanceCandidate;
+	}
+	if (googleApiKeyForDistanceCandidate) {
+		process.env.GOOGLE_API_KEY = googleApiKeyForDistanceCandidate;
+	}
+
 	activePage = {
 		...highValueLandPage(),
 		id: "land-missing-official-evidence-1",
@@ -707,6 +834,8 @@ async function main() {
 	globalThis.fetch = originalFetch;
 	if (originalGoogleKey === undefined) delete process.env.GOOGLE_MAPS_API_KEY;
 	else process.env.GOOGLE_MAPS_API_KEY = originalGoogleKey;
+	if (originalGoogleApiKey === undefined) delete process.env.GOOGLE_API_KEY;
+	else process.env.GOOGLE_API_KEY = originalGoogleApiKey;
 	if (originalWagriToken === undefined) delete process.env.WAGRI_ACCESS_TOKEN;
 	else process.env.WAGRI_ACCESS_TOKEN = originalWagriToken;
 	if (originalReinfolibKey === undefined) delete process.env.REINFOLIB_API_KEY;

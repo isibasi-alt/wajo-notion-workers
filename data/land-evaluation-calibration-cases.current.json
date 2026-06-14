@@ -1,0 +1,50 @@
+{
+	"cases": [
+		{
+			"caseId": "2022-09-suzuka-high",
+			"evidenceSource": "Gmail and attachment reviewed 2026-06-12",
+			"address": "三重県鈴鹿市国分町池ノ谷",
+			"areaSquareMeter": 5555,
+			"areaTsubo": 1680,
+			"farmlandResult": "許可",
+			"projectOutcome": "買付証明",
+			"purchaseOrOfferPriceMemo": "買付金額あり（具体額は原本参照）",
+			"outcomeReason": "農転許可後に買付証明へ進行",
+			"evidenceItems": [
+				"物件情報PDF: 敷地面積5555㎡ / 有効面積1680坪",
+				"Gmail: 農地転用許可",
+				"Gmail: 買付証明書"
+			]
+		},
+		{
+			"caseId": "sera-ajtc",
+			"evidenceSource": "Gmail and land lease attachment reviewed 2026-06-12",
+			"address": "広島県世羅郡世羅町大字長田字明見山",
+			"parcel": "10169-5",
+			"areaSquareMeter": 1657,
+			"landCategory": "田",
+			"farmlandResult": "未確定",
+			"projectOutcome": "案件化",
+			"outcomeReason": "契約停止条件に農転許可・農振除外許可あり",
+			"evidenceItems": [
+				"土地賃貸借契約書: 地番・地目・地積",
+				"契約停止条件: 農転許可・農振除外許可"
+			]
+		},
+		{
+			"caseId": "ise-futami-high",
+			"evidenceSource": "Gmail and project summary attachment reviewed 2026-06-12",
+			"address": "三重県伊勢市二見町三津1201-1 他13筆",
+			"areaSquareMeter": 24649.98,
+			"landCategory": "宅地・雑種地・山林",
+			"farmlandResult": "未確定",
+			"projectOutcome": "案件化",
+			"outcomeReason": "稼働済み資料あり、農地転用欄は記載なし",
+			"evidenceItems": [
+				"概要書: 地積24649.98㎡",
+				"概要書: 農地転用欄は記載なし",
+				"概要書: 連系月2016年4月"
+			]
+		}
+	]
+}

@@ -32,6 +32,8 @@ function landPage() {
 			土地名称: titleProp("橋本BESS候補地A"),
 			所在地: richTextProp("和歌山県橋本市"),
 			"面積（坪）": numberProp(5200),
+			緯度: numberProp(34.316),
+			経度: numberProp(135.6),
 			電力会社エリア: selectProp("関西電力"),
 			用途地域: richTextProp("市街化調整区域"),
 			接道: richTextProp("4m道路に接道"),
