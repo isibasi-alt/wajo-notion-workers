@@ -316,6 +316,8 @@ Yoom 側で保持していた Gmail トリガー、Notion検索、分岐、Notio
 
 同日導入確認: `npm run gmail:inquiry:install-5min` でこのMacへ導入済み。`launchctl list` で `com.wajo.gmail-inquiry-worker`、plist で `StartInterval: 300` を確認済み。初回手動確認では1回目が `504 Gateway Timeout` になりましたが、処理は一部進んでいたため、再実行で `checked: 10 / created: 2 / existing: 7 / labelled: 9 / errors: 0`、追加修正後に残り `duplicate-hold` 1件も `labelled: 1` となりました。最終dry-runは `checked: 0 / created: 0 / existing: 0 / errors: 0` です。`duplicate-hold` も完了ラベル対象に含める修正をデプロイ済みです。
 
+同日17時台の再確認: 17:14〜17:29 JST の5分起動は、リモートWorkerから `processGmailInquiryInbox` capability が消えていたため `404 CapabilityNotFound` で失敗していました。自動実行を一旦 `launchctl unload` で止め、`npm run test:gmail-inquiry-intake`、`npm run check`、`npm run build` 通過後に `NOTION_KEYRING=0 npx ntn workers deploy --local-build --no-git` で再デプロイしました。再デプロイ後、capability 一覧に `googleGmailAuth` と `processGmailInquiryInbox` が戻り、dry-run は `checked: 0 / created: 0 / errors: 0`。その後 `launchctl load` で再開し、17:34 と17:39の自動実行はいずれも `checked: 0 / created: 0 / errors: 0` で成功確認済みです。
+
 同日整理: 既に作成済みだった重複候補は削除せず、AI専用の `重複判定ステータス` / `企業連携ステータス` を `重複疑い` にしてメモへ正本候補を残しました。対象は川上卓さんの `問-260613-002`（正本候補 `問-260613-001`）と、鎌田慎司さんの返信側 `問-260612-001`（正本候補 フォーム本体 `問-260612-002`）です。既に案件化済みのページが含まれるため、削除・アーカイブは未実施です。
 
 2026-05-30 追加: 問い合わせタイトルは短縮表記へ寄せる。形式は `問-YYMMDD-001｜売/買｜名前/会社名｜太陽光｜低/高/低バ/高バ｜⚠` を基本にする。`⚠` は太陽光の売却・売買案件で中を開いて確認が必要という意味に限定し、理由は存在する場合のみ `確認待ち内容` へ `太陽光案件のため中身確認が必要です。` として書き戻す。主な理由は、所在地未確認、販売価格未確認、FIT/FIP・売電単価未確認、現場写真未確認/未添付、バルク候補。購入相談だけの太陽光問い合わせは、販売側の必須情報不足とは扱わず、原則 `⚠` を付けない。
