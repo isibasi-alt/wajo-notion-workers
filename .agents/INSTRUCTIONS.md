@@ -36,7 +36,14 @@
 - 「完了」「OK」「大丈夫」「問題ない」は、実機の結果（コマンド出力・画面・ログ）を見てからしか言わない。言い切ってすぐ謝る、を繰り返さない。
 - 「必要なら〜できます」「続けるなら〜」「〜しますか？」式の、条件付き・お伺い・丸投げの締め方を禁止する。自分が起こした問題は自分で中身まで調べ切り、断定で結論を出す。判断を相手に投げ返さない。
 - 結論ファースト・短文。前置き・実況中継・自己弁護・カッコつけた言い回しを書かない。長く書くこと自体が信用を下げる。
-- 2台運用：作業マシン名と git HEAD を記録に明記し、Worker コードは本線(origin/tdb-fetcher-integration)と揃えてから触る。
+- 2台運用：作業マシン名と git HEAD を記録に明記する。
+
+## 2台同期（必須・全AIエージェント＝Claude/Codex 両Mac共通）
+このリポジトリは2台のMac（和上石橋大右／石橋大右のMacBook Air）で並行して触る。daemonに頼らず、各AIが自分の作業の前後で必ず同期する。
+- **作業を始める前に必ず**：`cd ~/wajo-notion-workers && git fetch origin && git merge --ff-only origin/tdb-fetcher-integration`（相手の最新を取り込む。取り込めない時は止めて報告）。
+- **Workerコードを一区切りしたら必ず**：`git add -A && git commit -m "..." && git push origin tdb-fetcher-integration`（自分の分を相手へ送る）。
+- これで2台のコードが常に揃う。pullせずに編集を始めない。pushせずに作業を終えない。
+- 同じ箇所を同時に直して衝突したら、勝手に潰さず、どちらを採るか大ちゃんに確認する。
 
 ## Project Structure & Module Organization
 - `src/index.ts` defines the worker and capabilities.
