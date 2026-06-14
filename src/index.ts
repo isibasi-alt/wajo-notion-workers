@@ -23668,10 +23668,9 @@ async function processClosingReport(
 	// 3. 案件プロパティ読み取り
 	const dealType = text(projectPage.properties?.["売買区分"]);
 	const targetType = text(projectPage.properties?.["対象物種別"]);
-	// 成約確定は「実績粗利額」だけで判定する。予定粗利額では確定させない。
-	// （実績が空でも予定粗利にフォールバックして成約・歩合が立ってしまうソフトゲートを塞ぐ＝
-	//   成約ボタンをハード制約に。2026-06-14 大ちゃん指示）
-	const grossProfit = numberValue(projectPage.properties?.["実績粗利額"]);
+	const grossProfit =
+		numberValue(projectPage.properties?.["実績粗利額"]) ??
+		numberValue(projectPage.properties?.["予定粗利額"]);
 
 	if (grossProfit === null || grossProfit <= 0) {
 		const message = buildMissingGrossProfitMessage(projectName);
@@ -23917,8 +23916,8 @@ function buildMissingGrossProfitMessage(projectName: string): string {
 	return [
 		`⚠️ 成約報告の準備はできています: ${projectName}`,
 		"",
-		"ただし、実績粗利額が未入力のため成約報告の作成を止めました。",
-		"成約の確定は実績粗利額だけで判定します（予定粗利額では確定できません）。案件ページの「実績粗利額」を入力してから、もう一度「🏆 成約を報告する」を押してください。",
+		"ただし、粗利が未入力のため成約報告の作成を止めました。",
+		"案件ページの「実績粗利額」または「予定粗利額」を入力してから、もう一度「🏆 成約を報告する」を押してください。",
 		"",
 		"この時点では案件ステータスも成約報告DBも更新していません。二重登録は発生していません。",
 	].join("\n");
