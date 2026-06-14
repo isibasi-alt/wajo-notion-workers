@@ -820,6 +820,32 @@ async function main() {
 	assert.match(inlineGridCapacityMemo, /gridmap\.powergrid\.chuden\.co\.jp\/geo_data\/KRSIH013/);
 	assert.ok(inlineGridCapacityMemo.indexOf("神戸変電所") < inlineGridCapacityMemo.indexOf("遠方変電所"));
 
+	process.env.GRID_CAPACITY_PUBLIC_JSON = JSON.stringify({
+		data: [
+			{
+				powerArea: "中部電力",
+				prefecture: "三重県",
+				operator: "中部電力パワーグリッド",
+				facilityName: "神戸変電所",
+				voltageKv: 77,
+				availableCapacityMw: 38,
+				status: "公表値候補。中部電力PG公式CSVから取得。",
+				nMinusOne: "不可 #3。接続検討で確認。",
+				updatedAt: "2026-06-08",
+				sourceUrl: "https://gridmap.powergrid.chuden.co.jp/geo_data/KRSIH013",
+				mapCoordinates: { lat: 34.884053, lon: 136.575398 },
+			},
+		],
+	});
+	activePage = addressOnlyPage();
+	await processLandEvaluationForTest(
+		{ pageId: "land-grid-capacity-prefecture-mismatch-1", dryRun: false },
+		notion as never,
+	);
+	const prefectureMismatchMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
+	assert.doesNotMatch(prefectureMismatchMemo, /神戸変電所/);
+	assert.match(prefectureMismatchMemo, /公表値候補0件|公表値候補未取得/);
+
 	const addressOnlyFinalUpdate = updates.at(-1)?.properties as Record<string, unknown>;
 	assert.deepEqual(addressOnlyFinalUpdate.処理ステータス, { select: { name: "要確認" } });
 	assert.deepEqual(addressOnlyFinalUpdate.案件化状態, { select: { name: "未案件化" } });

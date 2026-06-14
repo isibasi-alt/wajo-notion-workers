@@ -16572,6 +16572,7 @@ type LandGridCapacityRecord = {
 	nMinusOne: string;
 	updatedAt: string;
 	sourceUrl: string;
+	prefecture: string;
 	latitude: number | null;
 	longitude: number | null;
 	distanceFromTargetKm: number | null;
@@ -16660,7 +16661,7 @@ async function resolveLandMapContext(land: LandInfo): Promise<LandMapContext> {
 	const parcelCadastre = await fetchParcelCadastreContext(latitude, longitude);
 	const gsiRoad = await fetchGsiRoadContext(latitude, longitude);
 	const powerArea = land.powerArea || inferPowerAreaFromAddress(land.address) || "未確認";
-	const gridCapacity = await fetchGridCapacityContext(powerArea, latitude, longitude);
+	const gridCapacity = await fetchGridCapacityContext(powerArea, latitude, longitude, land.address);
 
 	return {
 		latitude,
@@ -17345,8 +17346,10 @@ async function fetchGridCapacityContext(
 	powerArea: string,
 	latitude: number | null = null,
 	longitude: number | null = null,
+	address = "",
 ): Promise<LandGridCapacityContext> {
 	const normalizedPowerArea = powerArea || "未確認";
+	const targetPrefecture = prefectureFromAddress(address);
 	const source = "資源エネルギー庁 / OCCTO / 各送配電会社の系統空容量公開情報";
 	const officialLinks = gridCapacityOfficialLinks(normalizedPowerArea);
 	const publicInputs = gridCapacityPublicInputs();
@@ -17366,7 +17369,11 @@ async function fetchGridCapacityContext(
 		const body = parseGridCapacityInlineJson(bodyText);
 		for (const item of gridCapacityRecords(body)) {
 			const record = readGridCapacityRecord(item, "GRID_CAPACITY_PUBLIC_JSON");
-			if (record && powerAreaMatchesGridCapacity(record, normalizedPowerArea)) {
+			if (
+				record &&
+				powerAreaMatchesGridCapacity(record, normalizedPowerArea) &&
+				gridCapacityPrefectureMatches(record, targetPrefecture)
+			) {
 				records.push(record);
 			}
 		}
@@ -17381,7 +17388,11 @@ async function fetchGridCapacityContext(
 		const body = await fetchJson(url);
 		for (const item of gridCapacityRecords(body)) {
 			const record = readGridCapacityRecord(item, url.toString());
-			if (record && powerAreaMatchesGridCapacity(record, normalizedPowerArea)) {
+			if (
+				record &&
+				powerAreaMatchesGridCapacity(record, normalizedPowerArea) &&
+				gridCapacityPrefectureMatches(record, targetPrefecture)
+			) {
 				records.push(record);
 			}
 		}
@@ -17477,6 +17488,7 @@ function readGridCapacityRecord(value: Record<string, unknown>, fallbackSourceUr
 	);
 	const operator = firstNonBlank(props.operator, props.powerGrid, props.company, props.送配電会社, props.会社名);
 	const powerArea = firstNonBlank(props.powerArea, props.area, gridCapacityPowerArea(props), operator);
+	const prefecture = firstNonBlank(props.prefecture, props.都道府県, props.pref);
 	const availableCapacityMw =
 		numberFromUnknown(props.availableCapacityMw) ??
 		numberFromUnknown(props.availableCapacityMW) ??
@@ -17505,6 +17517,7 @@ function readGridCapacityRecord(value: Record<string, unknown>, fallbackSourceUr
 		nMinusOne,
 		updatedAt,
 		sourceUrl,
+		prefecture,
 		latitude: coordinates.latitude,
 		longitude: coordinates.longitude,
 		distanceFromTargetKm: null,
@@ -17574,10 +17587,21 @@ function gridCapacityPowerArea(props: Record<string, unknown>): string {
 	return firstNonBlank(props.電力エリア, props.供給エリア, props.エリア);
 }
 
+function prefectureFromAddress(address: string): string {
+	const normalized = address.replace(/\s+/g, "");
+	const match = normalized.match(/^(北海道|東京都|大阪府|京都府|.{2,3}県)/);
+	return match?.[1] || "";
+}
+
 function powerAreaMatchesGridCapacity(record: LandGridCapacityRecord, powerArea: string): boolean {
 	const areaKey = gridCapacityAreaKey(powerArea);
 	if (!areaKey) return true;
 	return new RegExp(areaKey).test([record.powerArea, record.operator].join(" "));
+}
+
+function gridCapacityPrefectureMatches(record: LandGridCapacityRecord, targetPrefecture: string): boolean {
+	if (!targetPrefecture || !record.prefecture) return true;
+	return record.prefecture === targetPrefecture;
 }
 
 function gridCapacityAreaKey(powerArea: string): string {
@@ -17600,6 +17624,7 @@ function uniqueGridCapacityRecords(records: LandGridCapacityRecord[]): LandGridC
 	for (const record of records) {
 		const key = [
 			record.operator,
+			record.prefecture,
 			record.facilityName,
 			record.voltageKv ?? "",
 			record.availableCapacityMw ?? "",
