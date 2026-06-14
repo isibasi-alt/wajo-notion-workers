@@ -1378,7 +1378,7 @@ type ProjectProposalRequestResult = ProjectDocumentRequestResult;
 type ProjectEquipmentDetailRequestResult = {
 	projectPageId: string;
 	equipmentPageId: string | null;
-	action: "created" | "existing" | "dry-run";
+	action: "created" | "existing" | "duplicate-hold" | "dry-run";
 	message: string;
 };
 
@@ -11366,7 +11366,23 @@ async function processProjectEquipmentDetailRequest(
 		projectPage.properties ?? {},
 		PROJECT_EQUIPMENT_DETAIL_RELATION_ALIASES,
 	);
-	if (existingEquipmentIds.length > 0) {
+	if (existingEquipmentIds.length > 1) {
+		const message = `発電所設備詳細が複数紐づいています: ${projectName}`;
+		if (!input.dryRun) {
+			await createPageComment(
+				notion,
+				projectPage.id,
+				`⚠️ ${message}\n正本の設備詳細を人間確認してください。`,
+			);
+		}
+		return {
+			projectPageId: projectPage.id,
+			equipmentPageId: null,
+			action: input.dryRun ? "dry-run" : "duplicate-hold",
+			message,
+		};
+	}
+	if (existingEquipmentIds.length === 1) {
 		const message = `既存の発電所設備詳細があります: ${projectName}`;
 		if (!input.dryRun) {
 			await createPageComment(
@@ -11460,26 +11476,6 @@ async function processProjectDocumentRequest(
 	const documentSourcePage = mergeProjectWithEquipmentDetail(projectPage, equipmentPage);
 	const projectName = readGenericPageTitle(projectPage) || "案件";
 	const readiness = evaluateProjectDocumentRequestReadiness(documentSourcePage, kind);
-	if (readiness.missingField) {
-		const message = buildSequentialMissingMessage(
-			kind === "proposal" ? "シミュレーション作成" : "説明会用資料作成",
-			readiness.missingField,
-			readiness.nextRequiredFields,
-		);
-		if (!input.dryRun) {
-			await safeUpdateExistingProperties(notion, projectPage, {
-				資料作成メモ: { kind: "text", value: message },
-				不足項目: { kind: "text", value: readiness.missingField },
-			});
-			await createPageComment(notion, projectPage.id, `⚠️ ${message}`);
-		}
-		return {
-			projectPageId: projectPage.id,
-			requestPageId: null,
-			action: input.dryRun ? "dry-run" : "needs-input",
-			message,
-		};
-	}
 	const existingRequestIds = relationIdsFromProperty(
 		projectPage.properties?.["資料作成依頼"],
 	);
@@ -11506,14 +11502,24 @@ async function processProjectDocumentRequest(
 	}
 
 	const requestTitle = `${projectName}｜${config.requestTitleSuffix}`;
+	const missingMessage = readiness.missingField
+		? buildSequentialMissingMessage(
+			kind === "proposal" ? "シミュレーション作成" : "説明会用資料作成",
+			readiness.missingField,
+			readiness.nextRequiredFields,
+		)
+		: null;
 	if (input.dryRun) {
 		return {
 			projectPageId: projectPage.id,
 			requestPageId: null,
 			action: "dry-run",
-			message: `dry-run: 営業資料作成依頼DBへ「${requestTitle}」を作成します。`,
+			message: missingMessage
+				? `dry-run: 営業資料作成依頼DBへ「${requestTitle}」を入力待ちで作成します。${missingMessage}`
+				: `dry-run: 営業資料作成依頼DBへ「${requestTitle}」を作成します。`,
 		};
 	}
+	const requestMemo = missingMessage ?? config.memo;
 
 	const requestPage = await notion.pages.create({
 		parent: { data_source_id: PROPOSAL_REQUEST_DATA_SOURCE_ID },
@@ -11522,7 +11528,7 @@ async function processProjectDocumentRequest(
 			資料種別: select(config.documentType),
 			[config.statusProperty]: select(config.statusValue),
 			関連案件: relation(projectPage.id),
-			資料作成メモ: richText(config.memo),
+			資料作成メモ: richText(requestMemo),
 			...(config.defaultProperties ?? {}),
 			...readiness.prefillProperties,
 		},
@@ -11535,23 +11541,32 @@ async function processProjectDocumentRequest(
 		資料作成依頼: { kind: "relation", ids: requestIds },
 		資料作成メモ: {
 			kind: "text",
-			value: `${config.createdLabel}を作成しました。${requestUrl}`,
+			value: missingMessage
+				? `${config.createdLabel}を入力待ちで作成しました。${requestUrl}\n${missingMessage}`
+				: `${config.createdLabel}を作成しました。${requestUrl}`,
 		},
+		...(readiness.missingField
+			? { 不足項目: { kind: "text", value: readiness.missingField } }
+			: {}),
 	});
 	await createPageComment(
 		notion,
 		projectPage.id,
 		[
-			`📄 ${config.createdLabel}を作成しました: ${requestTitle}`,
+			missingMessage
+				? `📄 ${config.createdLabel}を入力待ちで作成しました: ${requestTitle}`
+				: `📄 ${config.createdLabel}を作成しました: ${requestTitle}`,
 			requestUrl ? `開く: ${requestUrl}` : "",
-			config.nextActionMessage,
+			missingMessage ?? config.nextActionMessage,
 		].filter(Boolean).join("\n"),
 	);
 	return {
 		projectPageId: projectPage.id,
 		requestPageId: requestPage.id,
 		action: "created",
-		message: `${config.createdLabel}を作成しました: ${requestTitle}`,
+		message: missingMessage
+			? `${config.createdLabel}を入力待ちで作成しました: ${requestTitle}`
+			: `${config.createdLabel}を作成しました: ${requestTitle}`,
 	};
 }
 
