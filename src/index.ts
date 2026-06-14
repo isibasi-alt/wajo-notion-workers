@@ -14102,7 +14102,6 @@ async function createProjectFromLand(
 		案件名: title(projectName),
 		ステータス: select("🔴 情報収集中"),
 		獲得ソース: select("土地情報"),
-		獲得元区分: select("土地情報"),
 		仕入れ元区分: select("土地情報"),
 		対象物種別: select("土地"),
 		案件種別: select(inferProjectTypeFromLand(land)),
@@ -23172,15 +23171,33 @@ async function processClosingReport(
 		// コメントAPIが利用できない場合はサイレントスキップ
 	});
 
-	// 9. AI フィードバックを非同期生成（メイン処理をブロックしない）
-	void generateClosingFeedback(projectPage, created.id, notion).catch((err) => {
+	// 9. AI フィードバックを生成する。ここを待たずに返すと、Worker終了後に
+	// 成約報告が「処理中」のまま残るため、処理済/要確認まで必ず書き戻す。
+	let aiFeedbackStatus: "processed" | "needs-review" = "needs-review";
+	try {
+		aiFeedbackStatus = await generateClosingFeedback(projectPage, created.id, notion);
+	} catch (err) {
 		console.error("generateClosingFeedback error:", String(err));
-	});
+		try {
+			const closingPageForError = await notion.pages.retrieve({ page_id: created.id });
+			await safeUpdateExistingProperties(notion, closingPageForError, {
+				AI処理状態: { kind: "select", value: "要確認" },
+				管理メモ: {
+					kind: "text",
+					value: `AIフィードバック生成失敗: ${String(err).slice(0, 200)}`,
+				},
+			});
+		} catch (updateErr) {
+			console.error("closing feedback error status update failed:", String(updateErr));
+		}
+	}
 
 	return {
 		action: "created",
 		closingPageId: created.id,
-		message: `成約報告を登録しました（ID: ${created.id}）。粗利 ${formatYen(grossProfit)}、歩合見込 ${formatYen(commissionAmount)} を月次成績へ反映し、AIフィードバックを生成中です。`,
+		message: aiFeedbackStatus === "processed"
+			? `成約報告を登録しました（ID: ${created.id}）。粗利 ${formatYen(grossProfit)}、歩合見込 ${formatYen(commissionAmount)} を月次成績へ反映し、AIフィードバックを反映しました。`
+			: `成約報告を登録しました（ID: ${created.id}）。粗利 ${formatYen(grossProfit)}、歩合見込 ${formatYen(commissionAmount)} を月次成績へ反映しました。AIフィードバックは要確認です。`,
 	};
 }
 
@@ -23981,11 +23998,10 @@ async function generateClosingFeedback(
 	projectPage: Page,
 	closingPageId: string,
 	notion: NotionClient,
-): Promise<void> {
+): Promise<"processed" | "needs-review"> {
 	const apiKey = process.env.OPENAI_API_KEY;
 	if (!apiKey) {
-		console.error("OPENAI_API_KEY が未設定のため、AIフィードバックをスキップします");
-		return;
+		throw new Error("OPENAI_API_KEY が未設定のため、AIフィードバックを生成できません");
 	}
 	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
@@ -24066,7 +24082,7 @@ async function generateClosingFeedback(
 			AI処理状態: { kind: "select", value: "要確認" },
 			管理メモ: { kind: "text", value: `AIフィードバック生成失敗（JSONパースエラー）` },
 		});
-		return;
+		return "needs-review";
 	}
 
 	const closingPage = await notion.pages.retrieve({ page_id: closingPageId });
@@ -24083,6 +24099,7 @@ async function generateClosingFeedback(
 		}
 	}
 	await safeUpdateExistingProperties(notion, closingPage, patches);
+	return "processed";
 }
 
 // ─── 人見さんと壁打ちをする ──────────────────────────────────────────────────
