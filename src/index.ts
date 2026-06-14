@@ -16579,6 +16579,7 @@ type LandMunicipalOfficialContext = {
 	officialLinks: LandGridCapacityOfficialLink[];
 	farmChecks: LandMunicipalOfficialLayerCheck[];
 	cityPlanningChecks: LandMunicipalOfficialLayerCheck[];
+	hazardChecks: LandMunicipalOfficialLayerCheck[];
 };
 
 type LandGridCapacityRecord = {
@@ -17406,6 +17407,28 @@ const SUZUKA_CITY_PLANNING_LAND_USE_CHECKS: Array<{ typename: string; label: str
 	{ typename: "1115(th_3)", label: "工業専用地域" },
 ];
 
+const SUZUKA_HAZARD_LAYER_CHECKS: Array<{ typename: string; label: string }> = [
+	{ typename: "9121(th_23)", label: "浸水履歴: 建物浸水被害有" },
+	{ typename: "9122(th_23)", label: "浸水履歴: 建物浸水被害無" },
+	{ typename: "9011(th_18)", label: "東南海地震液状化危険度分布1" },
+	{ typename: "9012(th_18)", label: "東南海地震液状化危険度分布2" },
+	{ typename: "9013(th_18)", label: "東南海地震液状化危険度分布3" },
+	{ typename: "9014(th_18)", label: "東南海地震液状化危険度分布4" },
+	{ typename: "9015(th_18)", label: "東南海地震液状化危険度分布5" },
+	{ typename: "9016(th_18)", label: "東南海地震液状化危険度分布6" },
+	{ typename: "9017(th_18)", label: "東南海地震液状化危険度分布7" },
+	{ typename: "9018(th_18)", label: "東南海地震液状化危険度分布8" },
+	{ typename: "9019(th_18)", label: "東南海地震液状化危険度分布9" },
+	{ typename: "9020(th_18)", label: "東南海地震液状化危険度分布10" },
+	{ typename: "9021(th_18)", label: "東南海地震液状化危険度分布11" },
+	{ typename: "9022(th_19)", label: "東南海地震震度分布1" },
+	{ typename: "9023(th_19)", label: "東南海地震震度分布2" },
+	{ typename: "9024(th_19)", label: "東南海地震震度分布3" },
+	{ typename: "9025(th_19)", label: "東南海地震震度分布4" },
+	{ typename: "9026(th_19)", label: "東南海地震震度分布5" },
+	{ typename: "9027(th_19)", label: "東南海地震震度分布6" },
+];
+
 async function fetchMunicipalOfficialContext(
 	address: string,
 	latitude: number | null,
@@ -17422,6 +17445,7 @@ async function fetchMunicipalOfficialContext(
 			officialLinks: [],
 			farmChecks: [],
 			cityPlanningChecks: [],
+			hazardChecks: [],
 		};
 	}
 	if (latitude === null || longitude === null) {
@@ -17433,6 +17457,7 @@ async function fetchMunicipalOfficialContext(
 			officialLinks: SUZUKA_OFFICIAL_MAP_LINKS,
 			farmChecks: [],
 			cityPlanningChecks: [],
+			hazardChecks: [],
 		};
 	}
 	try {
@@ -17444,6 +17469,9 @@ async function fetchMunicipalOfficialContext(
 				fetchSuzukaOfficialLayerCheck(check, latitude, longitude),
 			),
 		);
+		const hazardChecks = await Promise.all(
+			SUZUKA_HAZARD_LAYER_CHECKS.map((check) => fetchSuzukaOfficialLayerCheck(check, latitude, longitude)),
+		);
 		const containingCount = municipalOfficialContainingCount({
 			status: "connected",
 			source,
@@ -17452,6 +17480,7 @@ async function fetchMunicipalOfficialContext(
 			officialLinks: SUZUKA_OFFICIAL_MAP_LINKS,
 			farmChecks,
 			cityPlanningChecks,
+			hazardChecks,
 		});
 		return {
 			status: "connected",
@@ -17461,6 +17490,7 @@ async function fetchMunicipalOfficialContext(
 			officialLinks: SUZUKA_OFFICIAL_MAP_LINKS,
 			farmChecks,
 			cityPlanningChecks,
+			hazardChecks,
 		};
 	} catch {
 		return {
@@ -17471,6 +17501,7 @@ async function fetchMunicipalOfficialContext(
 			officialLinks: SUZUKA_OFFICIAL_MAP_LINKS,
 			farmChecks: [],
 			cityPlanningChecks: [],
+			hazardChecks: [],
 		};
 	}
 }
@@ -17540,7 +17571,7 @@ function parseGeoJsonMaybe(value: unknown): unknown {
 }
 
 function municipalOfficialContainingCount(context: LandMunicipalOfficialContext): number {
-	return [...context.farmChecks, ...context.cityPlanningChecks].reduce(
+	return [...context.farmChecks, ...context.cityPlanningChecks, ...context.hazardChecks].reduce(
 		(total, check) => total + check.containingCount,
 		0,
 	);
@@ -17554,7 +17585,8 @@ function municipalOfficialEvidence(context: LandMunicipalOfficialContext): strin
 		`公式確認先: ${context.officialLinks.map((link) => `${link.label} ${link.url}`).join(" / ")}`,
 		`農振・農用地区域API: ${formatMunicipalLayerChecks(context.farmChecks)}`,
 		`都市計画・用途地域API: ${formatMunicipalLayerChecks(context.cityPlanningChecks)}`,
-		"注意: SonicWeb APIの一次確認であり、農転可否・用途地域確定ではない。農業委員会、農林水産課、都市計画課、建築指導課で確認。",
+		`防災情報API: ${formatMunicipalLayerChecks(context.hazardChecks)}（ハザード安全確定ではない）`,
+		"注意: SonicWeb APIの一次確認であり、農転可否・用途地域確定、ハザード安全確定ではない。農業委員会、農林水産課、都市計画課、建築指導課、防災担当課で確認。",
 	].join("\n");
 }
 

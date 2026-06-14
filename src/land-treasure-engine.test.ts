@@ -888,6 +888,8 @@ async function main() {
 	assert.match(bundledGridCapacityMemo, /鈴鹿市公式地理情報/);
 	assert.match(bundledGridCapacityMemo, /対象点包含ヒット0件/);
 	assert.match(bundledGridCapacityMemo, /農転可否・用途地域確定ではない/);
+	assert.match(bundledGridCapacityMemo, /防災情報API/);
+	assert.match(bundledGridCapacityMemo, /ハザード安全確定ではない/);
 
 	const addressOnlyFinalUpdate = updates.at(-1)?.properties as Record<string, unknown>;
 	assert.deepEqual(addressOnlyFinalUpdate.処理ステータス, { select: { name: "要確認" } });
