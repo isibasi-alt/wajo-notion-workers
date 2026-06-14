@@ -23900,15 +23900,19 @@ async function processClosingReport(
 		// コメントAPIが利用できない場合はサイレントスキップ
 	});
 
-	// 9. AI フィードバックを非同期生成（メイン処理をブロックしない）
-	void generateClosingFeedback(projectPage, created.id, notion).catch((err) => {
+	// 9. AI フィードバック（勝因・学び・ナレッジ化候補）を生成。await で完走させる
+	// （このランタイムは return 後の非同期を破棄するため、void だと OpenAI 完了前に
+	//  切れて AI処理状態が「処理中」のまま固まる）。
+	try {
+		await generateClosingFeedback(projectPage, created.id, notion);
+	} catch (err) {
 		console.error("generateClosingFeedback error:", String(err));
-	});
+	}
 
 	return {
 		action: "created",
 		closingPageId: created.id,
-		message: `成約報告を登録しました（ID: ${created.id}）。粗利 ${formatYen(grossProfit)}、歩合見込 ${formatYen(commissionAmount)} を月次成績へ反映し、AIフィードバックを生成中です。`,
+		message: `成約報告を登録しました（ID: ${created.id}）。粗利 ${formatYen(grossProfit)}、歩合見込 ${formatYen(commissionAmount)} を月次成績へ反映し、AIフィードバック（勝因・学び・ナレッジ化候補）も生成しました。`,
 	};
 }
 
