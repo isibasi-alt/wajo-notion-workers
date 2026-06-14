@@ -16572,6 +16572,9 @@ type LandGridCapacityRecord = {
 	nMinusOne: string;
 	updatedAt: string;
 	sourceUrl: string;
+	latitude: number | null;
+	longitude: number | null;
+	distanceFromTargetKm: number | null;
 };
 
 type LandGridCapacityOfficialLink = {
@@ -16657,7 +16660,7 @@ async function resolveLandMapContext(land: LandInfo): Promise<LandMapContext> {
 	const parcelCadastre = await fetchParcelCadastreContext(latitude, longitude);
 	const gsiRoad = await fetchGsiRoadContext(latitude, longitude);
 	const powerArea = land.powerArea || inferPowerAreaFromAddress(land.address) || "未確認";
-	const gridCapacity = await fetchGridCapacityContext(powerArea);
+	const gridCapacity = await fetchGridCapacityContext(powerArea, latitude, longitude);
 
 	return {
 		latitude,
@@ -17338,16 +17341,20 @@ function roadLedgerSearchUrl(target: string): string {
 	return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
 }
 
-async function fetchGridCapacityContext(powerArea: string): Promise<LandGridCapacityContext> {
+async function fetchGridCapacityContext(
+	powerArea: string,
+	latitude: number | null = null,
+	longitude: number | null = null,
+): Promise<LandGridCapacityContext> {
 	const normalizedPowerArea = powerArea || "未確認";
 	const source = "資源エネルギー庁 / OCCTO / 各送配電会社の系統空容量公開情報";
 	const officialLinks = gridCapacityOfficialLinks(normalizedPowerArea);
-	const urlTexts = gridCapacityPublicUrls();
-	if (urlTexts.length === 0) {
+	const publicInputs = gridCapacityPublicInputs();
+	if (publicInputs.urls.length === 0 && publicInputs.inlineJsonBodies.length === 0) {
 		return {
 			status: "no-url",
 			source,
-			message: `系統空き確認: 公表値候補未取得（GRID_CAPACITY_PUBLIC_JSON_URLS未設定）。${gridCapacityLinkLabels(officialLinks)}で確認。接続可否確定ではない。`,
+			message: `系統空き確認: 公表値候補未取得（GRID_CAPACITY_PUBLIC_JSON_URLS/GRID_CAPACITY_PUBLIC_JSON未設定）。${gridCapacityLinkLabels(officialLinks)}で確認。接続可否確定ではない。`,
 			powerArea: normalizedPowerArea,
 			officialLinks,
 			records: [],
@@ -17355,7 +17362,16 @@ async function fetchGridCapacityContext(powerArea: string): Promise<LandGridCapa
 	}
 
 	const records: LandGridCapacityRecord[] = [];
-	for (const urlText of urlTexts) {
+	for (const bodyText of publicInputs.inlineJsonBodies) {
+		const body = parseGridCapacityInlineJson(bodyText);
+		for (const item of gridCapacityRecords(body)) {
+			const record = readGridCapacityRecord(item, "GRID_CAPACITY_PUBLIC_JSON");
+			if (record && powerAreaMatchesGridCapacity(record, normalizedPowerArea)) {
+				records.push(record);
+			}
+		}
+	}
+	for (const urlText of publicInputs.urls) {
 		let url: URL;
 		try {
 			url = new URL(urlText);
@@ -17370,7 +17386,10 @@ async function fetchGridCapacityContext(powerArea: string): Promise<LandGridCapa
 			}
 		}
 	}
-	const uniqueRecords = uniqueGridCapacityRecords(records).slice(0, 5);
+	const uniqueRecords = uniqueGridCapacityRecords(records)
+		.map((record) => withGridCapacityDistance(record, latitude, longitude))
+		.sort(compareGridCapacityRecords)
+		.slice(0, 5);
 	return {
 		status: uniqueRecords.length > 0 ? "connected" : "no-result",
 		source,
@@ -17384,18 +17403,35 @@ async function fetchGridCapacityContext(powerArea: string): Promise<LandGridCapa
 	};
 }
 
-function gridCapacityPublicUrls(): string[] {
-	const values = [
+function gridCapacityPublicInputs(): { urls: string[]; inlineJsonBodies: string[] } {
+	const inlineOrUrl = (process.env.GRID_CAPACITY_PUBLIC_JSON || "").trim();
+	const urlValues = [
 		process.env.GRID_CAPACITY_PUBLIC_JSON_URLS || "",
-		process.env.GRID_CAPACITY_PUBLIC_JSON || "",
 		process.env.GRID_CAPACITY_PUBLIC_JSON_URL || "",
+		isJsonText(inlineOrUrl) ? "" : inlineOrUrl,
 	];
-	return uniqueStrings(
-		values
-			.flatMap((value) => value.split(/[\n,]/))
-			.map((value) => value.trim())
-			.filter(Boolean),
-	);
+	return {
+		urls: uniqueStrings(
+			urlValues
+				.flatMap((value) => value.split(/[\n,]/))
+				.map((value) => value.trim())
+				.filter(Boolean),
+		),
+		inlineJsonBodies: isJsonText(inlineOrUrl) ? [inlineOrUrl] : [],
+	};
+}
+
+function isJsonText(value: string): boolean {
+	const trimmed = value.trim();
+	return trimmed.startsWith("{") || trimmed.startsWith("[");
+}
+
+function parseGridCapacityInlineJson(value: string): unknown | null {
+	try {
+		return JSON.parse(value);
+	} catch {
+		return null;
+	}
 }
 
 function gridCapacityOfficialLinks(powerArea: string): LandGridCapacityOfficialLink[] {
@@ -17430,6 +17466,7 @@ function gridCapacityRecords(body: unknown | null): Array<Record<string, unknown
 
 function readGridCapacityRecord(value: Record<string, unknown>, fallbackSourceUrl: string): LandGridCapacityRecord | null {
 	const props = readObject(value.properties || value);
+	const coordinates = gridCapacityCoordinates(props, value);
 	const facilityName = firstNonBlank(
 		props.facilityName,
 		props.substationName,
@@ -17468,7 +17505,69 @@ function readGridCapacityRecord(value: Record<string, unknown>, fallbackSourceUr
 		nMinusOne,
 		updatedAt,
 		sourceUrl,
+		latitude: coordinates.latitude,
+		longitude: coordinates.longitude,
+		distanceFromTargetKm: null,
 	};
+}
+
+function gridCapacityCoordinates(
+	props: Record<string, unknown>,
+	value: Record<string, unknown>,
+): { latitude: number | null; longitude: number | null } {
+	const mapCoordinates = readObject(props.mapCoordinates);
+	const geometry = readObject(value.geometry);
+	const geometryCoordinates = Array.isArray(geometry.coordinates) ? geometry.coordinates : [];
+	const latitude =
+		numberFromUnknown(props.latitude) ??
+		numberFromUnknown(props.lat) ??
+		numberFromUnknown(mapCoordinates.latitude) ??
+		numberFromUnknown(mapCoordinates.lat) ??
+		(typeof geometryCoordinates[1] === "number" ? geometryCoordinates[1] : null);
+	const longitude =
+		numberFromUnknown(props.longitude) ??
+		numberFromUnknown(props.lon) ??
+		numberFromUnknown(props.lng) ??
+		numberFromUnknown(mapCoordinates.longitude) ??
+		numberFromUnknown(mapCoordinates.lon) ??
+		numberFromUnknown(mapCoordinates.lng) ??
+		(typeof geometryCoordinates[0] === "number" ? geometryCoordinates[0] : null);
+	return { latitude, longitude };
+}
+
+function withGridCapacityDistance(
+	record: LandGridCapacityRecord,
+	latitude: number | null,
+	longitude: number | null,
+): LandGridCapacityRecord {
+	if (latitude === null || longitude === null || record.latitude === null || record.longitude === null) {
+		return record;
+	}
+	return {
+		...record,
+		distanceFromTargetKm: gridCapacityDistanceKm(latitude, longitude, record.latitude, record.longitude),
+	};
+}
+
+function compareGridCapacityRecords(a: LandGridCapacityRecord, b: LandGridCapacityRecord): number {
+	if (a.distanceFromTargetKm !== null && b.distanceFromTargetKm !== null) {
+		return a.distanceFromTargetKm - b.distanceFromTargetKm;
+	}
+	if (a.distanceFromTargetKm !== null) return -1;
+	if (b.distanceFromTargetKm !== null) return 1;
+	return 0;
+}
+
+function gridCapacityDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+	const radiusKm = 6371;
+	const dLat = degreesToRadians(lat2 - lat1);
+	const dLon = degreesToRadians(lon2 - lon1);
+	const a =
+		Math.sin(dLat / 2) ** 2 +
+		Math.cos(degreesToRadians(lat1)) *
+			Math.cos(degreesToRadians(lat2)) *
+			Math.sin(dLon / 2) ** 2;
+	return radiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function gridCapacityPowerArea(props: Record<string, unknown>): string {
@@ -17535,6 +17634,9 @@ function gridCapacityEvidence(context: LandGridCapacityContext): string {
 				`公表値候補${index + 1}: ${record.facilityName || "設備名未記載"}`,
 				record.operator || "送配電会社未記載",
 				record.voltageKv !== null ? `${record.voltageKv}kV` : "電圧未記載",
+				record.distanceFromTargetKm !== null
+					? `入力地点から約${record.distanceFromTargetKm.toLocaleString("ja-JP", { maximumFractionDigits: 2 })}km`
+					: "",
 				capacity,
 				record.status ? `状態=${record.status}` : "",
 				record.nMinusOne || "N-1電制は接続検討で確認",

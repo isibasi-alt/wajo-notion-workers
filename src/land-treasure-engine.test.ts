@@ -158,6 +158,7 @@ async function main() {
 	const originalGsiRoadTileEnabled = process.env.GSI_ROAD_TILE_ENABLED;
 	const originalGridCapacityPublicUrls = process.env.GRID_CAPACITY_PUBLIC_JSON_URLS;
 	const originalGridCapacityPublicUrl = process.env.GRID_CAPACITY_PUBLIC_JSON_URL;
+	const originalGridCapacityPublicJson = process.env.GRID_CAPACITY_PUBLIC_JSON;
 	process.env.GSI_ROAD_TILE_ENABLED = "0";
 	const notion = {
 		pages: {
@@ -239,6 +240,7 @@ async function main() {
 	process.env.GSI_ROAD_TILE_ENABLED = "0";
 	delete process.env.GRID_CAPACITY_PUBLIC_JSON_URLS;
 	delete process.env.GRID_CAPACITY_PUBLIC_JSON_URL;
+	delete process.env.GRID_CAPACITY_PUBLIC_JSON;
 	globalThis.fetch = (async (input: RequestInfo | URL) => {
 		const url = String(input);
 		if (url.includes("msearch.gsi.go.jp/address-search/AddressSearch")) {
@@ -773,6 +775,51 @@ async function main() {
 	assert.match(addressOnlyMemo, /登記所備付地図/);
 	assert.match(addressOnlyMemo, /OCCTO|電力広域的運営推進機関/);
 
+	delete process.env.GRID_CAPACITY_PUBLIC_JSON_URLS;
+	delete process.env.GRID_CAPACITY_PUBLIC_JSON_URL;
+	process.env.GRID_CAPACITY_PUBLIC_JSON = JSON.stringify({
+		data: [
+			{
+				powerArea: "中部電力",
+				operator: "中部電力パワーグリッド",
+				facilityName: "遠方変電所",
+				voltageKv: 77,
+				availableCapacityMw: 1,
+				status: "公表値候補。テスト用遠方設備。",
+				nMinusOne: "接続検討で確認。",
+				updatedAt: "2026-06-08",
+				sourceUrl: "https://gridmap.powergrid.chuden.co.jp/geo_data/KRSIH013",
+				mapCoordinates: { lat: 34.0, lon: 136.0 },
+			},
+			{
+				powerArea: "中部電力",
+				operator: "中部電力パワーグリッド",
+				facilityName: "神戸変電所",
+				voltageKv: 77,
+				availableCapacityMw: 38,
+				status: "公表値候補。中部電力PG公式CSVから取得。",
+				nMinusOne: "不可 #3。接続検討で確認。",
+				updatedAt: "2026-06-08",
+				sourceUrl: "https://gridmap.powergrid.chuden.co.jp/geo_data/KRSIH013",
+				mapCoordinates: { lat: 35.3557, lon: 137.1802 },
+			},
+		],
+	});
+	activePage = addressOnlyPage();
+	const inlineGridCapacityResult = await processLandEvaluationForTest(
+		{ pageId: "land-inline-grid-capacity-json-1", dryRun: false },
+		notion as never,
+	);
+	assert.equal(inlineGridCapacityResult.score, 60);
+	const inlineGridCapacityMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
+	assert.match(inlineGridCapacityMemo, /系統空き確認/);
+	assert.match(inlineGridCapacityMemo, /神戸変電所/);
+	assert.match(inlineGridCapacityMemo, /38MW/);
+	assert.match(inlineGridCapacityMemo, /公表値候補/);
+	assert.match(inlineGridCapacityMemo, /接続可否確定ではない/);
+	assert.match(inlineGridCapacityMemo, /gridmap\.powergrid\.chuden\.co\.jp\/geo_data\/KRSIH013/);
+	assert.ok(inlineGridCapacityMemo.indexOf("神戸変電所") < inlineGridCapacityMemo.indexOf("遠方変電所"));
+
 	const addressOnlyFinalUpdate = updates.at(-1)?.properties as Record<string, unknown>;
 	assert.deepEqual(addressOnlyFinalUpdate.処理ステータス, { select: { name: "要確認" } });
 	assert.deepEqual(addressOnlyFinalUpdate.案件化状態, { select: { name: "未案件化" } });
@@ -848,6 +895,8 @@ async function main() {
 	else process.env.GRID_CAPACITY_PUBLIC_JSON_URLS = originalGridCapacityPublicUrls;
 	if (originalGridCapacityPublicUrl === undefined) delete process.env.GRID_CAPACITY_PUBLIC_JSON_URL;
 	else process.env.GRID_CAPACITY_PUBLIC_JSON_URL = originalGridCapacityPublicUrl;
+	if (originalGridCapacityPublicJson === undefined) delete process.env.GRID_CAPACITY_PUBLIC_JSON;
+	else process.env.GRID_CAPACITY_PUBLIC_JSON = originalGridCapacityPublicJson;
 }
 
 main().catch((error) => {
