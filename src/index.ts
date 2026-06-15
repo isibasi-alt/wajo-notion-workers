@@ -8461,8 +8461,8 @@ async function callOpenAIMeetingMemoFormat(input: {
 		"- 根拠が弱いもの、本文にない固有名・数値を含むものは配列に入れない",
 		"",
 		"営業貢献ログ候補ルール:",
-		"- salesContributionCandidates には、紹介、ナレッジ共有、チーム支援、仕組み化提案、成約/失注からの学びだけを入れる",
-		"- type/category は「紹介」「ナレッジ共有」「チーム支援」「仕組み化提案」「成約/失注からの学び」のどれかに寄せる",
+		"- salesContributionCandidates には、紹介、ナレッジ共有、チーム支援、仕組み化提案、成約・失注の学びだけを入れる",
+		"- type/category は「紹介」「ナレッジ共有」「チーム支援」「仕組み化提案」「成約・失注の学び」のどれかに寄せる",
 		"- impact は高/中/低。迷うものは中",
 		"- comment は本文に根拠がある貢献内容だけを書く",
 		"- evidenceQuote は本文から連続する短い抜粋をそのまま入れる",
@@ -8763,7 +8763,7 @@ function normalizeSalesContributionType(type: string, comment: string): string {
 	if (/紹介/.test(joined)) return "紹介";
 	if (/チーム|支援|フォロー/.test(joined)) return "チーム支援";
 	if (/仕組み|型化|チェックリスト|標準化/.test(joined)) return "仕組み化提案";
-	if (/成約|失注|学び|勝因|敗因/.test(joined)) return "成約/失注からの学び";
+	if (/成約|失注|学び|勝因|敗因/.test(joined)) return "成約・失注の学び";
 	return "ナレッジ共有";
 }
 
@@ -8810,7 +8810,7 @@ function buildMeetingEvaluationLogCreatePlans(input: {
 			createProperties["関連企業"] = relationIds(relatedCompanyIds.slice(0, 3));
 		}
 		createProperties["発言処理メモ"] = richText(
-			buildMeetingSpeechProcessingMemo(candidate, meetingTitle),
+			buildMeetingSpeechProcessingMemo(candidate, meetingTitle, input.meetingPage.id),
 		);
 		return {
 			parent: { data_source_id: SPEECH_LOG_DATA_SOURCE_ID },
@@ -8823,7 +8823,13 @@ function buildMeetingEvaluationLogCreatePlans(input: {
 			種別: select(candidate.type),
 			貢献カテゴリ: select(candidate.category),
 			貢献インパクト: select(candidate.impact),
-			AIコメント: richText(buildMeetingSalesContributionComment(candidate, meetingTitle)),
+			AIコメント: richText(
+				buildMeetingSalesContributionComment(
+					candidate,
+					meetingTitle,
+					input.meetingPage.id,
+				),
+			),
 			評価反映状態: select("反映候補"),
 		};
 		if (meetingDate) createProperties["日付"] = { date: { start: meetingDate } };
@@ -8862,10 +8868,12 @@ function buildMeetingSpeechLogContent(
 function buildMeetingSpeechProcessingMemo(
 	candidate: MeetingSpeechLogCandidate,
 	meetingTitle: string,
+	meetingPageId: string,
 ): string {
 	return [
 		`会議メモ整形Worker抽出: ${new Date().toISOString()}`,
 		`元会議: ${meetingTitle}`,
+		`元会議ID: ${meetingPageId}`,
 		`発言者候補: ${candidate.speaker || "未設定"}`,
 		`信頼度: ${candidate.confidence}`,
 		`根拠抜粋: ${candidate.evidenceQuote}`,
@@ -8876,10 +8884,12 @@ function buildMeetingSpeechProcessingMemo(
 function buildMeetingSalesContributionComment(
 	candidate: MeetingSalesContributionCandidate,
 	meetingTitle: string,
+	meetingPageId: string,
 ): string {
 	return [
 		candidate.comment,
 		`元会議: ${meetingTitle}`,
+		`元会議ID: ${meetingPageId}`,
 		`根拠抜粋: ${candidate.evidenceQuote}`,
 		`抽出信頼度: ${candidate.confidence}`,
 		"会議本文からの営業貢献候補。承認・点数・評価確定は未実施。",
@@ -8937,9 +8947,21 @@ async function createMeetingEvaluationLogsFromExtraction(
 	}
 	let speechCreated = 0;
 	let salesContributionCreated = 0;
+	let duplicateSkipped = 0;
 	let errors = 0;
 	for (const createArgs of plans.speechLogCreates) {
 		try {
+			const duplicate = await meetingEvaluationLogAlreadyExists(
+				notion,
+				"speech",
+				input.meetingPage.id,
+				createArgs,
+			);
+			if (duplicate) {
+				duplicateSkipped += 1;
+				messages.push(`重複スキップ: 発言ログ ${meetingLogCreateTitle(createArgs)}`);
+				continue;
+			}
 			await notion.pages.create(createArgs);
 			speechCreated += 1;
 		} catch (error) {
@@ -8949,6 +8971,17 @@ async function createMeetingEvaluationLogsFromExtraction(
 	}
 	for (const createArgs of plans.salesContributionCreates) {
 		try {
+			const duplicate = await meetingEvaluationLogAlreadyExists(
+				notion,
+				"salesContribution",
+				input.meetingPage.id,
+				createArgs,
+			);
+			if (duplicate) {
+				duplicateSkipped += 1;
+				messages.push(`重複スキップ: 営業貢献ログ ${meetingLogCreateTitle(createArgs)}`);
+				continue;
+			}
 			await notion.pages.create(createArgs);
 			salesContributionCreated += 1;
 		} catch (error) {
@@ -8959,14 +8992,93 @@ async function createMeetingEvaluationLogsFromExtraction(
 	return {
 		speechCreated,
 		salesContributionCreated,
-		skipped: plans.skipped.length,
+		skipped: plans.skipped.length + duplicateSkipped,
 		errors,
 		messages,
 	};
 }
 
+async function meetingEvaluationLogAlreadyExists(
+	notion: NotionClient,
+	kind: "speech" | "salesContribution",
+	meetingPageId: string,
+	createArgs: Record<string, unknown>,
+): Promise<boolean> {
+	if (!notion.dataSources?.query) return false;
+	const createProperties = meetingLogCreateProperties(createArgs);
+	const titleText =
+		kind === "speech"
+			? createPropertyText(createProperties["発言タイトル"])
+			: createPropertyText(createProperties["貢献タイトル"]);
+	const titleFilter =
+		kind === "speech"
+			? { property: "発言タイトル", title: { equals: titleText } }
+			: { property: "貢献タイトル", title: { equals: titleText } };
+	const filter =
+		kind === "speech"
+			? {
+				and: [
+					{ property: "関連会議", relation: { contains: meetingPageId } },
+					titleText ? titleFilter : null,
+				].filter(Boolean),
+			}
+			: {
+				and: [
+					{ property: "AIコメント", rich_text: { contains: `元会議ID: ${meetingPageId}` } },
+					titleText ? titleFilter : null,
+				].filter(Boolean),
+			};
+	const response = await notion.dataSources.query({
+		data_source_id:
+			kind === "speech"
+				? SPEECH_LOG_DATA_SOURCE_ID
+				: SALES_CONTRIBUTION_LOG_DATA_SOURCE_ID,
+		page_size: 1,
+		filter,
+	});
+	return Array.isArray(response.results) && response.results.length > 0;
+}
+
+function meetingLogCreateProperties(createArgs: Record<string, unknown>): Record<string, unknown> {
+	const properties = createArgs.properties;
+	return properties && typeof properties === "object"
+		? (properties as Record<string, unknown>)
+		: {};
+}
+
+function meetingLogCreateTitle(createArgs: Record<string, unknown>): string {
+	const properties = meetingLogCreateProperties(createArgs);
+	return (
+		createPropertyText(properties["発言タイトル"]) ||
+		createPropertyText(properties["貢献タイトル"]) ||
+		"無題"
+	);
+}
+
+function createPropertyText(property: unknown): string {
+	if (!property || typeof property !== "object") return "";
+	const prop = property as Record<string, unknown>;
+	const titleItems = Array.isArray(prop.title) ? prop.title : [];
+	const richTextItemsValue = Array.isArray(prop.rich_text) ? prop.rich_text : [];
+	const items = titleItems.length > 0 ? titleItems : richTextItemsValue;
+	return items
+		.map((item) => {
+			if (!item || typeof item !== "object") return "";
+			const rich = item as Record<string, unknown>;
+			if (typeof rich.plain_text === "string") return rich.plain_text;
+			if (rich.text && typeof rich.text === "object") {
+				const textValue = rich.text as Record<string, unknown>;
+				return typeof textValue.content === "string" ? textValue.content : "";
+			}
+			return "";
+		})
+		.join("")
+		.trim();
+}
+
 export {
 	buildMeetingEvaluationLogCreatePlans as buildMeetingEvaluationLogCreatePlansForTest,
+	createMeetingEvaluationLogsFromExtraction as createMeetingEvaluationLogsFromExtractionForTest,
 	filterMeetingEvaluationLogExtraction as filterMeetingEvaluationLogExtractionForTest,
 	parseMeetingMemoAIResponse as parseMeetingMemoAIResponseForTest,
 };

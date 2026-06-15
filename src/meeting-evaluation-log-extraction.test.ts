@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
 	buildActivityLogFromSalesContributionLogForTest,
 	buildActivityLogFromSpeechLogForTest,
+	createMeetingEvaluationLogsFromExtractionForTest,
 	buildMeetingEvaluationLogCreatePlansForTest,
 	buildSalesPerformanceRelatedSourceWithStatsForTest,
 	filterMeetingEvaluationLogExtractionForTest,
@@ -139,8 +140,8 @@ async function main() {
 			salesContributionCandidates: [
 				{
 					title: "失注理由チェックリスト共有",
-					type: "成約/失注からの学び",
-					category: "成約/失注からの学び",
+					type: "成約・失注の学び",
+					category: "成約・失注の学び",
 					impact: "中",
 					comment: "佐藤が先週の失注理由を共有し、見積前提条件チェックリストを全員で使う提案をした。",
 					evidenceQuote: "先週の失注理由を共有します。見積の前提条件を先にそろえるチェックリストを全員で使うべきです。",
@@ -265,6 +266,70 @@ async function main() {
 	);
 	assert.equal(parsed.speechLogCandidates.length, 1);
 	assert.equal(parsed.salesContributionCandidates.length, 1);
+
+	const dryRunCreates: Array<Record<string, unknown>> = [];
+	const dryRunResult = await createMeetingEvaluationLogsFromExtractionForTest(
+		{
+			meetingPage,
+			extraction: filtered,
+			source,
+			dryRun: true,
+		},
+		{
+			pages: {
+				create: async (args: Record<string, unknown>) => {
+					dryRunCreates.push(args);
+					return { id: "unexpected-create" };
+				},
+			},
+		} as never,
+	);
+	assert.deepEqual(dryRunResult, {
+		speechCreated: 1,
+		salesContributionCreated: 1,
+		skipped: 0,
+		errors: 0,
+		messages: [],
+	});
+	assert.equal(dryRunCreates.length, 0);
+
+	const duplicateCreates: Array<Record<string, unknown>> = [];
+	const duplicateQueries: Array<Record<string, unknown>> = [];
+	const duplicateResult = await createMeetingEvaluationLogsFromExtractionForTest(
+		{
+			meetingPage,
+			extraction: filtered,
+			source,
+			dryRun: false,
+		},
+		{
+			dataSources: {
+				query: async (args: Record<string, unknown>) => {
+					duplicateQueries.push(args);
+					if (args.data_source_id === "86f5693c-db36-4356-aec1-210495f6032a") {
+						return { results: [{ id: "existing-speech" }] };
+					}
+					if (args.data_source_id === "f88056da-3052-418e-8cf4-e9b4197cd7ba") {
+						return { results: [{ id: "existing-contribution" }] };
+					}
+					return { results: [] };
+				},
+			},
+			pages: {
+				create: async (args: Record<string, unknown>) => {
+					duplicateCreates.push(args);
+					return { id: "unexpected-create" };
+				},
+			},
+		} as never,
+	);
+	assert.equal(duplicateResult.speechCreated, 0);
+	assert.equal(duplicateResult.salesContributionCreated, 0);
+	assert.equal(duplicateResult.skipped, 2);
+	assert.equal(duplicateResult.errors, 0);
+	assert.equal(duplicateCreates.length, 0);
+	assert.equal(duplicateQueries.length, 2);
+	assert.match(duplicateResult.messages.join("\n"), /重複/);
 
 	console.log("meeting-evaluation-log-extraction: all assertions passed");
 }
