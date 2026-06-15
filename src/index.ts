@@ -13113,6 +13113,11 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 		"新所有者",
 	]);
 	const facilityId = readFirstTextByAliases(properties, ["設備ID", "認定設備ID"]);
+	const certifiedOutputKw = readFirstNumberByAliases(properties, [
+		"認定出力kW",
+		"認定出力",
+		"出力kW",
+	]);
 	const plantLocationImages = readImageFilesByAliases(properties, [
 		"発電所所在地画像",
 		"地図画像",
@@ -13139,6 +13144,24 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 		"設備写真",
 		"写真",
 	]);
+	const draftBase = {
+		caseNumber,
+		plantName,
+		plantAddress,
+		notifyMethod,
+		questionPeriod,
+		briefingDate,
+		managerName,
+		oldOperator,
+		newOperator,
+		facilityId,
+		certifiedOutputKw,
+		plantLocationImages,
+		hazardMapImages,
+		targetAreaImages,
+		reflectionImages,
+		siteImages,
+	};
 
 	const checks: RequiredFieldCheck[] = [
 		{ label: "案件番号", value: caseNumber },
@@ -13160,6 +13183,7 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 	const missingIndex = checks.findIndex((check) => !hasFieldValue(check.value));
 	if (missingIndex >= 0) {
 		return {
+			...draftBase,
 			missingField: checks[missingIndex]!.label,
 			nextRequiredFields: checks
 				.slice(missingIndex + 1)
@@ -13171,15 +13195,22 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 
 	const titleBase = caseNumber || plantName || readGenericPageTitle(page) || "住民説明会資料";
 	return {
+		...draftBase,
 		missingField: null,
 		nextRequiredFields: [],
 		documentTitle: `${titleBase}｜住民説明会資料`,
 		summaryLines: [
 			`案件番号: ${caseNumber}`,
 			`発電所名: ${plantName}`,
+			`発電所住所: ${plantAddress}`,
 			`周知方法: ${notifyMethod}`,
 			`質問受付期間: ${questionPeriod}`,
 			`周知日: ${briefingDate}`,
+			`保守管理責任者: ${managerName}`,
+			`旧認定事業者: ${oldOperator}`,
+			`新認定事業者: ${newOperator}`,
+			`設備ID: ${facilityId}`,
+			`認定出力: ${formatNumberWithUnit(certifiedOutputKw, "kW")}`,
 		],
 	};
 }
@@ -23732,11 +23763,13 @@ export {
 	processProjectResidentDocumentRequest as processProjectResidentDocumentRequestForTest,
 };
 export {
+	buildResidentDocumentPdfBytes as buildResidentDocumentPdfBytesForTest,
 	buildProposalSimulationPdfBytes as buildProposalSimulationPdfBytesForTest,
 	createDealFeedbackLearningLog as createDealFeedbackLearningLogForTest,
 	createMeetingFeedbackLearningLog as createMeetingFeedbackLearningLogForTest,
 	evaluateProposalSimulationDraft as evaluateProposalSimulationDraftForTest,
 	evaluateResidentDocumentDraft as evaluateResidentDocumentDraftForTest,
+	exportResidentDocumentPdf as exportResidentDocumentPdfForTest,
 };
 
 /**
