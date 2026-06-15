@@ -23258,20 +23258,30 @@ function extractNotificationEventTypeFromWebhook(body: Record<string, unknown>):
 	);
 }
 
+const NOTIFY_EVENT_TYPE_ALLOWLIST = new Set([
+	"担当確定",
+	"案件化",
+	"土地案件化",
+	"成約",
+	"失注申請",
+	"差し戻し",
+	"取り消し",
+]);
+
+function normalizeNotifyEventType(raw: string): string {
+	const value = (raw ?? "").trim();
+	return NOTIFY_EVENT_TYPE_ALLOWLIST.has(value) ? value : "営業通知";
+}
+
+// 注入対策: body自由文(通知文/通知メッセージ/message/text/body)は通知本文に使わない。
+// allowlist済みeventTypeからサーバ側で定型文を生成し、任意通知文の注入を遮断する。
 function extractNotificationMessageFromWebhook(
-	body: Record<string, unknown>,
+	_body: Record<string, unknown>,
 	eventType: string,
 ): string {
-	const explicit = extractWebhookBodyText(body, [
-		"通知文",
-		"通知メッセージ",
-		"message",
-		"text",
-		"body",
-	]);
-	if (explicit) return explicit;
-	return `📣 ${eventType} がありました。対象ページを確認してください。`;
+	return `📣 ${normalizeNotifyEventType(eventType)} がありました。対象ページを確認してください。`;
 }
+export { extractNotificationMessageFromWebhook as extractNotificationMessageFromWebhookForTest };
 
 function userIdsFromWebhookValue(value: unknown): string[] {
 	if (Array.isArray(value)) {
@@ -23348,6 +23358,7 @@ async function notifySalesTeam(
 ): Promise<void> {
 	await createPageComment(notion, pageId, message, true, salesTeamUserIds);
 }
+export { notifySalesTeam as notifySalesTeamForTest };
 
 async function processInquiryAssignOwner(
 	inquiryPageId: string,
