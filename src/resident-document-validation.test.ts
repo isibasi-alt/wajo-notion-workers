@@ -3,6 +3,7 @@ import { PDFDocument } from "pdf-lib";
 import {
 	buildResidentDocumentPdfBytesForTest,
 	evaluateResidentDocumentDraftForTest,
+	exportResidentDocumentPdfForTest,
 } from "./index";
 
 function titleProp(value: string) {
@@ -68,6 +69,67 @@ function readyResidentProps(overrides: Record<string, unknown> = {}) {
 	};
 }
 
+function pageWithProps(properties: Record<string, unknown>) {
+	return {
+		id: "resident-2",
+		properties,
+	};
+}
+
+function makeFakeNotion(page: { id: string; properties: Record<string, unknown> }) {
+	const calls = {
+		create: 0,
+		send: 0,
+		complete: 0,
+		update: 0,
+	};
+	return {
+		calls,
+		notion: {
+			fileUploads: {
+				create: async () => {
+					calls.create += 1;
+					return { id: "upload-resident-1" };
+				},
+				send: async () => {
+					calls.send += 1;
+					return {};
+				},
+				complete: async () => {
+					calls.complete += 1;
+					return {};
+				},
+			},
+			pages: {
+				update: async ({ properties }: { properties: Record<string, unknown> }) => {
+					calls.update += 1;
+					page.properties = { ...page.properties, ...properties };
+					return page;
+				},
+				retrieve: async () => ({
+					...page,
+					properties: {
+						...page.properties,
+						資料PDF: {
+							type: "files",
+							files: [
+								{
+									name: "resident-document.pdf",
+									type: "file",
+									file: {
+										url: "https://example.com/resident-document.pdf",
+										expiry_time: "2026-06-16T00:00:00.000Z",
+									},
+								},
+							],
+						},
+					},
+				}),
+			},
+		},
+	};
+}
+
 async function main() {
 	const missingPlantName = evaluateResidentDocumentDraftForTest({
 		id: "resident-1",
@@ -116,6 +178,49 @@ async function main() {
 	const pdfBytes = await buildResidentDocumentPdfBytesForTest(ready, "resident-2");
 	const pdf = await PDFDocument.load(pdfBytes);
 	assert.equal(pdf.getPageCount(), 13);
+
+	const page = pageWithProps({
+		...readyResidentProps(),
+		資料PDF: { type: "files", files: [] },
+		資料PDFリンク: { type: "url", url: null },
+	});
+	const fake = makeFakeNotion(page);
+	const exported = await exportResidentDocumentPdfForTest(
+		fake.notion,
+		page,
+		ready,
+	);
+	assert.equal(exported.destination, "property");
+	assert.equal(exported.attached, true);
+	assert.equal(exported.fileUrl, "https://example.com/resident-document.pdf");
+	assert.equal(fake.calls.create, 1);
+	assert.equal(fake.calls.send, 1);
+	assert.equal((page.properties.資料PDF as { files?: unknown[] }).files?.length, 1);
+
+	const existingPage = pageWithProps({
+		...readyResidentProps(),
+		資料PDF: {
+			type: "files",
+			files: [
+				{
+					name: "existing-resident.pdf",
+					type: "file",
+					file: { url: "https://example.com/existing-resident.pdf" },
+				},
+			],
+		},
+		資料PDFリンク: { type: "url", url: null },
+	});
+	const existingFake = makeFakeNotion(existingPage);
+	const existing = await exportResidentDocumentPdfForTest(
+		existingFake.notion,
+		existingPage,
+		ready,
+	);
+	assert.equal(existing.destination, "property");
+	assert.equal(existing.attached, true);
+	assert.equal(existing.fileUrl, "https://example.com/existing-resident.pdf");
+	assert.equal(existingFake.calls.create, 0);
 }
 
 main().catch((error) => {

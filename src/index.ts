@@ -1013,6 +1013,10 @@ const PROPOSAL_PDF_URL_PROPERTY_ALIASES = [
 	"PDF URL",
 ];
 
+const RESIDENT_PDF_FILE_PROPERTY_ALIASES = ["資料PDF"];
+
+const RESIDENT_PDF_URL_PROPERTY_ALIASES = ["資料PDFリンク"];
+
 type NotionClient = {
 	dataSources: {
 		query: (args: Record<string, unknown>) => Promise<QueryResponse>;
@@ -11008,6 +11012,22 @@ type ResidentDocumentDraft = {
 	nextRequiredFields: string[];
 	documentTitle: string;
 	summaryLines: string[];
+	caseNumber: string;
+	plantName: string;
+	plantAddress: string;
+	notifyMethod: string;
+	questionPeriod: string;
+	briefingDate: string;
+	managerName: string;
+	oldOperator: string;
+	newOperator: string;
+	facilityId: string;
+	certifiedOutputKw: number | null;
+	plantLocationImages: ProposalSitePhoto[];
+	hazardMapImages: ProposalSitePhoto[];
+	targetAreaImages: ProposalSitePhoto[];
+	reflectionImages: ProposalSitePhoto[];
+	siteImages: ProposalSitePhoto[];
 };
 
 type ProposalSimulationDraft = {
@@ -11110,17 +11130,35 @@ async function processResidentDocument(
 		};
 	}
 
+	const pdfExport = input.dryRun
+		? {
+				attached: false,
+				destination: "none" as const,
+				message: "dry-runのためPDFは保存していません。",
+				fileName: "",
+				fileUrl: null as string | null,
+				skippedExisting: false,
+		  }
+		: await exportResidentDocumentPdf(notion, page, draft);
+	const readyStatus = input.dryRun
+		? "作成準備完了"
+		: pdfExport.attached
+			? "作成準備完了"
+			: "エラー";
 	const readyMessage = [
 		"住民説明会資料の必須入力チェックを通過しました。",
 		...draft.summaryLines,
-		"次ステップ: PDF生成ワーカーに渡して資料を作成してください。",
+		`PDF出力: ${pdfExport.message}`,
+		pdfExport.attached
+			? "保存先: レコード内の資料PDFプロパティから確認できます。"
+			: "PDF保存に失敗したため、資料PDF files列とWorker実行ログを確認してください。",
 	].join("\n");
 	if (!input.dryRun) {
 		const patches: Record<string, SafePatch> = {};
 		setAliasPatch(
 			patches,
 			["資料作成ステータス", "住民説明会資料ステータス", "生成ステータス"],
-			{ kind: "select", value: "作成準備完了" },
+			{ kind: "select", value: readyStatus },
 		);
 		setAliasPatch(
 			patches,
@@ -11137,17 +11175,26 @@ async function processResidentDocument(
 			["生成ドキュメント名", "資料タイトル", "住民説明会資料名"],
 			{ kind: "text", value: draft.documentTitle },
 		);
+		if (pdfExport.fileUrl) {
+			setAliasPatch(patches, RESIDENT_PDF_URL_PROPERTY_ALIASES, {
+				kind: "text",
+				value: pdfExport.fileUrl,
+			});
+		}
 		await safeUpdateExistingProperties(notion, page, patches);
+		if (pdfExport.fileUrl) {
+			await updateRelatedProjectResidentPdfLink(notion, page, pdfExport.fileUrl);
+		}
 		await createPageComment(
 			notion,
 			page.id,
-			`✅ 住民説明会資料の準備が完了しました。\n${draft.documentTitle}`,
+			`${pdfExport.attached ? "✅" : "⚠️"} 住民説明会資料の処理結果\n${draft.documentTitle}\n${pdfExport.message}`,
 		);
 	}
 	return {
 		pageId: page.id,
-		action: input.dryRun ? "dry-run" : "prepared",
-		status: "作成準備完了",
+		action: input.dryRun ? "dry-run" : pdfExport.attached ? "prepared" : "error",
+		status: readyStatus,
 		missingField: null,
 		message: readyMessage,
 	};
@@ -11840,6 +11887,32 @@ async function updateRelatedProjectProposalPdfLink(
 	}
 }
 
+async function updateRelatedProjectResidentPdfLink(
+	notion: NotionClient,
+	residentPage: Page,
+	pdfUrl: string,
+): Promise<void> {
+	const relatedProjectIds = relationIdsFromProperty(residentPage.properties?.["関連案件"]);
+	if (relatedProjectIds.length === 0) return;
+	for (const projectPageId of relatedProjectIds) {
+		try {
+			const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
+			await safeUpdateExistingProperties(notion, projectPage, {
+				資料PDFリンク: { kind: "text", value: pdfUrl },
+				資料作成メモ: {
+					kind: "text",
+					value: `住民説明会資料PDFを作成しました。${pdfUrl}`,
+				},
+			});
+		} catch (error) {
+			console.log("related project resident pdf link update skipped", {
+				projectPageId,
+				error: String(error),
+			});
+		}
+	}
+}
+
 type ProposalPdfExportResult = {
 	attached: boolean;
 	destination: "property" | "page_block" | "none";
@@ -11847,6 +11920,141 @@ type ProposalPdfExportResult = {
 	fileName: string;
 	fileUrl: string | null;
 };
+
+type ResidentPdfExportResult = {
+	attached: boolean;
+	destination: "property" | "none";
+	message: string;
+	fileName: string;
+	fileUrl: string | null;
+	skippedExisting: boolean;
+};
+
+async function exportResidentDocumentPdf(
+	notion: NotionClient,
+	page: Page,
+	draft: ResidentDocumentDraft,
+): Promise<ResidentPdfExportResult> {
+	const properties = page.properties ?? {};
+	const filePropertyName = findFirstFilesPropertyNameByAliases(
+		properties,
+		RESIDENT_PDF_FILE_PROPERTY_ALIASES,
+	);
+	if (!filePropertyName) {
+		return {
+			attached: false,
+			destination: "none",
+			message: "files型の資料PDFプロパティが見つかりません。",
+			fileName: "",
+			fileUrl: null,
+			skippedExisting: false,
+		};
+	}
+
+	if (hasFilesPropertyValue(properties[filePropertyName])) {
+		const fileUrl = readFirstFileUrlByAliases(properties, [filePropertyName]);
+		return {
+			attached: true,
+			destination: "property",
+			message: `既存PDFがあるため二重添付をスキップしました（${filePropertyName}）。`,
+			fileName: "",
+			fileUrl,
+			skippedExisting: true,
+		};
+	}
+
+	if (!notion.fileUploads?.create || !notion.fileUploads.send) {
+		return {
+			attached: false,
+			destination: "none",
+			message: "この実行環境ではPDFアップロード機能を利用できません。",
+			fileName: "",
+			fileUrl: null,
+			skippedExisting: false,
+		};
+	}
+
+	const titleSeed = draft.documentTitle || readGenericPageTitle(page) || "resident-document";
+	const fileName = `${sanitizeFileName(titleSeed)}_${todayIsoDateInTokyo()}.pdf`;
+	try {
+		const pdfBytes = await buildResidentDocumentPdfBytes(draft, page.id);
+		const created = await notion.fileUploads.create({
+			mode: "single_part",
+			filename: fileName,
+			content_type: "application/pdf",
+		});
+		const fileUploadId =
+			firstString(
+				(created as Record<string, unknown>).id,
+				readNestedString(created, ["file_upload", "id"]),
+			) ?? "";
+		if (!fileUploadId) {
+			return {
+				attached: false,
+				destination: "none",
+				message: "PDFアップロードIDの取得に失敗しました。",
+				fileName,
+				fileUrl: null,
+				skippedExisting: false,
+			};
+		}
+
+		await notion.fileUploads.send({
+			file_upload_id: fileUploadId,
+			file: {
+				filename: fileName,
+				data: new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" }),
+			},
+		});
+		if (notion.fileUploads.complete) {
+			try {
+				await notion.fileUploads.complete({ file_upload_id: fileUploadId });
+			} catch {
+				// single_partではcomplete不要の場合があるため無視
+			}
+		}
+
+		await notion.pages.update({
+			page_id: page.id,
+			properties: {
+				[filePropertyName]: {
+					files: [
+						{
+							type: "file_upload",
+							file_upload: { id: fileUploadId },
+							name: fileName,
+						},
+					],
+				},
+			},
+		});
+
+		let fileUrl: string | null = null;
+		try {
+			const refreshed = await notion.pages.retrieve({ page_id: page.id });
+			fileUrl = readFirstFileUrlByAliases(refreshed.properties ?? {}, [filePropertyName]);
+		} catch {
+			// URL取得に失敗してもPDF files列への保存結果は返す
+		}
+		return {
+			attached: true,
+			destination: "property",
+			message: `PDFを保存しました（${filePropertyName}）。`,
+			fileName,
+			fileUrl,
+			skippedExisting: false,
+		};
+	} catch (error) {
+		return {
+			attached: false,
+			destination: "none",
+			message: `PDF保存に失敗しました。${String(error)}`,
+			fileName,
+			fileUrl: null,
+			skippedExisting: false,
+		};
+	}
+}
 
 async function exportProposalSimulationPdf(
 	notion: NotionClient,
@@ -11997,6 +12205,226 @@ async function exportProposalSimulationPdf(
 			fileUrl: null,
 		};
 	}
+}
+
+async function buildResidentDocumentPdfBytes(
+	draft: ResidentDocumentDraft,
+	pageId: string,
+): Promise<Uint8Array> {
+	const pdf = await PDFDocument.create();
+	const font = await pdf.embedFont(StandardFonts.Helvetica);
+	const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+	const left = 42;
+	const maxWidth = 595.28 - left * 2;
+	const generatedDate = todayIsoDateInTokyo();
+	const imageGroups: Record<number, ProposalSitePhoto[]> = {
+		2: draft.plantLocationImages,
+		3: draft.hazardMapImages,
+		9: draft.reflectionImages,
+		12: draft.targetAreaImages,
+		13: draft.siteImages,
+	};
+	const sections = [
+		{
+			title: "Cover / Owner Change Notice",
+			lines: [
+				`Document: ${draft.documentTitle}`,
+				`Case Number: ${draft.caseNumber}`,
+				`Plant Name: ${draft.plantName}`,
+				`Address: ${draft.plantAddress}`,
+				`Notification Method: ${draft.notifyMethod}`,
+			],
+		},
+		{
+			title: "Purpose / Plant Location",
+			lines: [
+				"This page explains why the briefing or prior notice is being prepared.",
+				`Briefing Date: ${draft.briefingDate}`,
+				`Question Period: ${draft.questionPeriod}`,
+				`Facility ID: ${draft.facilityId}`,
+			],
+		},
+		{
+			title: "Location / Hazard Map",
+			lines: [
+				"Confirm the site location, surrounding conditions and hazard information before distribution.",
+				`Plant Address: ${draft.plantAddress}`,
+				`Certified Output: ${formatNumberWithUnit(draft.certifiedOutputKw, "kW")}`,
+			],
+		},
+		{
+			title: "Prior Notice Scope",
+			lines: [
+				"Check the target area, households and stakeholders covered by this briefing material.",
+				`Notification Method: ${draft.notifyMethod}`,
+			],
+		},
+		{
+			title: "Legal Compliance",
+			lines: [
+				"Confirm renewable energy law requirements, local rules and required prior notice items.",
+				`Old Certified Operator: ${draft.oldOperator}`,
+				`New Certified Operator: ${draft.newOperator}`,
+			],
+		},
+		{
+			title: "Land Rights / Construction Timing",
+			lines: [
+				"Confirm land rights, construction timing, grid connection and operation start assumptions.",
+				`Responsible Manager: ${draft.managerName}`,
+			],
+		},
+		{
+			title: "Safety Measures",
+			lines: [
+				"Explain safety management, inspection, emergency contact and maintenance responsibility.",
+				`Maintenance Responsibility: ${draft.managerName}`,
+			],
+		},
+		{
+			title: "Landscape / Living Environment",
+			lines: [
+				"Explain impact on landscape, noise, traffic, vegetation management and daily living environment.",
+				`Site: ${draft.plantName}`,
+			],
+		},
+		{
+			title: "Glare / Reflection",
+			lines: [
+				"Attach glare or reflection simulation images and note that final judgement requires human review.",
+				`Plant Address: ${draft.plantAddress}`,
+			],
+		},
+		{
+			title: "Waste / Decommissioning Reserve",
+			lines: [
+				"Explain decommissioning reserve, waste handling, panel disposal and future removal policy.",
+				`Facility ID: ${draft.facilityId}`,
+			],
+		},
+		{
+			title: "Industrial Waste / Restoration",
+			lines: [
+				"Confirm industrial waste handling, restoration policy and responsibility after operation ends.",
+				`New Certified Operator: ${draft.newOperator}`,
+			],
+		},
+		{
+			title: "Briefing Target Area",
+			lines: [
+				"Attach the target area map and confirm whether the notice area is sufficient.",
+				`Question Period: ${draft.questionPeriod}`,
+			],
+		},
+		{
+			title: "Final Pre-Submission Check",
+			lines: [
+				"Final judgement: human review is required before external submission or distribution.",
+				`Generated: ${generatedDate}`,
+				`Record ID: ${pageId}`,
+			],
+		},
+	];
+
+	for (let index = 0; index < sections.length; index += 1) {
+		const pageNumber = index + 1;
+		const page = pdf.addPage([595.28, 841.89]);
+		page.drawRectangle({
+			x: 0,
+			y: 0,
+			width: 18,
+			height: page.getHeight(),
+			color: rgb(0.06, 0.16, 0.24),
+		});
+		page.drawLine({
+			start: { x: 24, y: 40 },
+			end: { x: 24, y: page.getHeight() - 40 },
+			thickness: 1.2,
+			color: rgb(0.78, 0.63, 0.25),
+		});
+		let y = page.getHeight() - 58;
+		page.drawText(`WAJO LOCAL BRIEFING DOCUMENT / ${pageNumber} of 13`, {
+			x: left,
+			y,
+			size: 9,
+			font,
+			color: rgb(0.38, 0.42, 0.43),
+		});
+		y -= 30;
+		page.drawText(sections[index]!.title, {
+			x: left,
+			y,
+			size: 18,
+			font: bold,
+			color: rgb(0.07, 0.13, 0.18),
+		});
+		y -= 28;
+		for (const rawLine of sections[index]!.lines) {
+			const wrapped = wrapTextForPdf(toPdfSafeText(rawLine), font, 11, maxWidth);
+			for (const line of wrapped) {
+				page.drawText(line, {
+					x: left,
+					y,
+					size: 11,
+					font,
+					color: rgb(0.12, 0.16, 0.18),
+				});
+				y -= 16;
+			}
+			y -= 4;
+		}
+
+		const images = imageGroups[pageNumber] ?? [];
+		const image = images[0] ?? null;
+		const boxY = 120;
+		page.drawRectangle({
+			x: left,
+			y: boxY,
+			width: maxWidth,
+			height: 260,
+			borderColor: rgb(0.55, 0.61, 0.62),
+			borderWidth: 1,
+			color: rgb(0.97, 0.98, 0.97),
+		});
+		let drewImage = false;
+		if (image?.url) {
+			const embedded = await embedPdfImageFromUrl(pdf, image.url);
+			if (embedded) {
+				const fit = fitRectWithinBox(embedded.width, embedded.height, maxWidth - 28, 232);
+				page.drawImage(embedded, {
+					x: left + 14 + fit.x,
+					y: boxY + 14 + fit.y,
+					width: fit.width,
+					height: fit.height,
+				});
+				drewImage = true;
+			}
+		}
+		if (!drewImage) {
+			page.drawText("ATTACHMENT / IMAGE SLOT", {
+				x: left + 18,
+				y: boxY + 142,
+				size: 13,
+				font: bold,
+				color: rgb(0.42, 0.47, 0.48),
+			});
+			page.drawText(image?.name ? toPdfSafeText(image.name) : "No image embedded in PDF preview", {
+				x: left + 18,
+				y: boxY + 120,
+				size: 9,
+				font,
+				color: rgb(0.42, 0.47, 0.48),
+			});
+		}
+		page.drawText(`Generated by WAJO Sales OS / ${generatedDate}`, {
+			x: left,
+			y: 46,
+			size: 8,
+			font,
+			color: rgb(0.46, 0.49, 0.5),
+		});
+	}
+	return pdf.save();
 }
 
 async function buildProposalSimulationPdfBytes(
@@ -12431,6 +12859,12 @@ function findFirstFilesPropertyNameByAliases(
 		if ((property as Record<string, unknown>).type === "files") return alias;
 	}
 	return null;
+}
+
+function hasFilesPropertyValue(property: unknown): boolean {
+	if (!property || typeof property !== "object") return false;
+	const prop = property as Record<string, unknown>;
+	return prop.type === "files" && Array.isArray(prop.files) && prop.files.length > 0;
 }
 
 function readFirstFileUrlByAliases(
