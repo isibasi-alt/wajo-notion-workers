@@ -83,11 +83,47 @@ const weakTestMeetingPageProperties = {
 	ナレッジ種別: select("営業トーク"),
 	関連企業: relation([]),
 	関連商談: relation([]),
-};
+	};
 
-async function main() {
-	const creates: Array<Record<string, unknown>> = [];
-	const updates: Array<Record<string, unknown>> = [];
+	const templateBlocks = [{
+		type: "heading_2",
+		heading_2: { rich_text: [{ plain_text: "ミーティング情報" }] },
+	}, {
+		type: "bulleted_list_item",
+		bulleted_list_item: { rich_text: [{ plain_text: "種別: ミーティング" }] },
+	}, {
+		type: "heading_2",
+		heading_2: { rich_text: [{ plain_text: "議題" }] },
+	}, {
+		type: "heading_2",
+		heading_2: { rich_text: [{ plain_text: "決定事項" }] },
+	}, {
+		type: "heading_2",
+		heading_2: { rich_text: [{ plain_text: "アクション項目" }] },
+	}, {
+		type: "heading_2",
+		heading_2: { rich_text: [{ plain_text: "ナレッジ候補" }] },
+	}, {
+		type: "paragraph",
+		paragraph: {
+			rich_text: [{
+				plain_text: "まずは上の ▶️ ボタンで録音スタート。AIが自動で文字起こし・要約・アクション項目を抽出します。",
+			}],
+		},
+	}];
+
+	const weakBlocks = [{
+		type: "paragraph",
+		paragraph: {
+			rich_text: [{
+				plain_text: "Codex監査用の疎通確認です。dry-run確認のための本文を長くしています。これはWorkerの処理確認用ダミーテキストです。",
+			}],
+		},
+	}];
+
+	async function main() {
+		const creates: Array<Record<string, unknown>> = [];
+		const updates: Array<Record<string, unknown>> = [];
 	const queries: Array<Record<string, unknown>> = [];
 
 	const notion = {
@@ -95,6 +131,25 @@ async function main() {
 			retrieve: async ({ page_id }: { page_id: string }) => {
 				if (page_id === "meeting-1") {
 					return { id: page_id, properties: meetingPageProperties };
+				}
+				if (page_id === "meeting-template") {
+					return {
+						id: page_id,
+						properties: {
+							ミーティング名: title("テンプレだけのミーティング"),
+							ミーティング種別: select("ミーティング"),
+							要約: richText(""),
+							議事内容: richText(""),
+							決定事項: richText(""),
+							アクション項目: richText(""),
+							ナレッジ化ステータス: select("未判定"),
+							ナレッジ化メモ: richText(""),
+							ナレッジ化依頼日: date(),
+							ナレッジ種別: select("FAQ"),
+							関連企業: relation([]),
+							関連商談: relation([]),
+						},
+					};
 				}
 				if (page_id === "meeting-weak") {
 					return { id: page_id, properties: weakTestMeetingPageProperties };
@@ -113,16 +168,11 @@ async function main() {
 		blocks: {
 			children: {
 				list: async ({ block_id }: { block_id: string }) => ({
-					results: block_id === "meeting-weak"
-						? [{
-							type: "paragraph",
-							paragraph: {
-								rich_text: [{
-									plain_text: "Codex監査用の疎通確認です。dry-run確認のための本文を長くしています。これはWorkerの処理確認用ダミーテキストです。",
-								}],
-							},
-						}]
-						: [],
+					results: block_id === "meeting-template"
+						? templateBlocks
+						: block_id === "meeting-weak"
+							? weakBlocks
+							: [],
 					has_more: false,
 				}),
 			},
@@ -207,6 +257,14 @@ async function main() {
 	assert.equal(weak.action, "dry-run");
 	assert.equal(weak.candidates, 0);
 	assert.match(weak.message, /材料が不足/);
+
+	const templateOnly = await processMeetingKnowledgeForTest(
+		{ meetingPageId: "meeting-template", dryRun: true },
+		notion as never,
+	);
+	assert.equal(templateOnly.action, "dry-run");
+	assert.equal(templateOnly.candidates, 0);
+	assert.match(templateOnly.message, /材料が不足/);
 }
 
 main().catch((error) => {

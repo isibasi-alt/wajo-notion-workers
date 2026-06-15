@@ -9,10 +9,12 @@ async function main() {
 	const originalFetch = globalThis.fetch;
 	const originalOpenAiKey = process.env.OPENAI_API_KEY;
 	const updates: Array<Record<string, unknown>> = [];
+	let fetchCalls = 0;
 
 	process.env.OPENAI_API_KEY = "test-key";
-	globalThis.fetch = async () =>
-		({
+	globalThis.fetch = async () => {
+		fetchCalls += 1;
+		return ({
 			ok: true,
 			json: async () => ({
 				choices: [
@@ -33,6 +35,7 @@ async function main() {
 				],
 			}),
 		}) as Response;
+	};
 
 	const notion = {
 		pages: {
@@ -80,6 +83,69 @@ async function main() {
 		const props = updates[0]!.properties as Record<string, unknown>;
 		assert.equal(selectName(props.タスク化ステータス), "作成済");
 		assert.match(JSON.stringify(props.メモ整形メモ), /タスク化ステータス: 作成済/);
+
+		const templateUpdates: Array<Record<string, unknown>> = [];
+		const templateOnlyNotion = {
+			pages: {
+				retrieve: async ({ page_id }: { page_id: string }) => ({
+					id: page_id,
+					properties: {
+						ミーティング名: {
+							type: "title",
+							title: [{ plain_text: "テンプレだけの会議" }],
+						},
+						ミーティング種別: { type: "select", select: { name: "ミーティング" } },
+						要約: { type: "rich_text", rich_text: [] },
+						議事内容: { type: "rich_text", rich_text: [] },
+						決定事項: { type: "rich_text", rich_text: [] },
+						アクション項目: { type: "rich_text", rich_text: [] },
+						タスク化ステータス: { type: "select", select: null },
+						関連チームタスク: { type: "relation", relation: [] },
+						メモ整形ステータス: { type: "select", select: null },
+						メモ整形メモ: { type: "rich_text", rich_text: [] },
+					},
+				}),
+				update: async (args: Record<string, unknown>) => {
+					templateUpdates.push(args);
+					return {};
+				},
+			},
+			blocks: {
+				children: {
+					list: async () => ({
+						results: [{
+							type: "heading_2",
+							heading_2: { rich_text: [{ plain_text: "議題" }] },
+						}, {
+							type: "heading_2",
+							heading_2: { rich_text: [{ plain_text: "決定事項" }] },
+						}, {
+							type: "heading_2",
+							heading_2: { rich_text: [{ plain_text: "アクション項目" }] },
+						}, {
+							type: "paragraph",
+							paragraph: {
+								rich_text: [{
+									plain_text: "まずは上の ▶️ ボタンで録音スタート。AIが自動で文字起こし・要約・アクション項目を抽出します。",
+								}],
+							},
+						}],
+						has_more: false,
+						next_cursor: null,
+					}),
+				},
+			},
+		};
+
+		const beforeTemplateFetchCalls = fetchCalls;
+		const templateResult = await processMeetingMemoFormatForTest(
+			{ meetingPageId: "meeting-template", dryRun: false },
+			templateOnlyNotion as never,
+		);
+		assert.equal(templateResult.action, "needs-review");
+		assert.equal(templateResult.status, "要確認");
+		assert.equal(fetchCalls, beforeTemplateFetchCalls, "テンプレ本文だけならOpenAIへ送らない");
+		assert.equal(templateUpdates.length, 1);
 	} finally {
 		globalThis.fetch = originalFetch;
 		if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;

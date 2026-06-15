@@ -8071,7 +8071,9 @@ async function processMeetingMemoFormat(
 	const titleText = readMeetingTitleText(properties);
 	const meetingType = readMeetingKindForPrompt(properties);
 	const propertyText = buildMeetingPropertySource(properties);
-	const blockText = await fetchPageBlockPlainText(notion, meetingPage.id);
+	const blockText = stripMeetingTemplateBoilerplate(
+		await fetchPageBlockPlainText(notion, meetingPage.id),
+	);
 	const source = [blockText, propertyText].filter(Boolean).join("\n\n").slice(0, 12000);
 
 	if (source.replace(/\s/g, "").length < 80) {
@@ -8163,15 +8165,32 @@ function resolveMeetingMemoTaskStatus(
 
 function buildMeetingPropertySource(properties: Record<string, unknown>): string {
 	return [
-		["既存テキスト", text(properties["テキスト"])],
-		["既存要約", text(properties["要約"])],
-		["既存議事内容", text(properties["議事内容"])],
-		["既存決定事項", text(properties["決定事項"])],
-		["既存アクション項目", text(properties["アクション項目"])],
+		["既存テキスト", stripMeetingTemplateBoilerplate(text(properties["テキスト"]))],
+		["既存要約", stripMeetingTemplateBoilerplate(text(properties["要約"]))],
+		["既存議事内容", stripMeetingTemplateBoilerplate(text(properties["議事内容"]))],
+		["既存決定事項", stripMeetingTemplateBoilerplate(text(properties["決定事項"]))],
+		["既存アクション項目", stripMeetingTemplateBoilerplate(text(properties["アクション項目"]))],
 	]
 		.filter(([, value]) => value)
 		.map(([label, value]) => `【${label}】\n${value}`)
 		.join("\n\n");
+}
+
+function stripMeetingTemplateBoilerplate(value: string): string {
+	return value
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter((line) => {
+			if (!line) return false;
+			if (/^<\/?(?:meeting-notes|notes)>$/i.test(line)) return false;
+			if (/^(ミーティング情報|議題|決定事項|アクション項目|ナレッジ候補)$/.test(line)) return false;
+			if (/^種別:\s*(ミーティング|商談|1on1|会議|営業会議)/.test(line)) return false;
+			if (/^開始時刻:/.test(line)) return false;
+			if (/まずは上の.*録音スタート/.test(line)) return false;
+			if (/AIが自動で文字起こし・要約・アクション項目を抽出/.test(line)) return false;
+			return true;
+		})
+		.join("\n");
 }
 
 function addPatchIfBlank(
@@ -8917,7 +8936,9 @@ async function processMeetingKnowledge(
 	const properties = meetingPage.properties ?? {};
 	const titleText = readMeetingTitleText(properties);
 	const meetingType = readMeetingKindForPrompt(properties);
-	const blockText = await fetchPageBlockPlainText(notion, meetingPage.id);
+	const blockText = stripMeetingTemplateBoilerplate(
+		await fetchPageBlockPlainText(notion, meetingPage.id),
+	);
 	const candidate = buildMeetingKnowledgeCandidate({
 		titleText,
 		meetingType,
@@ -9067,11 +9088,11 @@ function buildMeetingKnowledgeMaterial(
 	blockText: string,
 ): string {
 	return [
-		text(properties["要約"]),
-		text(properties["議事内容"]),
-		text(properties["決定事項"]),
-		text(properties["アクション項目"]),
-		blockText,
+		stripMeetingTemplateBoilerplate(text(properties["要約"])),
+		stripMeetingTemplateBoilerplate(text(properties["議事内容"])),
+		stripMeetingTemplateBoilerplate(text(properties["決定事項"])),
+		stripMeetingTemplateBoilerplate(text(properties["アクション項目"])),
+		stripMeetingTemplateBoilerplate(blockText),
 	]
 		.filter(Boolean)
 		.join("\n\n")
@@ -9107,11 +9128,11 @@ function buildMeetingKnowledgeSource(
 ): string {
 	return [
 		["種別・タグ", readMeetingKindForPrompt(properties)],
-		["要約", text(properties["要約"])],
-		["議事内容", text(properties["議事内容"])],
-		["決定事項", text(properties["決定事項"])],
-		["アクション項目", text(properties["アクション項目"])],
-		["本文", blockText],
+		["要約", stripMeetingTemplateBoilerplate(text(properties["要約"]))],
+		["議事内容", stripMeetingTemplateBoilerplate(text(properties["議事内容"]))],
+		["決定事項", stripMeetingTemplateBoilerplate(text(properties["決定事項"]))],
+		["アクション項目", stripMeetingTemplateBoilerplate(text(properties["アクション項目"]))],
+		["本文", stripMeetingTemplateBoilerplate(blockText)],
 	]
 		.filter(([, value]) => value)
 		.map(([label, value]) => `【${label}】\n${value}`)
