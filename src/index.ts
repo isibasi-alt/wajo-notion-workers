@@ -1971,6 +1971,33 @@ type MeetingMemoAIResponse = {
 	taskStatus: "未処理" | "要確認" | "対象外";
 	formatStatus: "整形済" | "要確認" | "対象外";
 	memo: string;
+	speechLogCandidates: MeetingSpeechLogCandidate[];
+	salesContributionCandidates: MeetingSalesContributionCandidate[];
+};
+
+type MeetingSpeechLogCandidate = {
+	title: string;
+	content: string;
+	category: string;
+	speaker: string;
+	evidenceQuote: string;
+	confidence: string;
+};
+
+type MeetingSalesContributionCandidate = {
+	title: string;
+	type: string;
+	category: string;
+	impact: string;
+	comment: string;
+	evidenceQuote: string;
+	confidence: string;
+};
+
+type MeetingEvaluationLogExtraction = {
+	speechLogCandidates: MeetingSpeechLogCandidate[];
+	salesContributionCandidates: MeetingSalesContributionCandidate[];
+	skipped?: string[];
 };
 
 type ManagerReviewAIResponse = {
@@ -2094,6 +2121,8 @@ export const MEETING_MEMO_RESPONSE_FORMAT = {
 				"taskStatus",
 				"formatStatus",
 				"memo",
+				"speechLogCandidates",
+				"salesContributionCandidates",
 			],
 			properties: {
 				text: { type: "string" },
@@ -2110,6 +2139,54 @@ export const MEETING_MEMO_RESPONSE_FORMAT = {
 					enum: ["整形済", "要確認", "対象外"],
 				},
 				memo: { type: "string" },
+				speechLogCandidates: {
+					type: "array",
+					items: {
+						type: "object",
+						additionalProperties: false,
+						required: [
+							"title",
+							"content",
+							"category",
+							"speaker",
+							"evidenceQuote",
+							"confidence",
+						],
+						properties: {
+							title: { type: "string" },
+							content: { type: "string" },
+							category: { type: "string" },
+							speaker: { type: "string" },
+							evidenceQuote: { type: "string" },
+							confidence: { type: "string", enum: ["高", "中", "低"] },
+						},
+					},
+				},
+				salesContributionCandidates: {
+					type: "array",
+					items: {
+						type: "object",
+						additionalProperties: false,
+						required: [
+							"title",
+							"type",
+							"category",
+							"impact",
+							"comment",
+							"evidenceQuote",
+							"confidence",
+						],
+						properties: {
+							title: { type: "string" },
+							type: { type: "string" },
+							category: { type: "string" },
+							impact: { type: "string", enum: ["高", "中", "低"] },
+							comment: { type: "string" },
+							evidenceQuote: { type: "string" },
+							confidence: { type: "string", enum: ["高", "中", "低"] },
+						},
+					},
+				},
 			},
 		},
 	},
@@ -8254,11 +8331,31 @@ async function processMeetingMemoFormat(
 	addPatchIfBlank(patches, properties, "アクション項目", formatted.actionItems);
 	await safeUpdateExistingProperties(notion, meetingPage, patches);
 
+	const evaluationLogResult = await createMeetingEvaluationLogsFromExtraction(
+		{
+			meetingPage,
+			extraction: {
+				speechLogCandidates: formatted.speechLogCandidates,
+				salesContributionCandidates: formatted.salesContributionCandidates,
+			},
+			source,
+			dryRun: false,
+		},
+		notion,
+	);
+
 	return {
 		meetingPageId: meetingPage.id,
 		action: formatted.formatStatus === "対象外" ? "target-out" : "formatted",
 		status: formatted.formatStatus,
-		message: `会議メモ整形完了。タスク化ステータス: ${taskStatus}。`,
+		message: [
+			`会議メモ整形完了。タスク化ステータス: ${taskStatus}。`,
+			`発言ログ作成: ${evaluationLogResult.speechCreated}件。`,
+			`営業貢献ログ作成: ${evaluationLogResult.salesContributionCreated}件。`,
+			evaluationLogResult.errors > 0
+				? `評価材料候補作成エラー: ${evaluationLogResult.errors}件。`
+				: "",
+		].filter(Boolean).join(" "),
 	};
 }
 
@@ -8337,8 +8434,10 @@ async function callOpenAIMeetingMemoFormat(input: {
 		"役割:",
 		"- 文字起こし/ミーティング内容を読みやすい形に整理する",
 		"- 要約、議事内容、決定事項、アクション項目を作る",
+		"- 会議/1on1本文に明記された発言ログ候補と営業貢献ログ候補を抽出する",
 		"- チームトラッカーにタスクを作らない",
 		"- 商談管理DB、関連チームタスク、商談連携状態を更新しない",
+		"- 点数、ランク、評価ステータス、給与・処遇判断を確定しない",
 		"",
 		"アクション項目ルール:",
 		"- 会議後に誰かが実行すべきものだけ抽出する",
@@ -8353,6 +8452,21 @@ async function callOpenAIMeetingMemoFormat(input: {
 		"- 本文が短い/未完成/曖昧な場合 formatStatus=要確認",
 		"- 整形できた場合 formatStatus=整形済",
 		"- 明確な会議内容がない場合 formatStatus=対象外",
+		"",
+		"発言ログ候補ルール:",
+		"- speechLogCandidates には、商談/評価の根拠になる本人の発言だけを入れる",
+		"- title は短い発言タイトル、content は本文に根拠がある発言内容、category は「商談」または「報告」に寄せる",
+		"- speaker は本文に出ている発言者名だけを書く。不明なら「発言者要確認」",
+		"- evidenceQuote は本文から連続する短い抜粋をそのまま入れる",
+		"- 根拠が弱いもの、本文にない固有名・数値を含むものは配列に入れない",
+		"",
+		"営業貢献ログ候補ルール:",
+		"- salesContributionCandidates には、紹介、ナレッジ共有、チーム支援、仕組み化提案、成約/失注からの学びだけを入れる",
+		"- type/category は「紹介」「ナレッジ共有」「チーム支援」「仕組み化提案」「成約/失注からの学び」のどれかに寄せる",
+		"- impact は高/中/低。迷うものは中",
+		"- comment は本文に根拠がある貢献内容だけを書く",
+		"- evidenceQuote は本文から連続する短い抜粋をそのまま入れる",
+		"- 自己申告だけで根拠が弱いもの、本文にない固有名・数値を含むものは配列に入れない",
 		"",
 		"必ずJSONのみを返してください。",
 	].join("\n");
@@ -8373,6 +8487,7 @@ async function callOpenAIMeetingMemoFormat(input: {
 		},
 		body: JSON.stringify({
 			model,
+			temperature: 0,
 			response_format: MEETING_MEMO_RESPONSE_FORMAT,
 			messages: [
 				{ role: "system", content: systemPrompt },
@@ -8418,6 +8533,12 @@ function parseMeetingMemoAIResponse(raw: string): MeetingMemoAIResponse {
 			taskStatus,
 			formatStatus,
 			memo: typeof parsed.memo === "string" ? parsed.memo : "",
+			speechLogCandidates: normalizeMeetingSpeechLogCandidates(
+				(parsed as { speechLogCandidates?: unknown }).speechLogCandidates,
+			),
+			salesContributionCandidates: normalizeMeetingSalesContributionCandidates(
+				(parsed as { salesContributionCandidates?: unknown }).salesContributionCandidates,
+			),
 		};
 	} catch (error) {
 		console.log("parseMeetingMemoAIResponse failed", String(error));
@@ -8430,9 +8551,425 @@ function parseMeetingMemoAIResponse(raw: string): MeetingMemoAIResponse {
 			taskStatus: "要確認",
 			formatStatus: "要確認",
 			memo: `JSONパース失敗: ${raw.slice(0, 200)}`,
+			speechLogCandidates: [],
+			salesContributionCandidates: [],
 		};
 	}
 }
+
+function normalizeMeetingSpeechLogCandidates(value: unknown): MeetingSpeechLogCandidate[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.map((item): MeetingSpeechLogCandidate | null => {
+			if (!item || typeof item !== "object") return null;
+			const candidate = item as Record<string, unknown>;
+			return {
+				title: stringValue(candidate.title),
+				content: stringValue(candidate.content),
+				category: stringValue(candidate.category),
+				speaker: stringValue(candidate.speaker),
+				evidenceQuote: stringValue(candidate.evidenceQuote),
+				confidence: normalizeConfidence(stringValue(candidate.confidence)),
+			};
+		})
+		.filter((item): item is MeetingSpeechLogCandidate => Boolean(item))
+		.slice(0, 8);
+}
+
+function normalizeMeetingSalesContributionCandidates(
+	value: unknown,
+): MeetingSalesContributionCandidate[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.map((item): MeetingSalesContributionCandidate | null => {
+			if (!item || typeof item !== "object") return null;
+			const candidate = item as Record<string, unknown>;
+			return {
+				title: stringValue(candidate.title),
+				type: stringValue(candidate.type),
+				category: stringValue(candidate.category),
+				impact: normalizeContributionImpact(stringValue(candidate.impact)),
+				comment: stringValue(candidate.comment),
+				evidenceQuote: stringValue(candidate.evidenceQuote),
+				confidence: normalizeConfidence(stringValue(candidate.confidence)),
+			};
+		})
+		.filter((item): item is MeetingSalesContributionCandidate => Boolean(item))
+		.slice(0, 8);
+}
+
+function stringValue(value: unknown): string {
+	return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeConfidence(value: string): string {
+	if (value === "高" || value === "中" || value === "低") return value;
+	return "低";
+}
+
+function filterMeetingEvaluationLogExtraction(
+	extraction: MeetingEvaluationLogExtraction,
+	source: string,
+): Required<MeetingEvaluationLogExtraction> {
+	const skipped: string[] = [];
+	if (source.replace(/\s/g, "").length < 80) {
+		return {
+			speechLogCandidates: [],
+			salesContributionCandidates: [],
+			skipped: [
+				...extraction.speechLogCandidates.map((candidate) =>
+					`発言ログ候補を短文停止: ${candidate.title || candidate.content}`,
+				),
+				...extraction.salesContributionCandidates.map((candidate) =>
+					`営業貢献候補を短文停止: ${candidate.title || candidate.comment}`,
+				),
+			],
+		};
+	}
+
+	const speechLogCandidates = extraction.speechLogCandidates
+		.map((candidate) => ({
+			...candidate,
+			category: normalizeSpeechLogCategory(candidate.category, candidate.content),
+		}))
+		.filter((candidate) => {
+			const reason = meetingSpeechLogSkipReason(candidate, source);
+			if (reason) {
+				skipped.push(reason);
+				return false;
+			}
+			return true;
+		})
+		.slice(0, 5);
+	const salesContributionCandidates = extraction.salesContributionCandidates
+		.map((candidate) => ({
+			...candidate,
+			type: normalizeSalesContributionType(candidate.type, candidate.comment),
+			category: normalizeSalesContributionCategory(candidate.category, candidate.comment),
+			impact: normalizeContributionImpact(candidate.impact),
+		}))
+		.filter((candidate) => {
+			const reason = meetingSalesContributionSkipReason(candidate, source);
+			if (reason) {
+				skipped.push(reason);
+				return false;
+			}
+			return true;
+		})
+		.slice(0, 5);
+	return {
+		speechLogCandidates,
+		salesContributionCandidates,
+		skipped,
+	};
+}
+
+function meetingSpeechLogSkipReason(
+	candidate: MeetingSpeechLogCandidate,
+	source: string,
+): string {
+	const label = candidate.title || candidate.content || "無題発言";
+	if (candidate.confidence === "低") return `発言ログ候補を低信頼で除外: ${label}`;
+	if (!candidate.title.trim() || !candidate.content.trim()) {
+		return `発言ログ候補を必須不足で除外: ${label}`;
+	}
+	if (!sourceContainsMeaningfulQuote(source, candidate.evidenceQuote)) {
+		return `発言ログ候補を根拠不一致で除外: ${label} / ${candidate.speaker} / ${candidate.content}`;
+	}
+	if (candidate.speaker && !isUnknownSpeaker(candidate.speaker) && !sourceIncludesText(source, candidate.speaker)) {
+		return `発言ログ候補を本文外発言者で除外: ${label} / ${candidate.speaker}`;
+	}
+	const unsupported = unsupportedSpecificTokens(source, [
+		candidate.title,
+		candidate.content,
+		candidate.speaker,
+		candidate.evidenceQuote,
+	].join("\n"));
+	if (unsupported.length > 0) {
+		return `発言ログ候補を本文外固有情報で除外: ${label} / ${unsupported.join(", ")}`;
+	}
+	return "";
+}
+
+function meetingSalesContributionSkipReason(
+	candidate: MeetingSalesContributionCandidate,
+	source: string,
+): string {
+	const label = candidate.title || candidate.comment || "無題貢献";
+	if (candidate.confidence === "低") return `営業貢献候補を低信頼で除外: ${label}`;
+	if (!candidate.title.trim() || !candidate.comment.trim()) {
+		return `営業貢献候補を必須不足で除外: ${label}`;
+	}
+	if (!sourceContainsMeaningfulQuote(source, candidate.evidenceQuote)) {
+		return `営業貢献候補を根拠不一致で除外: ${label} / ${candidate.comment}`;
+	}
+	const unsupported = unsupportedSpecificTokens(source, [
+		candidate.title,
+		candidate.type,
+		candidate.category,
+		candidate.comment,
+		candidate.evidenceQuote,
+	].join("\n"));
+	if (unsupported.length > 0) {
+		return `営業貢献候補を本文外固有情報で除外: ${label} / ${unsupported.join(", ")}`;
+	}
+	return "";
+}
+
+function sourceContainsMeaningfulQuote(source: string, quote: string): boolean {
+	const normalizedQuote = normalizeForSourceMatch(quote);
+	if (normalizedQuote.length < 8) return false;
+	return normalizeForSourceMatch(source).includes(normalizedQuote);
+}
+
+function sourceIncludesText(source: string, value: string): boolean {
+	const normalizedValue = normalizeForSourceMatch(value);
+	if (!normalizedValue) return true;
+	return normalizeForSourceMatch(source).includes(normalizedValue);
+}
+
+function normalizeForSourceMatch(value: string): string {
+	return value.replace(/\s/g, "").trim();
+}
+
+function isUnknownSpeaker(value: string): boolean {
+	return /不明|要確認|未設定|担当者/.test(value);
+}
+
+function unsupportedSpecificTokens(source: string, value: string): string[] {
+	const normalizedSource = normalizeForSourceMatch(source);
+	const tokens = uniqueStrings([
+		...matchTokens(value, /[0-9０-９]+(?:[,.．，][0-9０-９]+)?(?:億円|万円|円|件|社|名|日|月|年|%|％|MW|kW|kWh|坪|㎡|m2)?/g),
+		...matchTokens(value, /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g),
+		...matchTokens(value, /[A-Za-z0-9.-]+\.(?:co\.jp|com|jp|net|org)/g),
+		...matchTokens(value, /[一-龯々ァ-ヶーA-Za-z0-9]+(?:株式会社|有限会社|合同会社|商事|ホールディングス|HD)/g),
+		...matchTokens(value, /[一-龯々ァ-ヶー]{2,}(?:さん|様|氏|社長|部長|課長)/g),
+	]);
+	return tokens.filter((token) => !normalizedSource.includes(normalizeForSourceMatch(token)));
+}
+
+function matchTokens(value: string, pattern: RegExp): string[] {
+	return value.match(pattern) ?? [];
+}
+
+function normalizeSpeechLogCategory(category: string, content: string): string {
+	const joined = `${category} ${content}`;
+	if (/商談|提案|価格|条件|顧客|案件|見積/.test(joined)) return "商談";
+	return "報告";
+}
+
+function normalizeSalesContributionType(type: string, comment: string): string {
+	const joined = `${type} ${comment}`;
+	if (/紹介/.test(joined)) return "紹介";
+	if (/チーム|支援|フォロー/.test(joined)) return "チーム支援";
+	if (/仕組み|型化|チェックリスト|標準化/.test(joined)) return "仕組み化提案";
+	if (/成約|失注|学び|勝因|敗因/.test(joined)) return "成約/失注からの学び";
+	return "ナレッジ共有";
+}
+
+function normalizeSalesContributionCategory(category: string, comment: string): string {
+	return normalizeSalesContributionType(category, comment);
+}
+
+function normalizeContributionImpact(value: string): "高" | "中" | "低" {
+	if (value === "高" || /大|強|高/.test(value)) return "高";
+	if (value === "低" || /小|弱|低/.test(value)) return "低";
+	return "中";
+}
+
+function buildMeetingEvaluationLogCreatePlans(input: {
+	meetingPage: Page;
+	extraction: MeetingEvaluationLogExtraction;
+	source: string;
+}): {
+	speechLogCreates: Record<string, unknown>[];
+	salesContributionCreates: Record<string, unknown>[];
+	skipped: string[];
+} {
+	const filtered = filterMeetingEvaluationLogExtraction(input.extraction, input.source);
+	const properties = input.meetingPage.properties ?? {};
+	const meetingDate = readMeetingDateForEvaluationLog(properties, input.meetingPage);
+	const meetingTitle = readMeetingTitleText(properties);
+	const singleSalesUserIds = singleUserIds(personIdsFromProperty(properties["担当営業ユーザー"]));
+	const relatedCompanyIds = relationIdsFromProperty(properties["関連企業"]);
+	const relatedDealIds = relationIdsFromProperty(properties["関連商談"]);
+	const speechLogCreates = filtered.speechLogCandidates.map((candidate) => {
+		const createProperties: Record<string, unknown> = {
+			発言タイトル: title(candidate.title),
+			発言内容: richText(buildMeetingSpeechLogContent(candidate, meetingTitle)),
+			発言カテゴリ: select(candidate.category),
+			関連会議: relationIds([input.meetingPage.id]),
+		};
+		if (meetingDate) createProperties["発言日時"] = { date: { start: meetingDate } };
+		if (singleSalesUserIds.length === 1) {
+			createProperties["発言者"] = {
+				people: singleSalesUserIds.map((id) => ({ object: "user", id })),
+			};
+		}
+		if (relatedCompanyIds.length > 0) {
+			createProperties["関連企業"] = relationIds(relatedCompanyIds.slice(0, 3));
+		}
+		createProperties["発言処理メモ"] = richText(
+			buildMeetingSpeechProcessingMemo(candidate, meetingTitle),
+		);
+		return {
+			parent: { data_source_id: SPEECH_LOG_DATA_SOURCE_ID },
+			properties: createProperties,
+		};
+	});
+	const salesContributionCreates = filtered.salesContributionCandidates.map((candidate) => {
+		const createProperties: Record<string, unknown> = {
+			貢献タイトル: title(candidate.title),
+			種別: select(candidate.type),
+			貢献カテゴリ: select(candidate.category),
+			貢献インパクト: select(candidate.impact),
+			AIコメント: richText(buildMeetingSalesContributionComment(candidate, meetingTitle)),
+			評価反映状態: select("反映候補"),
+		};
+		if (meetingDate) createProperties["日付"] = { date: { start: meetingDate } };
+		if (singleSalesUserIds.length === 1) {
+			createProperties["対象営業ユーザー"] = {
+				people: singleSalesUserIds.map((id) => ({ object: "user", id })),
+			};
+		}
+		if (relatedDealIds.length > 0) {
+			createProperties["関連商談"] = relationIds(relatedDealIds.slice(0, 3));
+		}
+		return {
+			parent: { data_source_id: SALES_CONTRIBUTION_LOG_DATA_SOURCE_ID },
+			properties: createProperties,
+		};
+	});
+	return {
+		speechLogCreates,
+		salesContributionCreates,
+		skipped: filtered.skipped,
+	};
+}
+
+function buildMeetingSpeechLogContent(
+	candidate: MeetingSpeechLogCandidate,
+	meetingTitle: string,
+): string {
+	return [
+		candidate.content,
+		candidate.speaker ? `発言者候補: ${candidate.speaker}` : "",
+		`元会議: ${meetingTitle}`,
+		`根拠抜粋: ${candidate.evidenceQuote}`,
+	].filter(Boolean).join("\n").slice(0, 1800);
+}
+
+function buildMeetingSpeechProcessingMemo(
+	candidate: MeetingSpeechLogCandidate,
+	meetingTitle: string,
+): string {
+	return [
+		`会議メモ整形Worker抽出: ${new Date().toISOString()}`,
+		`元会議: ${meetingTitle}`,
+		`発言者候補: ${candidate.speaker || "未設定"}`,
+		`信頼度: ${candidate.confidence}`,
+		`根拠抜粋: ${candidate.evidenceQuote}`,
+		"点数・ランク・評価確定は未実施。",
+	].join("\n").slice(0, 1800);
+}
+
+function buildMeetingSalesContributionComment(
+	candidate: MeetingSalesContributionCandidate,
+	meetingTitle: string,
+): string {
+	return [
+		candidate.comment,
+		`元会議: ${meetingTitle}`,
+		`根拠抜粋: ${candidate.evidenceQuote}`,
+		`抽出信頼度: ${candidate.confidence}`,
+		"会議本文からの営業貢献候補。承認・点数・評価確定は未実施。",
+	].join("\n").slice(0, 1800);
+}
+
+function readMeetingDateForEvaluationLog(
+	properties: Record<string, unknown>,
+	meetingPage: Page,
+): string {
+	return (
+		dateStartFromProperty(properties["会議日時"]) ||
+		dateStartFromProperty(properties["ミーティング日時"]) ||
+		dateStartFromProperty(properties["開催日時"]) ||
+		dateStartFromProperty(properties["開催日"]) ||
+		dateStartFromProperty(properties["日付"]) ||
+		createdDateFromPage(meetingPage)
+	);
+}
+
+function singleUserIds(ids: string[]): string[] {
+	const unique = uniqueIds(ids);
+	return unique.length === 1 ? unique : [];
+}
+
+async function createMeetingEvaluationLogsFromExtraction(
+	input: {
+		meetingPage: Page;
+		extraction: MeetingEvaluationLogExtraction;
+		source: string;
+		dryRun?: boolean;
+	},
+	notion: NotionClient,
+): Promise<{
+	speechCreated: number;
+	salesContributionCreated: number;
+	skipped: number;
+	errors: number;
+	messages: string[];
+}> {
+	const plans = buildMeetingEvaluationLogCreatePlans({
+		meetingPage: input.meetingPage,
+		extraction: input.extraction,
+		source: input.source,
+	});
+	const messages = [...plans.skipped];
+	if (input.dryRun) {
+		return {
+			speechCreated: plans.speechLogCreates.length,
+			salesContributionCreated: plans.salesContributionCreates.length,
+			skipped: plans.skipped.length,
+			errors: 0,
+			messages,
+		};
+	}
+	let speechCreated = 0;
+	let salesContributionCreated = 0;
+	let errors = 0;
+	for (const createArgs of plans.speechLogCreates) {
+		try {
+			await notion.pages.create(createArgs);
+			speechCreated += 1;
+		} catch (error) {
+			errors += 1;
+			messages.push(`発言ログ作成失敗: ${String(error).slice(0, 160)}`);
+		}
+	}
+	for (const createArgs of plans.salesContributionCreates) {
+		try {
+			await notion.pages.create(createArgs);
+			salesContributionCreated += 1;
+		} catch (error) {
+			errors += 1;
+			messages.push(`営業貢献ログ作成失敗: ${String(error).slice(0, 160)}`);
+		}
+	}
+	return {
+		speechCreated,
+		salesContributionCreated,
+		skipped: plans.skipped.length,
+		errors,
+		messages,
+	};
+}
+
+export {
+	buildMeetingEvaluationLogCreatePlans as buildMeetingEvaluationLogCreatePlansForTest,
+	filterMeetingEvaluationLogExtraction as filterMeetingEvaluationLogExtractionForTest,
+	parseMeetingMemoAIResponse as parseMeetingMemoAIResponseForTest,
+};
 
 async function fetchPageBlockPlainText(
 	notion: NotionClient,
