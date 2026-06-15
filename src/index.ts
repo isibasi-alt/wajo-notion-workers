@@ -9407,20 +9407,27 @@ async function findTeamTasksByMeeting(
 	notion: NotionClient,
 	meetingId: string,
 ): Promise<TeamTaskInfo[]> {
-	try {
-		const response = await notion.dataSources.query({
-			data_source_id: TEAM_TRACKER_DATA_SOURCE_ID,
-			page_size: 50,
-			filter: {
-				property: "関連会議議事録",
-				relation: { contains: meetingId },
-			},
-		});
-		return response.results.map(readTeamTaskInfo);
-	} catch (error) {
-		console.log("meeting task lookup skipped", String(error));
-		return [];
+	// チームトラッカーの実relation名は「関連ミーティング」(2026-06-15 スキーマ裏取り済み)。
+	// 旧名「関連会議議事録」を持つレガシーDBにもフォールバックし、両名を独立queryして
+	// 結合・重複排除する。存在しない列名のqueryは property not found で投げるため名前ごとにtry/catch。
+	const relationNames = ["関連ミーティング", "関連会議議事録"];
+	const collected: TeamTaskInfo[] = [];
+	for (const property of relationNames) {
+		try {
+			const response = await notion.dataSources.query({
+				data_source_id: TEAM_TRACKER_DATA_SOURCE_ID,
+				page_size: 50,
+				filter: {
+					property,
+					relation: { contains: meetingId },
+				},
+			});
+			collected.push(...response.results.map(readTeamTaskInfo));
+		} catch (error) {
+			console.log("meeting task lookup skipped", { property, error: String(error) });
+		}
 	}
+	return dedupeTeamTasks(collected);
 }
 
 function dedupeTeamTasks(tasks: TeamTaskInfo[]): TeamTaskInfo[] {
@@ -9459,19 +9466,22 @@ async function createTeamTrackerTaskFromMeetingAction(
 		ステータス: { kind: "select", value: "未着手" },
 		優先順位: { kind: "select", value: input.candidate.priority },
 		タスクタイプ: { kind: "multi_select", values: [input.candidate.taskType] },
+		// チームトラッカーの実relation名は「関連ミーティング」。旧名「関連会議議事録」も併記し、
+		// 存在しない側はsafeUpdateExistingPropertiesが自動スキップする(repo慣例 8640参照)。
+		関連ミーティング: { kind: "relation", ids: [input.meetingPage.id] },
 		関連会議議事録: { kind: "relation", ids: [input.meetingPage.id] },
 	};
 	if (input.relatedDealIds.length > 0) {
-		patches["関連商談"] = {
-			kind: "relation",
-			ids: input.relatedDealIds.slice(0, 3),
-		};
+		// チームトラッカーの実relation名は「関連商談 1」「関連企業 1」(末尾に半角スペース+1)。
+		// 旧名も併記し、存在しない側はsafeUpdateが自動スキップする。
+		const dealIds = input.relatedDealIds.slice(0, 3);
+		patches["関連商談 1"] = { kind: "relation", ids: dealIds };
+		patches["関連商談"] = { kind: "relation", ids: dealIds };
 	}
 	if (input.relatedCompanyIds.length > 0) {
-		patches["関連企業"] = {
-			kind: "relation",
-			ids: input.relatedCompanyIds.slice(0, 3),
-		};
+		const companyIds = input.relatedCompanyIds.slice(0, 3);
+		patches["関連企業 1"] = { kind: "relation", ids: companyIds };
+		patches["関連企業"] = { kind: "relation", ids: companyIds };
 	}
 	if (!input.candidate.requiresHumanCheck && input.assignedUserIds.length === 1) {
 		patches["タスク担当者"] = {
@@ -9485,6 +9495,8 @@ async function createTeamTrackerTaskFromMeetingAction(
 	await safeUpdateExistingProperties(notion, fullPage, patches);
 	return created;
 }
+export { findTeamTasksByMeeting as findTeamTasksByMeetingForTest };
+export { createTeamTrackerTaskFromMeetingAction as createTeamTrackerTaskFromMeetingActionForTest };
 
 function buildMeetingTaskMemo(input: {
 	meetingPage: Page;
