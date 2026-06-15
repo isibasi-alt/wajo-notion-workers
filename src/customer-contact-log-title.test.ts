@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { createCustomerContactLogForTest } from "./index";
+import {
+	buildActivityLogFromContactLogForTest,
+	createCustomerContactLogForTest,
+} from "./index";
 
 const creates: Array<Record<string, unknown>> = [];
 
@@ -60,6 +63,13 @@ async function main() {
 	assert.equal(
 		((properties.活動表示 as { rich_text: Array<{ text: { content: string } }> }).rich_text[0]!.text.content),
 		expectedTitle,
+	);
+	assert.equal(properties.活動種別, undefined, "顧客接点ログDBに存在しない 活動種別 select は書かない");
+	assert.deepEqual(
+		((properties["主権者と活動種別"] as { multi_select: Array<{ name: string }> }).multi_select).map(
+			(option) => option.name,
+		),
+		["電話"],
 	);
 	assert.deepEqual(
 		((properties.担当営業ユーザー as { people: Array<{ id: string }> }).people).map((user) => user.id),
@@ -127,6 +137,30 @@ async function main() {
 		}),
 		"未対応の問い合わせで活動を残したらステータスを対応中へ進める",
 	);
+
+	const activityLogArgs = buildActivityLogFromContactLogForTest({
+		id: "contact-log-3",
+		url: "https://notion.so/contact-log-3",
+		properties: {
+			接点タイトル: {
+				type: "title",
+				title: [{ plain_text: "2026-05-30｜電話｜初回連絡を実施" }],
+			},
+			活動内容: { type: "rich_text", rich_text: [] },
+			次回アクション: { type: "rich_text", rich_text: [] },
+			活動ログ: {
+				type: "rich_text",
+				rich_text: [{ plain_text: "電話で初回連絡を実施し、資料依頼を受領" }],
+			},
+			活動表示: { type: "rich_text", rich_text: [] },
+			"主権者と活動種別": {
+				type: "multi_select",
+				multi_select: [{ name: "電話" }],
+			},
+		},
+	} as never);
+
+	assert.notEqual(activityLogArgs, null, "主権者と活動種別 multi_select から活動種別を読んで反映候補にする");
 }
 
 main().catch((error) => {

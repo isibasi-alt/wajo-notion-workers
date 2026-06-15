@@ -5222,7 +5222,7 @@ async function createCustomerContactLog(
 		接点タイトル: title(titleText),
 		活動ログ: richText(titleText),
 		活動表示: richText(titleText),
-		活動種別: select(activityType),
+		主権者と活動種別: multiSelect([activityType]),
 		活動内容: richText(activityContent),
 		次回アクション: richText(nextAction),
 		接点日時: { date: { start: occurredAt } },
@@ -5282,7 +5282,7 @@ function buildActivityLogFromContactLog(
 	const nextAction = text(properties["次回アクション"]);
 	const activityLog = text(properties["活動ログ"]);
 	const activityDisplay = text(properties["活動表示"]);
-	const activityKind = text(properties["活動種別"]);
+	const activityKind = readCustomerContactActivityType(properties);
 	const usefulNextAction = nextAction && !isLowSignalContactActivityText(nextAction) ? nextAction : "";
 	if (!activityContent && !usefulNextAction && isTitleOnlyContactLog(titleText, activityLog, activityDisplay)) {
 		return null;
@@ -6587,7 +6587,7 @@ function readCustomerContactLogSignal(page: Page): PipelineLogSignal {
 	return {
 		id: page.id,
 		occurredAt: dateStartFromProperty(properties["接点日時"]) || dateStartFromProperty(properties["作成日"]),
-		activityType: text(properties["活動種別"]) || "活動",
+		activityType: readCustomerContactActivityType(properties) || "活動",
 		activityContent: text(properties["活動内容"]) || text(properties["活動表示"]) || text(properties["活動ログ"]),
 		nextAction: text(properties["次回アクション"]),
 	};
@@ -7085,6 +7085,21 @@ function normalizeCustomerContactPhase(value: string): string {
 	return "その他";
 }
 
+const CUSTOMER_CONTACT_ACTIVITY_TYPE_OPTIONS = new Set([
+	"電話",
+	"メール",
+	"Zoom",
+	"Google Meet",
+	"オンライン商談",
+	"対面商談",
+	"現地調査",
+	"測量",
+	"資料送付",
+	"社内確認",
+	"その他",
+	"提案",
+]);
+
 function normalizeCustomerContactActivityType(value: string): string {
 	const raw = value.trim();
 	if (/電話|call|tel/i.test(raw)) return "電話";
@@ -7097,7 +7112,20 @@ function normalizeCustomerContactActivityType(value: string): string {
 	if (/測量/.test(raw)) return "測量";
 	if (/資料/.test(raw)) return "資料送付";
 	if (/社内|確認/.test(raw)) return "社内確認";
-	return raw || "その他";
+	if (/提案/.test(raw)) return "提案";
+	if (CUSTOMER_CONTACT_ACTIVITY_TYPE_OPTIONS.has(raw)) return raw;
+	return "その他";
+}
+
+function readCustomerContactActivityType(properties: Record<string, unknown>): string {
+	const combined = text(properties["主権者と活動種別"]);
+	const contactActivityType = combined
+		.split(",")
+		.map((value) => value.trim())
+		.find((value) => CUSTOMER_CONTACT_ACTIVITY_TYPE_OPTIONS.has(value));
+	if (contactActivityType) return contactActivityType;
+	const legacyActivityType = text(properties["活動種別"]);
+	return legacyActivityType ? normalizeCustomerContactActivityType(legacyActivityType) : "";
 }
 
 function normalizeCustomerContactDate(value: string): string {
@@ -7146,7 +7174,7 @@ async function backfillCustomerContactLogDisplays(
 		const displayText = buildCustomerContactLogTitle({
 			occurredAt: dateStart(properties["接点日時"]) || todayDateJST(),
 			assignedUserLabels: personLabelsFromProperty(properties["担当営業ユーザー"]),
-			activityType: text(properties["活動種別"]) || "活動",
+			activityType: readCustomerContactActivityType(properties) || "活動",
 			activityContent: text(properties["活動内容"]),
 			nextAction: text(properties["次回アクション"]),
 			sourceTitle: text(properties["活動ログ"]) || text(properties["接点タイトル"]),
