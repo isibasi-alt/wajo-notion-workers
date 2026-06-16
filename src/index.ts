@@ -6697,7 +6697,7 @@ async function createDealFeedbackLearningLog(
 		関連商談: relationIds([input.dealPageId]),
 	};
 	if (input.meetingPageId) {
-		properties.関連会議 = relationIds([input.meetingPageId]);
+		properties.関連ミーティング = relationIds([input.meetingPageId]);
 	}
 	const created = await notion.pages.create({
 		parent: { data_source_id: AI_LEARNING_LOG_DATA_SOURCE_ID },
@@ -6712,7 +6712,7 @@ async function createMeetingFeedbackLearningLog(
 ): Promise<string | null> {
 	const exists = await aiLearningLogExists(
 		notion,
-		"関連会議",
+		"関連ミーティング",
 		input.meetingPageId,
 		"会議フィードバック",
 	);
@@ -6741,7 +6741,7 @@ async function createMeetingFeedbackLearningLog(
 			実結果: select("未確認"),
 			"予測との差": select("未確認"),
 			学習反映状態: select("未確認"),
-			関連会議: relationIds([input.meetingPageId]),
+			関連ミーティング: relationIds([input.meetingPageId]),
 		},
 	});
 	return created.id;

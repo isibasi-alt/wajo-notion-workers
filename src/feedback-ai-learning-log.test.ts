@@ -50,18 +50,24 @@ async function main() {
 
 	assert.equal(queries.length, 2);
 	assert.equal(creates.length, 2);
+	const dealQueryFilter = queries[0]!.filter as { and: Array<{ property: string }> };
+	assert.equal(dealQueryFilter.and[0]!.property, "関連商談");
+	const meetingQueryFilter = queries[1]!.filter as { and: Array<{ property: string }> };
+	assert.equal(meetingQueryFilter.and[0]!.property, "関連ミーティング");
 
 	const dealProps = creates[0]!.properties as Record<string, unknown>;
 	assert.equal((dealProps.判定種別 as { select: { name: string } }).select.name, "商談フィードバック");
 	assert.equal((dealProps.対象領域 as { select: { name: string } }).select.name, "商談");
 	assert.equal((dealProps.判定スコア as { number: number }).number, 78);
 	assert.deepEqual((dealProps.関連商談 as { relation: Array<{ id: string }> }).relation, [{ id: "deal-1" }]);
-	assert.deepEqual((dealProps.関連会議 as { relation: Array<{ id: string }> }).relation, [{ id: "meeting-1" }]);
+	assert.deepEqual((dealProps.関連ミーティング as { relation: Array<{ id: string }> }).relation, [{ id: "meeting-1" }]);
+	assert.equal(dealProps.関連会議, undefined);
 
 	const meetingProps = creates[1]!.properties as Record<string, unknown>;
 	assert.equal((meetingProps.判定種別 as { select: { name: string } }).select.name, "会議フィードバック");
 	assert.equal((meetingProps.対象領域 as { select: { name: string } }).select.name, "会議");
-	assert.deepEqual((meetingProps.関連会議 as { relation: Array<{ id: string }> }).relation, [{ id: "meeting-2" }]);
+	assert.deepEqual((meetingProps.関連ミーティング as { relation: Array<{ id: string }> }).relation, [{ id: "meeting-2" }]);
+	assert.equal(meetingProps.関連会議, undefined);
 	assert.equal((meetingProps.学習反映状態 as { select: { name: string } }).select.name, "未確認");
 }
 
