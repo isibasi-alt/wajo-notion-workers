@@ -27,20 +27,34 @@ function functionBody(name: string): string {
 for (const name of [
 	"callOpenAIMeetingMemoFormat",
 	"callOpenAIMeetingFeedback",
+	"callOpenAIManagerReview",
+	"callOpenAISalesPerformanceReview",
 	"callOpenAIDealMeetingFeedback",
 	"callOpenAISecondReview",
 	"callOpenAIDealNextActions",
+	"callOpenAISalesTalkFinalize",
+	"callOpenAIMeetingPrepReport",
 ]) {
 	const body = functionBody(name);
 	assert.match(
 		body,
-		/resolveWajoOpenAiConfig\(process\.env\)/,
-		`${name} should accept WAJO_OPENAI_API_KEY before legacy OPENAI_API_KEY`,
+		/callAnthropicChat\(/,
+		`${name} should use the Anthropic chat helper`,
 	);
 	assert.doesNotMatch(
 		body,
-		/const apiKey = process\.env\.OPENAI_API_KEY/,
-		`${name} should not read only the legacy OPENAI_API_KEY`,
+		/api\.openai\.com\/v1\/chat\/completions/,
+		`${name} should not call OpenAI chat completions`,
+	);
+	assert.doesNotMatch(
+		body,
+		/response_format:/,
+		`${name} should not pass OpenAI response_format to Anthropic`,
+	);
+	assert.doesNotMatch(
+		body,
+		/process\.env\.OPENAI_API_KEY|resolveWajoOpenAiConfig\(process\.env\)/,
+		`${name} should not read OpenAI config after the Anthropic migration`,
 	);
 }
 

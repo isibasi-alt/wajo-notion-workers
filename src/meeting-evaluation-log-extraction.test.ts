@@ -571,8 +571,10 @@ function relationIdsFromState(properties: Record<string, unknown>): string[] {
 
 async function assertMeetingFormatDoesNotCreateEvaluationLogsByDefault() {
 	const originalFetch = globalThis.fetch;
-	const originalOpenAiKey = process.env.OPENAI_API_KEY;
-	process.env.OPENAI_API_KEY = "test-key";
+	const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+	const originalWajoAnthropicKey = process.env.WAJO_ANTHROPIC_API_KEY;
+	process.env.ANTHROPIC_API_KEY = "test-key";
+	delete process.env.WAJO_ANTHROPIC_API_KEY;
 	const evaluationCreates: Array<Record<string, unknown>> = [];
 	const updates: Array<Record<string, unknown>> = [];
 	const longSource = [
@@ -584,41 +586,40 @@ async function assertMeetingFormatDoesNotCreateEvaluationLogsByDefault() {
 		({
 			ok: true,
 			json: async () => ({
-				choices: [
+				content: [
 					{
-						message: {
-							content: JSON.stringify({
-								text: longSource,
-								summary: "要約",
-								minutes: "議事",
-								decisions: "",
-								actionItems: "",
-								taskStatus: "対象外",
-								formatStatus: "整形済",
-								memo: "",
-								speechLogCandidates: [
-									{
-										title: "見積条件の再提案",
-										content: "ABC蓄電池株式会社に今週中に見積条件を出し、2500万円ではなく粗利を残す条件で再提案すると発言した。",
-										category: "提案",
-										speaker: "石橋",
-										evidenceQuote: "ABC蓄電池株式会社には今週中に見積条件を出します。価格は2500万円ではなく、粗利を残す条件で再提案します。",
-										confidence: "高",
-									},
-								],
-								salesContributionCandidates: [
-									{
-										title: "失注理由チェックリスト共有",
-										type: "ナレッジ採用",
-										category: "ナレッジ共有",
-										impact: "中",
-										comment: "佐藤が先週の失注理由を共有し、見積前提条件チェックリストを全員で使う提案をした。",
-										evidenceQuote: "先週の失注理由を共有します。見積の前提条件を先にそろえるチェックリストを全員で使うべきです。",
-										confidence: "高",
-									},
-								],
-							}),
-						},
+						type: "text",
+						text: JSON.stringify({
+							text: longSource,
+							summary: "要約",
+							minutes: "議事",
+							decisions: "",
+							actionItems: "",
+							taskStatus: "対象外",
+							formatStatus: "整形済",
+							memo: "",
+							speechLogCandidates: [
+								{
+									title: "見積条件の再提案",
+									content: "ABC蓄電池株式会社に今週中に見積条件を出し、2500万円ではなく粗利を残す条件で再提案すると発言した。",
+									category: "提案",
+									speaker: "石橋",
+									evidenceQuote: "ABC蓄電池株式会社には今週中に見積条件を出します。価格は2500万円ではなく、粗利を残す条件で再提案します。",
+									confidence: "高",
+								},
+							],
+							salesContributionCandidates: [
+								{
+									title: "失注理由チェックリスト共有",
+									type: "ナレッジ採用",
+									category: "ナレッジ共有",
+									impact: "中",
+									comment: "佐藤が先週の失注理由を共有し、見積前提条件チェックリストを全員で使う提案をした。",
+									evidenceQuote: "先週の失注理由を共有します。見積の前提条件を先にそろえるチェックリストを全員で使うべきです。",
+									confidence: "高",
+								},
+							],
+						}),
 					},
 				],
 			}),
@@ -684,8 +685,10 @@ async function assertMeetingFormatDoesNotCreateEvaluationLogsByDefault() {
 		assert.equal(updates.length, 2);
 	} finally {
 		globalThis.fetch = originalFetch;
-		if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
-		else process.env.OPENAI_API_KEY = originalOpenAiKey;
+		if (originalAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+		else process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+		if (originalWajoAnthropicKey === undefined) delete process.env.WAJO_ANTHROPIC_API_KEY;
+		else process.env.WAJO_ANTHROPIC_API_KEY = originalWajoAnthropicKey;
 	}
 }
 

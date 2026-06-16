@@ -20,7 +20,7 @@ import {
 	reflectSalesContributionLogsToActivityLogsForTest,
 	reflectSpeechLogsToActivityLogsForTest,
 	reflectWaniPoMemoriesToActivityLogsForTest,
-	resolveWajoOpenAiConfigForTest,
+	resolveWajoAnthropicConfigForTest,
 } from "./index";
 
 function title(value: string) {
@@ -266,30 +266,30 @@ async function main() {
 	assert.ok(dryRunPreview.length <= 20);
 
 	assert.deepEqual(
-		resolveWajoOpenAiConfigForTest({
-			WAJO_OPENAI_API_KEY: "wajo-key",
-			OPENAI_API_KEY: "legacy-key",
-			WAJO_OPENAI_MODEL: "wajo-model",
-			OPENAI_MODEL: "legacy-model",
+		resolveWajoAnthropicConfigForTest({
+			WAJO_ANTHROPIC_API_KEY: "wajo-anthropic-key",
+			ANTHROPIC_API_KEY: "legacy-anthropic-key",
+			WAJO_ANTHROPIC_MODEL: "wajo-anthropic-model",
+			ANTHROPIC_MODEL: "legacy-anthropic-model",
 		}),
 		{
-			apiKey: "wajo-key",
-			model: "wajo-model",
+			apiKey: "wajo-anthropic-key",
+			model: "wajo-anthropic-model",
 		},
 	);
 	assert.deepEqual(
-		resolveWajoOpenAiConfigForTest({
-			OPENAI_API_KEY: "legacy-key",
-			OPENAI_MODEL: "legacy-model",
+		resolveWajoAnthropicConfigForTest({
+			ANTHROPIC_API_KEY: "legacy-anthropic-key",
+			ANTHROPIC_MODEL: "legacy-anthropic-model",
 		}),
 		{
-			apiKey: "legacy-key",
-			model: "legacy-model",
+			apiKey: "legacy-anthropic-key",
+			model: "legacy-anthropic-model",
 		},
 	);
-	assert.deepEqual(resolveWajoOpenAiConfigForTest({}), {
+	assert.deepEqual(resolveWajoAnthropicConfigForTest({}), {
 		apiKey: "",
-		model: "gpt-4o-mini",
+		model: "claude-sonnet-4-6",
 	});
 
 	const reviewPatches = buildSalesPerformanceReviewPatchesForTest(

@@ -1469,7 +1469,7 @@ type ProjectProposalRequestResult = ProjectDocumentRequestResult;
 type ProjectEquipmentDetailRequestResult = {
 	projectPageId: string;
 	equipmentPageId: string | null;
-	action: "created" | "existing" | "dry-run";
+	action: "created" | "existing" | "duplicate-hold" | "dry-run";
 	message: string;
 };
 
@@ -4667,6 +4667,7 @@ worker.webhook("processProjectLostApproveWebhook", {
 			await approveProjectLostRequest(projectPageId, notion as unknown as NotionClient, {
 				memo: extractLostMemoFromWebhook(body) || extractManagerActionReasonFromWebhook(body),
 				triggerUserId: extractTriggerUserIdFromWebhook(body),
+				skipManagerGate: true,
 			});
 		}
 	},
@@ -4695,6 +4696,7 @@ worker.webhook("processProjectLostRejectWebhook", {
 			await rejectProjectLostRequest(projectPageId, notion as unknown as NotionClient, {
 				memo: extractLostMemoFromWebhook(body) || extractManagerActionReasonFromWebhook(body),
 				triggerUserId: extractTriggerUserIdFromWebhook(body),
+				skipManagerGate: true,
 			});
 		}
 	},
@@ -6577,6 +6579,8 @@ async function refreshSalesPipelineSignal(
 		const logs = await findCustomerContactLogsForPage(notion, "関連問い合わせ", page.id);
 		const assessment = assessInquiryPipeline(page, logs, nowIso);
 		if (!dryRun) {
+			const status = text(properties["ステータス"]) || "未設定";
+			const hasProject = relationIdsFromProperty(properties["紐づき案件"]).length > 0 || /案件化/.test(status);
 			await safeUpdateExistingProperties(notion, page, {
 				案件化近さ: { kind: "select", value: assessment.proximity },
 				案件化スコア: { kind: "number", value: assessment.score },
@@ -6586,6 +6590,16 @@ async function refreshSalesPipelineSignal(
 				},
 				案件化根拠: { kind: "text", value: assessment.reason },
 				案件化次アクション: { kind: "text", value: assessment.nextAction },
+				営業サマリー: {
+					kind: "text",
+					value: buildPipelineSalesSummary(status, assessment, [
+						`案件化有無: ${hasProject ? "あり" : "なし"}`,
+					]),
+				},
+				次の一手: {
+					kind: "text",
+					value: `次の一手: ${inquiryPipelineDisplayNextAction(hasProject, assessment)}`,
+				},
 				案件化停滞時間: { kind: "number", value: assessment.stagnationHours },
 				案件化停滞日数: { kind: "number", value: assessment.stagnationDays },
 				案件化停滞アラート: { kind: "select", value: assessment.stagnationAlert },
@@ -6612,6 +6626,7 @@ async function refreshSalesPipelineSignal(
 		const logs = await findCustomerContactLogsForPage(notion, "関連案件", page.id);
 		const assessment = assessProjectClosing(page, logs, nowIso);
 		if (!dryRun) {
+			const status = text(properties["ステータス"]) || "未設定";
 			await safeUpdateExistingProperties(notion, page, {
 				成約近さ: { kind: "select", value: assessment.proximity },
 				成約スコア: { kind: "number", value: assessment.score },
@@ -6623,6 +6638,11 @@ async function refreshSalesPipelineSignal(
 				次アクション推奨: { kind: "text", value: assessment.nextAction },
 				成約根拠: { kind: "text", value: assessment.reason },
 				成約次アクション: { kind: "text", value: assessment.nextAction },
+				営業サマリー: {
+					kind: "text",
+					value: buildPipelineSalesSummary(status, assessment),
+				},
+				次の一手: { kind: "text", value: "次の一手: 活動を残す" },
 				成約停滞時間: { kind: "number", value: assessment.stagnationHours },
 				成約停滞日数: { kind: "number", value: assessment.stagnationDays },
 				成約停滞アラート: { kind: "select", value: assessment.stagnationAlert },
@@ -6651,6 +6671,29 @@ async function refreshSalesPipelineSignal(
 		message: "問い合わせDBまたは案件管理DBのページではないため、温度計更新をスキップしました。",
 		assessment: null,
 	};
+}
+
+function buildPipelineSalesSummary(
+	status: string,
+	assessment: PipelineAssessment,
+	extraLines: string[] = [],
+): string {
+	return [
+		`営業状態: ${status}`,
+		...extraLines,
+		`判定: ${assessment.proximity} / ${assessment.score}点`,
+		`推奨フェーズ: ${assessment.recommendedPhase}`,
+		`根拠: ${assessment.reason}`,
+	].join("\n");
+}
+
+function inquiryPipelineDisplayNextAction(
+	hasProject: boolean,
+	assessment: PipelineAssessment,
+): string {
+	if (hasProject) return "設備詳細を作成";
+	if (assessment.score >= 80) return "案件化する";
+	return "活動を残す";
 }
 
 async function findCustomerContactLogsForPage(
@@ -8504,9 +8547,6 @@ async function callOpenAIMeetingMemoFormat(input: {
 	meetingType: string;
 	source: string;
 }): Promise<MeetingMemoAIResponse> {
-	const { apiKey, model } = resolveWajoOpenAiConfig(process.env);
-	if (!apiKey) throw new Error("WAJO_OPENAI_API_KEY / OPENAI_API_KEY が未設定です");
-
 	const systemPrompt = [
 		"あなたは和上ホールディングスのミーティングメモ整形AIです。",
 		"Notion AI Meeting Notes本文またはミーティング本文を読み、ミーティングデータベースのプロパティへ整理します。",
@@ -8562,33 +8602,12 @@ async function callOpenAIMeetingMemoFormat(input: {
 		input.source.slice(0, 12000),
 	].join("\n");
 
-	const response = await fetch("https://api.openai.com/v1/chat/completions", {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			Authorization: `Bearer ${apiKey}`,
-		},
-		body: JSON.stringify({
-			model,
-			temperature: 0,
-			response_format: MEETING_MEMO_RESPONSE_FORMAT,
-			messages: [
-				{ role: "system", content: systemPrompt },
-				{ role: "user", content: userPrompt },
-			],
-		}),
+	const raw = await callAnthropicChat({
+		system: systemPrompt,
+		user: userPrompt,
+		maxTokens: 2000,
+		temperature: 0,
 	});
-
-	if (!response.ok) {
-		const errorText = await response.text();
-		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
-	}
-
-	const json = (await response.json()) as {
-		choices?: Array<{ message?: { content?: string } }>;
-	};
-	const raw = json.choices?.[0]?.message?.content;
-	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
 	return parseMeetingMemoAIResponse(raw);
 }
 
@@ -10500,9 +10519,6 @@ async function callOpenAIMeetingFeedback(input: {
 	meetingType: string;
 	source: string;
 }): Promise<MeetingFeedbackAIResponse> {
-	const { apiKey, model } = resolveWajoOpenAiConfig(process.env);
-	if (!apiKey) throw new Error("WAJO_OPENAI_API_KEY / OPENAI_API_KEY が未設定です");
-
 	const systemPrompt = [
 		"あなたは和上ホールディングスの会議フィードバックAIです。",
 		"会議議事録DBの整形済み内容を読み、次回が良くなる率直なフィードバックを返します。",
@@ -10539,32 +10555,12 @@ async function callOpenAIMeetingFeedback(input: {
 		input.source.slice(0, 12000),
 	].join("\n");
 
-	const response = await fetch("https://api.openai.com/v1/chat/completions", {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			Authorization: `Bearer ${apiKey}`,
-		},
-		body: JSON.stringify({
-			model,
-			response_format: MEETING_FEEDBACK_RESPONSE_FORMAT,
-			messages: [
-				{ role: "system", content: systemPrompt },
-				{ role: "user", content: userPrompt },
-			],
-		}),
+	const raw = await callAnthropicChat({
+		system: systemPrompt,
+		user: userPrompt,
+		maxTokens: 2000,
+		temperature: 0,
 	});
-
-	if (!response.ok) {
-		const errorText = await response.text();
-		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
-	}
-
-	const json = (await response.json()) as {
-		choices?: Array<{ message?: { content?: string } }>;
-	};
-	const raw = json.choices?.[0]?.message?.content;
-	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
 	return parseMeetingFeedbackAIResponse(raw);
 }
 
@@ -10849,10 +10845,6 @@ async function callOpenAIManagerReview(input: {
 	source: string;
 	missing: string[];
 }): Promise<ManagerReviewAIResponse> {
-	const apiKey = process.env.OPENAI_API_KEY;
-	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
-	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
-
 	const systemPrompt = [
 		"あなたは和上ホールディングスの人見さん壁打ち補助AIです。",
 		"マネージャー評価DBの材料を読み、マネージャーが部下評価や1on1で確認すべき論点を返します。",
@@ -10886,32 +10878,12 @@ async function callOpenAIManagerReview(input: {
 		input.source.slice(0, 12000),
 	].join("\n");
 
-	const response = await fetch("https://api.openai.com/v1/chat/completions", {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			Authorization: `Bearer ${apiKey}`,
-		},
-		body: JSON.stringify({
-			model,
-			response_format: MANAGER_REVIEW_RESPONSE_FORMAT,
-			messages: [
-				{ role: "system", content: systemPrompt },
-				{ role: "user", content: userPrompt },
-			],
-		}),
+	const raw = await callAnthropicChat({
+		system: systemPrompt,
+		user: userPrompt,
+		maxTokens: 4000,
+		temperature: 0,
 	});
-
-	if (!response.ok) {
-		const errorText = await response.text();
-		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
-	}
-
-	const json = (await response.json()) as {
-		choices?: Array<{ message?: { content?: string } }>;
-	};
-	const raw = json.choices?.[0]?.message?.content;
-	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
 	return parseManagerReviewAIResponse(raw);
 }
 
@@ -11691,38 +11663,14 @@ function buildSalesPerformanceReviewPrompts(
 async function callOpenAISalesPerformanceReview(
 	input: SalesPerformanceReviewPromptInput,
 ): Promise<SalesPerformanceReviewAIResponse> {
-	const { apiKey, model } = resolveWajoOpenAiConfig(process.env);
-	if (!apiKey) throw new Error("WAJO_OPENAI_API_KEY / OPENAI_API_KEY が未設定です");
-
 	const { systemPrompt, userPrompt } = buildSalesPerformanceReviewPrompts(input);
 
-	const response = await fetch("https://api.openai.com/v1/chat/completions", {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			Authorization: `Bearer ${apiKey}`,
-		},
-		body: JSON.stringify({
-			model,
-			temperature: 0,
-			response_format: SALES_PERFORMANCE_REVIEW_RESPONSE_FORMAT,
-			messages: [
-				{ role: "system", content: systemPrompt },
-				{ role: "user", content: userPrompt },
-			],
-		}),
+	const raw = await callAnthropicChat({
+		system: systemPrompt,
+		user: userPrompt,
+		maxTokens: 4000,
+		temperature: 0,
 	});
-
-	if (!response.ok) {
-		const errorText = await response.text();
-		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
-	}
-
-	const json = (await response.json()) as {
-		choices?: Array<{ message?: { content?: string } }>;
-	};
-	const raw = json.choices?.[0]?.message?.content;
-	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
 	return parseSalesPerformanceReviewAIResponse(raw);
 }
 
@@ -11735,8 +11683,59 @@ function resolveWajoOpenAiConfig(
 	};
 }
 
+function resolveWajoAnthropicConfig(
+	env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+): { apiKey: string; model: string } {
+	return {
+		apiKey: (env.WAJO_ANTHROPIC_API_KEY || env.ANTHROPIC_API_KEY || "").trim(),
+		model: (env.WAJO_ANTHROPIC_MODEL || env.ANTHROPIC_MODEL || "claude-sonnet-4-6").trim(),
+	};
+}
+
+async function callAnthropicChat(input: {
+	system: string;
+	user: string;
+	maxTokens: number;
+	temperature: number;
+}): Promise<string> {
+	const { apiKey, model } = resolveWajoAnthropicConfig(process.env);
+	if (!apiKey) throw new Error("WAJO_ANTHROPIC_API_KEY / ANTHROPIC_API_KEY が未設定です");
+
+	const response = await fetch("https://api.anthropic.com/v1/messages", {
+		method: "POST",
+		headers: {
+			"x-api-key": apiKey,
+			"anthropic-version": "2023-06-01",
+			"content-type": "application/json",
+		},
+		body: JSON.stringify({
+			model,
+			max_tokens: input.maxTokens,
+			system: input.system,
+			messages: [{ role: "user", content: input.user }],
+			temperature: input.temperature,
+		}),
+	});
+
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(`Anthropic API error ${response.status}: ${errorText.slice(0, 200)}`);
+	}
+
+	const json = (await response.json()) as {
+		content?: Array<{ type?: string; text?: string }>;
+	};
+	const raw =
+		json.content?.find((part) => typeof part?.text === "string")?.text ??
+		json.content?.[0]?.text;
+	if (!raw) throw new Error("Anthropic からレスポンスが返りませんでした");
+	return raw;
+}
+
 export {
 	resolveWajoOpenAiConfig as resolveWajoOpenAiConfigForTest,
+	resolveWajoAnthropicConfig as resolveWajoAnthropicConfigForTest,
+	callAnthropicChat as callAnthropicChatForTest,
 	applySalesPerformanceQualitativeGuard as applySalesPerformanceQualitativeGuardForTest,
 	buildSalesPerformanceReviewPrompts as buildSalesPerformanceReviewPromptsForTest,
 	SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT as SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT_FOR_TEST,
@@ -12339,6 +12338,22 @@ async function processProjectEquipmentDetailRequest(
 		projectPage.properties ?? {},
 		PROJECT_EQUIPMENT_DETAIL_RELATION_ALIASES,
 	);
+	if (existingEquipmentIds.length > 1) {
+		const message = `発電所設備詳細が複数紐づいているため、重複作成を止めました: ${projectName}`;
+		if (!input.dryRun) {
+			await createPageComment(
+				notion,
+				projectPage.id,
+				`⚠️ ${message}\n正しい設備詳細を1件に整理してから、再度実行してください。`,
+			);
+		}
+		return {
+			projectPageId: projectPage.id,
+			equipmentPageId: null,
+			action: input.dryRun ? "dry-run" : "duplicate-hold",
+			message,
+		};
+	}
 	if (existingEquipmentIds.length > 0) {
 		const message = `既存の発電所設備詳細があります: ${projectName}`;
 		if (!input.dryRun) {
@@ -12433,26 +12448,13 @@ async function processProjectDocumentRequest(
 	const documentSourcePage = mergeProjectWithEquipmentDetail(projectPage, equipmentPage);
 	const projectName = readGenericPageTitle(projectPage) || "案件";
 	const readiness = evaluateProjectDocumentRequestReadiness(documentSourcePage, kind);
-	if (readiness.missingField) {
-		const message = buildSequentialMissingMessage(
-			kind === "proposal" ? "シミュレーション作成" : "説明会用資料作成",
-			readiness.missingField,
-			readiness.nextRequiredFields,
-		);
-		if (!input.dryRun) {
-			await safeUpdateExistingProperties(notion, projectPage, {
-				資料作成メモ: { kind: "text", value: message },
-				不足項目: { kind: "text", value: readiness.missingField },
-			});
-			await createPageComment(notion, projectPage.id, `⚠️ ${message}`);
-		}
-		return {
-			projectPageId: projectPage.id,
-			requestPageId: null,
-			action: input.dryRun ? "dry-run" : "needs-input",
-			message,
-		};
-	}
+	const missingMessage = readiness.missingField
+		? buildSequentialMissingMessage(
+				kind === "proposal" ? "シミュレーション作成" : "説明会用資料作成",
+				readiness.missingField,
+				readiness.nextRequiredFields,
+			)
+		: "";
 	const existingRequestIds = relationIdsFromProperty(
 		projectPage.properties?.["資料作成依頼"],
 	);
@@ -12488,6 +12490,7 @@ async function processProjectDocumentRequest(
 		};
 	}
 
+	const requestMemo = [config.memo, missingMessage].filter(Boolean).join("\n");
 	const requestPage = await notion.pages.create({
 		parent: { data_source_id: PROPOSAL_REQUEST_DATA_SOURCE_ID },
 		properties: {
@@ -12495,7 +12498,7 @@ async function processProjectDocumentRequest(
 			資料種別: select(config.documentType),
 			[config.statusProperty]: select(config.statusValue),
 			関連案件: relation(projectPage.id),
-			資料作成メモ: richText(config.memo),
+			資料作成メモ: richText(requestMemo),
 			...(config.defaultProperties ?? {}),
 			...readiness.prefillProperties,
 		},
@@ -12508,7 +12511,10 @@ async function processProjectDocumentRequest(
 		資料作成依頼: { kind: "relation", ids: requestIds },
 		資料作成メモ: {
 			kind: "text",
-			value: `${config.createdLabel}を作成しました。${requestUrl}`,
+			value: [
+				`${config.createdLabel}を作成しました。${requestUrl}`,
+				missingMessage,
+			].filter(Boolean).join("\n"),
 		},
 	});
 	await createPageComment(
@@ -12517,6 +12523,7 @@ async function processProjectDocumentRequest(
 		[
 			`📄 ${config.createdLabel}を作成しました: ${requestTitle}`,
 			requestUrl ? `開く: ${requestUrl}` : "",
+			missingMessage ? `不足: ${readiness.missingField}` : "",
 			config.nextActionMessage,
 		].filter(Boolean).join("\n"),
 	);
@@ -12541,18 +12548,14 @@ function evaluateProjectDocumentRequestReadiness(
 		return {
 			missingField: draft.missingField,
 			nextRequiredFields: draft.nextRequiredFields,
-			prefillProperties: draft.missingField
-				? {}
-				: buildProposalRequestPrefillProperties(projectPage, draft),
+			prefillProperties: buildProposalRequestPrefillProperties(projectPage, draft),
 		};
 	}
 	const draft = evaluateResidentDocumentDraft(projectPage);
 	return {
 		missingField: draft.missingField,
 		nextRequiredFields: draft.nextRequiredFields,
-		prefillProperties: draft.missingField
-			? {}
-			: buildResidentRequestPrefillProperties(projectPage),
+		prefillProperties: buildResidentRequestPrefillProperties(projectPage),
 	};
 }
 
@@ -13206,6 +13209,82 @@ async function buildProposalSimulationPdfBytes(
 	return pdf.save();
 }
 
+async function buildResidentDocumentPdfBytes(
+	draft: ResidentDocumentDraft,
+	pageId: string,
+): Promise<Uint8Array> {
+	const pdf = await PDFDocument.create();
+	const font = await pdf.embedFont(StandardFonts.Helvetica);
+	const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+	const sections = [
+		"Cover",
+		"Project Overview",
+		"Notification Method",
+		"Facility Certification",
+		"Operator Change",
+		"Site Location",
+		"Hazard Map",
+		"Target Area",
+		"Reflection Check",
+		"Site Photos",
+		"Question Period",
+		"Contact / Responsibility",
+		"Final Confirmation",
+	];
+	const summary = draft.summaryLines.length > 0 ? draft.summaryLines : ["No summary lines"];
+	for (const [index, section] of sections.entries()) {
+		const page = pdf.addPage([595.28, 841.89]);
+		page.drawRectangle({
+			x: 0,
+			y: page.getHeight() - 86,
+			width: page.getWidth(),
+			height: 86,
+			color: rgb(0.08, 0.16, 0.22),
+		});
+		page.drawText(toPdfSafeText(draft.documentTitle || "Resident Briefing Document"), {
+			x: 42,
+			y: page.getHeight() - 36,
+			size: 16,
+			font: bold,
+			color: rgb(1, 1, 1),
+		});
+		page.drawText(`Page ${index + 1} / 13 / ${section}`, {
+			x: 42,
+			y: page.getHeight() - 58,
+			size: 9,
+			font,
+			color: rgb(0.84, 0.9, 0.88),
+		});
+		page.drawText(toPdfSafeText(section), {
+			x: 42,
+			y: page.getHeight() - 126,
+			size: 14,
+			font: bold,
+			color: rgb(0.08, 0.16, 0.22),
+		});
+		let y = page.getHeight() - 158;
+		for (const line of summary) {
+			page.drawText(toPdfSafeText(line).slice(0, 92), {
+				x: 42,
+				y,
+				size: 10,
+				font,
+				color: rgb(0.12, 0.14, 0.16),
+			});
+			y -= 18;
+			if (y < 72) break;
+		}
+		page.drawText(`Record ID: ${pageId}`, {
+			x: 42,
+			y: 42,
+			size: 8,
+			font,
+			color: rgb(0.38, 0.42, 0.44),
+		});
+	}
+	return pdf.save();
+}
+
 function buildProposalPdfPageOneLines(draft: ProposalSimulationDraft): string[] {
 	if (draft.proposalKind === "gridBattery") {
 		return [
@@ -13637,6 +13716,12 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 		"新所有者",
 	]);
 	const facilityId = readFirstTextByAliases(properties, ["設備ID", "認定設備ID"]);
+	const certifiedOutputKw = readFirstNumberByAliases(properties, [
+		"認定出力kW",
+		"認定出力",
+		"設備認定出力",
+		"設備容量kW",
+	]);
 	const plantLocationImages = readImageFilesByAliases(properties, [
 		"発電所所在地画像",
 		"地図画像",
@@ -13675,6 +13760,7 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 		{ label: "旧認定事業者", value: oldOperator },
 		{ label: "新認定事業者", value: newOperator },
 		{ label: "設備ID", value: facilityId },
+		{ label: "認定出力", value: certifiedOutputKw },
 		{ label: "発電所所在地画像", value: plantLocationImages.length > 0 ? "あり" : "" },
 		{ label: "ハザードマップ", value: hazardMapImages.length > 0 ? "あり" : "" },
 		{ label: "説明会対象エリア画像", value: targetAreaImages.length > 0 ? "あり" : "" },
@@ -13701,6 +13787,7 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 		summaryLines: [
 			`案件番号: ${caseNumber}`,
 			`発電所名: ${plantName}`,
+			`認定出力: ${formatNumberWithUnit(certifiedOutputKw, "kW")}`,
 			`周知方法: ${notifyMethod}`,
 			`質問受付期間: ${questionPeriod}`,
 			`周知日: ${briefingDate}`,
@@ -15290,8 +15377,6 @@ function buildDealMeetingFeedbackPayload(
 async function callOpenAIDealMeetingFeedback(
 	payload: string,
 ): Promise<DealMeetingFeedbackAIResponse> {
-	const { apiKey, model } = resolveWajoOpenAiConfig(process.env);
-	if (!apiKey) throw new Error("WAJO_OPENAI_API_KEY / OPENAI_API_KEY が未設定です");
 	const systemPrompt = [
 		"あなたは和上ホールディングスの商談議事録フィードバックAIです。",
 		"商談管理DBと関連会議議事録を読み、営業マンが次の商談を良くするためのフィードバックを返します。",
@@ -15317,31 +15402,12 @@ async function callOpenAIDealMeetingFeedback(
 		"必ずJSONのみを返してください。",
 	].join("\n");
 
-	const response = await fetch("https://api.openai.com/v1/chat/completions", {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			Authorization: `Bearer ${apiKey}`,
-		},
-		body: JSON.stringify({
-			model,
-			temperature: 0,
-			response_format: DEAL_MEETING_FEEDBACK_RESPONSE_FORMAT,
-			messages: [
-				{ role: "system", content: systemPrompt },
-				{ role: "user", content: payload },
-			],
-		}),
+	const raw = await callAnthropicChat({
+		system: systemPrompt,
+		user: payload,
+		maxTokens: 2000,
+		temperature: 0,
 	});
-	if (!response.ok) {
-		const errorText = await response.text();
-		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
-	}
-	const json = (await response.json()) as {
-		choices?: Array<{ message?: { content?: string } }>;
-	};
-	const raw = json.choices?.[0]?.message?.content;
-	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
 	return parseDealMeetingFeedbackAIResponse(raw);
 }
 
@@ -15578,9 +15644,6 @@ function buildSecondReviewPayload(
 }
 
 async function callOpenAISecondReview(payload: string): Promise<SecondReviewAIResponse> {
-	const { apiKey, model } = resolveWajoOpenAiConfig(process.env);
-	if (!apiKey) throw new Error("WAJO_OPENAI_API_KEY / OPENAI_API_KEY が未設定です");
-
 	const systemPrompt = [
 		"あなたは和上ホールディングスの営業フィードバック二次レビュアーです。",
 		"一次AIが返した営業フィードバックを、営業現場で本当に次の商談に使えるかという観点でレビューしてください。",
@@ -15604,32 +15667,12 @@ async function callOpenAISecondReview(payload: string): Promise<SecondReviewAIRe
 		"キー: quality(良い|要修正|情報不足), summary(文字列), strongPoints(配列), revisionSuggestions(配列), nextTalkUpgrade(文字列), riskNotes(配列), recommendedStatus(レビュー済|要確認)",
 	].join("\n");
 
-	const response = await fetch("https://api.openai.com/v1/chat/completions", {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			Authorization: `Bearer ${apiKey}`,
-		},
-		body: JSON.stringify({
-			model,
-			response_format: SECOND_REVIEW_RESPONSE_FORMAT,
-			messages: [
-				{ role: "system", content: systemPrompt },
-				{ role: "user", content: payload },
-			],
-		}),
+	const raw = await callAnthropicChat({
+		system: systemPrompt,
+		user: payload,
+		maxTokens: 4000,
+		temperature: 0,
 	});
-
-	if (!response.ok) {
-		const errorText = await response.text();
-		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
-	}
-
-	const json = (await response.json()) as {
-		choices?: Array<{ message?: { content?: string } }>;
-	};
-	const raw = json.choices?.[0]?.message?.content;
-	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
 
 	return parseSecondReviewResponse(raw);
 }
@@ -15868,8 +15911,6 @@ function buildDealNextActionPayload(
 async function callOpenAIDealNextActions(
 	payload: string,
 ): Promise<DealNextActionAIResponse> {
-	const { apiKey, model } = resolveWajoOpenAiConfig(process.env);
-	if (!apiKey) throw new Error("WAJO_OPENAI_API_KEY / OPENAI_API_KEY が未設定です");
 	const today = new Date().toISOString().slice(0, 10);
 
 	const systemPrompt = [
@@ -15895,32 +15936,12 @@ async function callOpenAIDealNextActions(
 		"必ずJSONのみを返してください。",
 	].join("\n");
 
-	const response = await fetch("https://api.openai.com/v1/chat/completions", {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			Authorization: `Bearer ${apiKey}`,
-		},
-		body: JSON.stringify({
-			model,
-			temperature: 0,
-			response_format: DEAL_NEXT_ACTION_RESPONSE_FORMAT,
-			messages: [
-				{ role: "system", content: systemPrompt },
-				{ role: "user", content: payload },
-			],
-		}),
+	const raw = await callAnthropicChat({
+		system: systemPrompt,
+		user: payload,
+		maxTokens: 2000,
+		temperature: 0,
 	});
-
-	if (!response.ok) {
-		const errorText = await response.text();
-		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
-	}
-	const json = (await response.json()) as {
-		choices?: Array<{ message?: { content?: string } }>;
-	};
-	const raw = json.choices?.[0]?.message?.content;
-	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
 	return parseDealNextActionAIResponse(raw);
 }
 
@@ -16710,10 +16731,6 @@ function readSalesTalkNews(page: Page): SalesTalkNewsInfo {
 async function callOpenAISalesTalkFinalize(
 	news: SalesTalkNewsInfo,
 ): Promise<SalesTalkFinalizeAIResponse> {
-	const apiKey = process.env.OPENAI_API_KEY;
-	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
-	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
-
 	const systemPrompt = [
 		"あなたは和上ホールディングスの営業トーク整形AIです。",
 		"業界ニュースDBに既に生成された営業トーク本文を読み、営業マンがそのまま使える営業トーク管理DB用の3ネタに分割します。",
@@ -16742,32 +16759,12 @@ async function callOpenAISalesTalkFinalize(
 		news.generatedTalk,
 	].join("\n").slice(0, 12000);
 
-	const response = await fetch("https://api.openai.com/v1/chat/completions", {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			Authorization: `Bearer ${apiKey}`,
-		},
-		body: JSON.stringify({
-			model,
-			temperature: 0,
-			response_format: SALES_TALK_FINALIZE_RESPONSE_FORMAT,
-			messages: [
-				{ role: "system", content: systemPrompt },
-				{ role: "user", content: payload },
-			],
-		}),
+	const raw = await callAnthropicChat({
+		system: systemPrompt,
+		user: payload,
+		maxTokens: 4000,
+		temperature: 0,
 	});
-
-	if (!response.ok) {
-		const errorText = await response.text();
-		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
-	}
-	const json = (await response.json()) as {
-		choices?: Array<{ message?: { content?: string } }>;
-	};
-	const raw = json.choices?.[0]?.message?.content;
-	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
 	return parseSalesTalkFinalizeAIResponse(raw);
 }
 
@@ -20022,7 +20019,7 @@ async function buildMeetingPrepReportWithAI(
 	company: CompanyInfo,
 ): Promise<MeetingPrepReport> {
 	const fallback = buildMeetingPrepReport(company);
-	const apiKey = process.env.OPENAI_API_KEY;
+	const { apiKey } = resolveWajoAnthropicConfig(process.env);
 	if (!apiKey) return fallback;
 	try {
 		return await callOpenAIMeetingPrepReport(company, fallback);
@@ -20036,10 +20033,6 @@ async function callOpenAIMeetingPrepReport(
 	company: CompanyInfo,
 	fallback: MeetingPrepReport,
 ): Promise<MeetingPrepReport> {
-	const apiKey = process.env.OPENAI_API_KEY;
-	if (!apiKey) throw new Error("OPENAI_API_KEY が未設定です");
-	const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
-
 	const systemPrompt = [
 		"あなたは和上ホールディングスの商談準備ブリーフAIです。",
 		"営業マンが商談前にそのまま使える、企業別で具体的な準備レポートを作ります。",
@@ -20085,32 +20078,12 @@ async function callOpenAIMeetingPrepReport(
 		JSON.stringify(fallback),
 	].join("\n");
 
-	const response = await fetch("https://api.openai.com/v1/chat/completions", {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			Authorization: `Bearer ${apiKey}`,
-		},
-		body: JSON.stringify({
-			model,
-			response_format: MEETING_PREP_RESPONSE_FORMAT,
-			messages: [
-				{ role: "system", content: systemPrompt },
-				{ role: "user", content: userPrompt.slice(0, 12000) },
-			],
-		}),
+	const raw = await callAnthropicChat({
+		system: systemPrompt,
+		user: userPrompt.slice(0, 12000),
+		maxTokens: 4000,
+		temperature: 0,
 	});
-
-	if (!response.ok) {
-		const errorText = await response.text();
-		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
-	}
-
-	const json = (await response.json()) as {
-		choices?: Array<{ message?: { content?: string } }>;
-	};
-	const raw = json.choices?.[0]?.message?.content;
-	if (!raw) throw new Error("OpenAI からレスポンスが返りませんでした");
 	return normalizeMeetingPrepAIResponse(raw, fallback);
 }
 
@@ -24402,6 +24375,7 @@ export {
 };
 export {
 	buildProposalSimulationPdfBytes as buildProposalSimulationPdfBytesForTest,
+	buildResidentDocumentPdfBytes as buildResidentDocumentPdfBytesForTest,
 	createDealFeedbackLearningLog as createDealFeedbackLearningLogForTest,
 	createMeetingFeedbackLearningLog as createMeetingFeedbackLearningLogForTest,
 	evaluateProposalSimulationDraft as evaluateProposalSimulationDraftForTest,
@@ -25268,6 +25242,7 @@ type LostActionOptions = {
 	reason?: string;
 	memo?: string;
 	triggerUserId?: string;
+	skipManagerGate?: boolean;
 };
 
 function normalizeLostReasons(reason: string | undefined): string[] {
@@ -25300,6 +25275,18 @@ function buildLostAuditMemo({
 		previousPhase ? `失注前フェーズ: ${previousPhase}` : "",
 		memo ? `メモ: ${memo.slice(0, 500)}` : "",
 	].filter(Boolean).join("\n");
+}
+
+async function blockNonManagerLostAction(
+	notion: NotionClient,
+	pageId: string,
+	options: LostActionOptions,
+	actionLabel: string,
+): Promise<{ action: "blocked"; message: string } | null> {
+	if (options.skipManagerGate || isManagerUser(options.triggerUserId)) return null;
+	const message = `${actionLabel}はマネージャー専用です。MANAGER_USER_IDS に登録されたユーザーで実行してください。`;
+	await createPageComment(notion, pageId, `⛔ ${message}`);
+	return { action: "blocked", message };
 }
 
 function projectLostPreviousPhase(projectPage: Page): string {
@@ -25439,6 +25426,13 @@ async function approveProjectLostRequest(
 	options: LostActionOptions = {},
 ): Promise<{ action: string; message: string }> {
 	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
+	const managerBlock = await blockNonManagerLostAction(
+		notion,
+		projectPage.id,
+		options,
+		"失注承認",
+	);
+	if (managerBlock) return managerBlock;
 	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
 	const currentStatus = text(projectPage.properties?.["失注申請状態"]);
 	if (currentStatus && currentStatus !== "申請中") {
@@ -25494,6 +25488,13 @@ async function rejectProjectLostRequest(
 	options: LostActionOptions = {},
 ): Promise<{ action: string; message: string }> {
 	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
+	const managerBlock = await blockNonManagerLostAction(
+		notion,
+		projectPage.id,
+		options,
+		"失注差し戻し",
+	);
+	if (managerBlock) return managerBlock;
 	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
 	const memo = [
 		`${todayDateJST()} 案件失注申請差し戻し`,
@@ -25524,9 +25525,100 @@ async function rejectProjectLostRequest(
 	};
 }
 
+async function dismissConfirmedProjectLost(
+	projectPageId: string,
+	notion: NotionClient,
+	options: LostActionOptions = {},
+): Promise<{ action: string; message: string }> {
+	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
+	const managerBlock = await blockNonManagerLostAction(
+		notion,
+		projectPage.id,
+		options,
+		"失注済み差し戻し",
+	);
+	if (managerBlock) return managerBlock;
+	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
+	const memo = [
+		`${todayDateJST()} 失注確定後差し戻し`,
+		options.memo ? `理由: ${options.memo.slice(0, 500)}` : "理由: マネージャー確認により再対応が必要",
+	].join("\n");
+	const patches: Record<string, SafePatch> = {
+		ステータス: { kind: "select", value: "⏳ 確認待ち" },
+		失注申請状態: { kind: "select", value: "差し戻し" },
+		失注申請メモ: { kind: "text", value: memo },
+		管理アクション状態: { kind: "select", value: "失注差し戻し" },
+		管理アクション日: { kind: "date", value: todayDateJST() },
+		管理アクションメモ: { kind: "text", value: memo },
+		最終アクション日: { kind: "date", value: todayDateJST() },
+	};
+	await safeUpdateExistingProperties(notion, projectPage, patches);
+	await notifySalesTeam(
+		notion,
+		projectPage.id,
+		[
+			`↩️ 失注済み案件を差し戻しました: ${projectName}`,
+			options.memo ? `マネージャーメモ: ${options.memo}` : "",
+			"案件は `⏳ 確認待ち` に戻しました。担当者は次アクションを確認してください。",
+		].filter(Boolean).join("\n"),
+	);
+	return {
+		action: "lost-dismissed",
+		message: "失注済み案件を差し戻し、確認待ちへ戻しました。",
+	};
+}
+
+async function cancelConfirmedProjectLost(
+	projectPageId: string,
+	notion: NotionClient,
+	options: LostActionOptions = {},
+): Promise<{ action: string; message: string }> {
+	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
+	const managerBlock = await blockNonManagerLostAction(
+		notion,
+		projectPage.id,
+		options,
+		"失注取消",
+	);
+	if (managerBlock) return managerBlock;
+	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
+	const previousPhase = text(projectPage.properties?.["失注前フェーズ"]) || "📋 提案中";
+	const memo = [
+		`${todayDateJST()} 失注取消`,
+		options.memo ? `理由: ${options.memo.slice(0, 500)}` : "理由: マネージャー確認により失注判定を取り消し",
+		`戻し先フェーズ: ${previousPhase}`,
+	].join("\n");
+	const patches: Record<string, SafePatch> = {
+		ステータス: { kind: "select", value: previousPhase },
+		失注申請状態: { kind: "select", value: "取り消し" },
+		失注申請メモ: { kind: "text", value: memo },
+		失注日: { kind: "clear" },
+		管理アクション状態: { kind: "select", value: "失注取り消し" },
+		管理アクション日: { kind: "date", value: todayDateJST() },
+		管理アクションメモ: { kind: "text", value: memo },
+		最終アクション日: { kind: "date", value: todayDateJST() },
+	};
+	await safeUpdateExistingProperties(notion, projectPage, patches);
+	await notifySalesTeam(
+		notion,
+		projectPage.id,
+		[
+			`🔄 失注を取り消しました: ${projectName}`,
+			`戻し先: ${previousPhase}`,
+			options.memo ? `マネージャーメモ: ${options.memo}` : "",
+		].filter(Boolean).join("\n"),
+	);
+	return {
+		action: "lost-cancelled",
+		message: "失注を取り消し、案件を失注前フェーズへ戻しました。",
+	};
+}
+
 export {
 	approveProjectLostRequest as approveProjectLostRequestForTest,
+	cancelConfirmedProjectLost as cancelConfirmedProjectLostForTest,
 	cancelProject as cancelProjectForTest,
+	dismissConfirmedProjectLost as dismissConfirmedProjectLostForTest,
 	dismissProject as dismissProjectForTest,
 	processInquiryLost as processInquiryLostForTest,
 	processProjectLostRequest as processProjectLostRequestForTest,
