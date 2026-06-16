@@ -5611,7 +5611,7 @@ function buildActivityLogFromSpeechLog(
 	const category = text(properties["発言カテゴリ"]);
 	const importance = text(properties["重要度"]);
 	const processingMemo = text(properties["発言処理メモ"]);
-	if ("評価対象" in properties && !checkboxValue(properties["評価対象"])) return null;
+	if ("評価加点候補" in properties && !checkboxValue(properties["評価加点候補"])) return null;
 	const joinedForAuditCheck = [
 		titleText,
 		speechContent,
@@ -6028,7 +6028,7 @@ async function reflectSpeechLogsToActivityLogs(
 					relation: { is_empty: true },
 				},
 				{
-					property: "評価対象",
+					property: "評価加点候補",
 					checkbox: { equals: true },
 				},
 			],
@@ -8909,7 +8909,7 @@ function buildMeetingEvaluationLogCreatePlans(input: {
 			発言内容: richText(buildMeetingSpeechLogContent(candidate, meetingTitle)),
 			発言カテゴリ: select(candidate.category),
 			関連会議: relationIds([input.meetingPage.id]),
-			評価対象: { checkbox: false },
+			評価加点候補: { checkbox: false },
 		};
 		if (meetingDate) createProperties["発言日時"] = { date: { start: meetingDate } };
 		if (singleSalesUserIds.length === 1) {

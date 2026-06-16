@@ -195,7 +195,8 @@ async function main() {
 	assert.match(JSON.stringify(contributionProps.対象営業ユーザー), /sales-1/);
 	assert.match(JSON.stringify(contributionProps.評価反映状態), /未反映/);
 	assert.equal(contributionProps.承認ステータス, undefined);
-	assert.deepEqual(speechProps.評価対象, { checkbox: false });
+	assert.equal(speechProps.評価対象, undefined);
+	assert.deepEqual(speechProps.評価加点候補, { checkbox: false });
 
 	const speechActivity = buildActivityLogFromSpeechLogForTest(
 		{
@@ -205,7 +206,7 @@ async function main() {
 			created_by: { id: "worker" },
 			properties: asRetrievedProperties({
 				...speechProps,
-				評価対象: checkbox(true),
+				評価加点候補: checkbox(true),
 			}),
 		},
 		"meeting-eval-test",
@@ -214,6 +215,19 @@ async function main() {
 	const speechActivityProps = speechActivity.properties as Record<string, unknown>;
 	assert.deepEqual(speechActivityProps.関連発言, relationPayload(["speech-created"]));
 	assert.deepEqual(speechActivityProps.評価対象, { checkbox: true });
+	assert.equal(
+		buildActivityLogFromSpeechLogForTest(
+			{
+				id: "speech-not-approved",
+				properties: asRetrievedProperties({
+					...speechProps,
+					評価加点候補: checkbox(false),
+				}),
+			},
+			"meeting-eval-test",
+		),
+		null,
+	);
 
 	const contributionActivity = buildActivityLogFromSalesContributionLogForTest(
 		{
@@ -427,25 +441,29 @@ async function main() {
 		発言者: people(["sales-1"]),
 		発言日時: date("2026-06-15"),
 		関連活動: relation([]),
-		評価対象: checkbox(true),
+		評価加点候補: checkbox(true),
 	};
 	const speechReflectCreates: Array<Record<string, unknown>> = [];
+	const speechReflectQueries: Array<Record<string, unknown>> = [];
 	const speechReflectResult1 = await reflectSpeechLogsToActivityLogsForTest(
 		{ limit: 10 },
 		{
 			dataSources: {
-				query: async () => ({
-					results: relationIdsFromState(speechState).length === 0
-						? [
-							{
-								id: "speech-once",
-								created_time: "2026-06-15T01:00:00.000Z",
-								created_by: { id: "sales-1" },
-								properties: speechState,
-							},
-						]
-						: [],
-				}),
+				query: async (args: Record<string, unknown>) => {
+					speechReflectQueries.push(args);
+					return {
+						results: relationIdsFromState(speechState).length === 0
+							? [
+								{
+									id: "speech-once",
+									created_time: "2026-06-15T01:00:00.000Z",
+									created_by: { id: "sales-1" },
+									properties: speechState,
+								},
+							]
+							: [],
+					};
+				},
 			},
 			pages: {
 				create: async (args: Record<string, unknown>) => {
@@ -491,6 +509,8 @@ async function main() {
 	assert.equal(speechReflectResult1.created, 1);
 	assert.equal(speechReflectResult2.created, 0);
 	assert.equal(speechReflectCreates.length, 1);
+	assert.match(JSON.stringify(speechReflectQueries[0]!.filter), /評価加点候補/);
+	assert.doesNotMatch(JSON.stringify(speechReflectQueries[0]!.filter), /評価対象/);
 
 	const hashDuplicateCreates: Array<Record<string, unknown>> = [];
 	const hashDuplicateQueries: Array<Record<string, unknown>> = [];
