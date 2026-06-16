@@ -25,8 +25,8 @@ async function main() {
 		`重複検索が「関連ミーティング」をqueryしていない: ${JSON.stringify(queriedProps)}`,
 	);
 	assert.ok(
-		queriedProps.some((p) => p !== "関連会議議事録"),
-		"重複検索が旧名「関連会議議事録」だけに依存している",
+		!queriedProps.includes("関連会議議事録"),
+		"存在しない旧名「関連会議議事録」をqueryしている",
 	);
 
 	// --- タスク作成が「関連ミーティング」relationへ書くこと ---

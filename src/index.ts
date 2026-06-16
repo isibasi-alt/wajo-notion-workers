@@ -9457,26 +9457,17 @@ async function findTeamTasksByMeeting(
 	meetingId: string,
 ): Promise<TeamTaskInfo[]> {
 	// チームトラッカーの実relation名は「関連ミーティング」(2026-06-15 スキーマ裏取り済み)。
-	// 旧名「関連会議議事録」を持つレガシーDBにもフォールバックし、両名を独立queryして
-	// 結合・重複排除する。存在しない列名のqueryは property not found で投げるため名前ごとにtry/catch。
-	const relationNames = ["関連ミーティング", "関連会議議事録"];
-	const collected: TeamTaskInfo[] = [];
-	for (const property of relationNames) {
-		try {
-			const response = await notion.dataSources.query({
-				data_source_id: TEAM_TRACKER_DATA_SOURCE_ID,
-				page_size: 50,
-				filter: {
-					property,
-					relation: { contains: meetingId },
-				},
-			});
-			collected.push(...response.results.map(readTeamTaskInfo));
-		} catch (error) {
-			console.log("meeting task lookup skipped", { property, error: String(error) });
-		}
-	}
-	return dedupeTeamTasks(collected);
+	// 旧名「関連会議議事録」は現schemaに存在しないためqueryしない。Notion clientが
+	// validation warningを出し、正常runを赤く見せるため。
+	const response = await notion.dataSources.query({
+		data_source_id: TEAM_TRACKER_DATA_SOURCE_ID,
+		page_size: 50,
+		filter: {
+			property: "関連ミーティング",
+			relation: { contains: meetingId },
+		},
+	});
+	return dedupeTeamTasks(response.results.map(readTeamTaskInfo));
 }
 
 function dedupeTeamTasks(tasks: TeamTaskInfo[]): TeamTaskInfo[] {
