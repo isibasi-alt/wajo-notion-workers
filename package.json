@@ -22,6 +22,7 @@
 		"test:feedback-ai-learning-log": "tsx src/feedback-ai-learning-log.test.ts",
 		"test:gmail-inquiry-intake": "tsx src/gmail-inquiry-intake.test.ts",
 		"test:hitomi-evaluation-system": "tsx src/hitomi-evaluation-system.test.ts",
+		"test:sales-performance-quantitative-score": "tsx src/sales-performance-quantitative-score.test.ts",
 		"test:sales-performance-fabrication-guard": "tsx src/sales-performance-fabrication-guard.test.ts",
 		"test:inquiry-title-cleanup": "tsx src/inquiry-title-cleanup.test.ts",
 		"test:inquiry-assign-owner": "tsx src/inquiry-assign-owner.test.ts",

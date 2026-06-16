@@ -11110,21 +11110,7 @@ function isAuditOrTestPerformance(
 function buildSalesPerformanceReviewSource(
 	properties: Record<string, unknown>,
 ): string {
-	const numberLines = [
-		["売上目標", numberValue(properties["売上目標"])],
-		["実績売上額", numberValue(properties["実績売上額"])],
-		["粗利目標", numberValue(properties["粗利目標"])],
-		["実績粗利額", numberValueAny(properties, ["実績粗利額（自動）", "実績粗利額"])],
-		["粗利達成率", numberValue(properties["粗利達成率"])],
-		["商談件数", numberValue(properties["商談件数"])],
-		["成約件数", numberValueAny(properties, ["成約件数（自動）", "成約件数"])],
-		["案件化件数", numberValue(properties["案件化件数"])],
-		["仕入れ件数", numberValue(properties["仕入れ件数"])],
-		["仕入れ金額", numberValue(properties["仕入れ金額"])],
-		["専売許可件数", numberValue(properties["専売許可件数"])],
-	]
-		.filter(([, value]) => typeof value === "number")
-		.map(([label, value]) => `${label}: ${value}`);
+	const quantitativeScore = computeSalesPerformanceQuantitativeScore(properties);
 	const textLines = [
 		["評価名", text(properties["評価名"])],
 		["対象期間", text(properties["対象期間"])],
@@ -11146,13 +11132,263 @@ function buildSalesPerformanceReviewSource(
 	].filter(Boolean);
 	return [
 		dates.join("\n"),
-		numberLines.length > 0
-			? `【定量評価（実績）｜65点】\n営業の実績数字のみを読む。\n${numberLines.join("\n")}`
-			: "",
+		`【定量評価（実績）｜65点】\nAIは定量65点を付け直さない。以下はWorker計算済みの点数・内訳・達成率・生値。\n${buildSalesPerformanceQuantitativeScoreLines(quantitativeScore).join("\n")}`,
 		textLines.join("\n\n"),
 	]
 		.filter(Boolean)
 		.join("\n\n");
+}
+
+type SalesPerformanceQuantitativeScoreKey =
+	| "粗利"
+	| "成約"
+	| "仕入れ"
+	| "商談"
+	| "案件化"
+	| "専売";
+
+type SalesPerformanceQuantitativeScoreDetail = {
+	label: SalesPerformanceQuantitativeScoreKey;
+	weight: number;
+	score: number;
+	achievementRate: number | null;
+	clippedAchievementRate: number;
+	rateSource: string;
+	actual: number | null;
+	target: number | null;
+	actualLabel: string;
+	targetLabel: string;
+	detail: string;
+};
+
+type SalesPerformanceQuantitativeScore = Record<
+	SalesPerformanceQuantitativeScoreKey,
+	number
+> & {
+	合計: number;
+	details: Record<
+		SalesPerformanceQuantitativeScoreKey,
+		SalesPerformanceQuantitativeScoreDetail
+	>;
+};
+
+type SalesPerformanceQuantitativeItem = {
+	key: SalesPerformanceQuantitativeScoreKey;
+	weight: number;
+	rateAliases: string[];
+	actualAliases: string[];
+	targetAliases: string[];
+	actualLabel: string;
+	targetLabel: string;
+};
+
+const SALES_PERFORMANCE_QUANTITATIVE_ITEMS: SalesPerformanceQuantitativeItem[] = [
+	{
+		key: "粗利",
+		weight: 25,
+		rateAliases: [
+			"月次粗利達成率（申請連動）",
+			"粗利達成率（自動）",
+			"粗利達成率（グラフ用）",
+			"粗利達成率",
+		],
+		actualAliases: ["実績粗利額（自動）", "実績粗利額"],
+		targetAliases: ["粗利目標（申請DB）", "粗利目標", "目標粗利額"],
+		actualLabel: "実績粗利額",
+		targetLabel: "粗利目標",
+	},
+	{
+		key: "成約",
+		weight: 12,
+		rateAliases: ["月次成約達成率（申請連動）", "成約達成率（自動）", "成約達成率"],
+		actualAliases: ["成約件数（自動）", "成約件数"],
+		targetAliases: ["成約件数目標（申請DB）", "成約目標", "目標成約件数"],
+		actualLabel: "成約件数",
+		targetLabel: "成約件数目標",
+	},
+	{
+		key: "仕入れ",
+		weight: 10,
+		rateAliases: [
+			"月次仕入れ件数達成率（申請連動）",
+			"仕入れ達成率（自動）",
+			"仕入れ達成率",
+		],
+		actualAliases: ["仕入れ件数"],
+		targetAliases: ["仕入れ件数目標（申請DB）", "仕入れ目標", "目標仕入れ件数"],
+		actualLabel: "仕入れ件数",
+		targetLabel: "仕入れ件数目標",
+	},
+	{
+		key: "商談",
+		weight: 8,
+		rateAliases: ["月次商談達成率（申請連動）", "商談達成率（自動）", "商談達成率"],
+		actualAliases: ["商談件数（自動）", "商談件数"],
+		targetAliases: ["商談件数目標（申請DB）", "商談目標", "目標商談件数"],
+		actualLabel: "商談件数",
+		targetLabel: "商談件数目標",
+	},
+	{
+		key: "案件化",
+		weight: 6,
+		rateAliases: [],
+		actualAliases: ["案件化件数"],
+		targetAliases: ["問い合わせ数（自動）", "問い合わせ数", "問い合わせ件数"],
+		actualLabel: "案件化件数",
+		targetLabel: "問い合わせ数",
+	},
+	{
+		key: "専売",
+		weight: 4,
+		rateAliases: [
+			"月次専売許可達成率（申請連動）",
+			"専売許可達成率（自動）",
+			"専売許可達成率",
+		],
+		actualAliases: ["専売許可件数"],
+		targetAliases: ["専売許可件数目標（申請DB）", "専売許可目標", "目標専売許可件数"],
+		actualLabel: "専売許可件数",
+		targetLabel: "専売許可件数目標",
+	},
+];
+
+function computeSalesPerformanceQuantitativeScore(
+	properties: Record<string, unknown>,
+): SalesPerformanceQuantitativeScore {
+	const base: SalesPerformanceQuantitativeScore = {
+		粗利: 0,
+		成約: 0,
+		仕入れ: 0,
+		商談: 0,
+		案件化: 0,
+		専売: 0,
+		合計: 0,
+		details: {} as Record<
+			SalesPerformanceQuantitativeScoreKey,
+			SalesPerformanceQuantitativeScoreDetail
+		>,
+	};
+
+	for (const item of SALES_PERFORMANCE_QUANTITATIVE_ITEMS) {
+		const detail = computeSalesPerformanceQuantitativeItem(properties, item);
+		base[item.key] = detail.score;
+		base.details[item.key] = detail;
+		base.合計 += detail.score;
+	}
+
+	return base;
+}
+
+function computeSalesPerformanceQuantitativeItem(
+	properties: Record<string, unknown>,
+	item: SalesPerformanceQuantitativeItem,
+): SalesPerformanceQuantitativeScoreDetail {
+	const rate = readSalesPerformanceAchievementRate(properties, item);
+	const achievementRate =
+		typeof rate.achievementRate === "number" && Number.isFinite(rate.achievementRate)
+			? rate.achievementRate
+			: null;
+	const clippedAchievementRate =
+		achievementRate === null ? 0 : Math.min(Math.max(achievementRate, 0), 1);
+	const score = Math.round(clippedAchievementRate * item.weight);
+	const sourceCandidates = [
+		...(item.rateAliases.length > 0 ? [item.rateAliases.join(" / ")] : []),
+		`${item.actualLabel}/${item.targetLabel}`,
+	].join(" または ");
+	const detail =
+		achievementRate === null
+			? `未取得: ${sourceCandidates} を取得できません`
+			: `取得: ${rate.rateSource}`;
+	return {
+		label: item.key,
+		weight: item.weight,
+		score,
+		achievementRate,
+		clippedAchievementRate,
+		rateSource: rate.rateSource,
+		actual: rate.actual,
+		target: rate.target,
+		actualLabel: item.actualLabel,
+		targetLabel: item.targetLabel,
+		detail,
+	};
+}
+
+function readSalesPerformanceAchievementRate(
+	properties: Record<string, unknown>,
+	item: SalesPerformanceQuantitativeItem,
+): {
+	achievementRate: number | null;
+	rateSource: string;
+	actual: number | null;
+	target: number | null;
+} {
+	const actual = numberValueAnyWithSource(properties, item.actualAliases);
+	const target = numberValueAnyWithSource(properties, item.targetAliases);
+	const formulaRate = numberValueAnyWithSource(properties, item.rateAliases);
+	if (formulaRate.value !== null) {
+		return {
+			achievementRate: formulaRate.value,
+			rateSource: formulaRate.name,
+			actual: actual.value,
+			target: target.value,
+		};
+	}
+	if (actual.value !== null && target.value !== null && target.value > 0) {
+		return {
+			achievementRate: actual.value / target.value,
+			rateSource: `${actual.name} / ${target.name}`,
+			actual: actual.value,
+			target: target.value,
+		};
+	}
+	return {
+		achievementRate: null,
+		rateSource: "",
+		actual: actual.value,
+		target: target.value,
+	};
+}
+
+function numberValueAnyWithSource(
+	properties: Record<string, unknown>,
+	names: string[],
+): { value: number | null; name: string } {
+	for (const name of names) {
+		const value = numberValue(properties[name]);
+		if (typeof value === "number" && Number.isFinite(value)) {
+			return { value, name };
+		}
+	}
+	return { value: null, name: "" };
+}
+
+function buildSalesPerformanceQuantitativeScoreLines(
+	score: SalesPerformanceQuantitativeScore,
+): string[] {
+	return [
+		`合計: ${score.合計}/65点`,
+		...SALES_PERFORMANCE_QUANTITATIVE_ITEMS.map((item) =>
+			buildSalesPerformanceQuantitativeScoreLine(score.details[item.key]),
+		),
+	];
+}
+
+function buildSalesPerformanceQuantitativeScoreLine(
+	detail: SalesPerformanceQuantitativeScoreDetail,
+): string {
+	const source = detail.rateSource || detail.detail;
+	return `${detail.label}: ${detail.score}/${detail.weight}点（達成率: ${formatQuantitativeRate(detail.achievementRate)} / クリップ後: ${formatQuantitativeRate(detail.clippedAchievementRate)} / ${detail.actualLabel}: ${formatQuantitativeNumber(detail.actual)} / ${detail.targetLabel}: ${formatQuantitativeNumber(detail.target)} / 参照: ${source}）`;
+}
+
+function formatQuantitativeRate(value: number | null): string {
+	if (value === null || !Number.isFinite(value)) return "未取得";
+	return `${Math.round(value * 1000) / 10}%`;
+}
+
+function formatQuantitativeNumber(value: number | null): string {
+	if (value === null || !Number.isFinite(value)) return "未取得";
+	return String(value);
 }
 
 function buildSalesPerformanceEvaluationSource(input: {
@@ -11169,7 +11405,7 @@ function buildSalesPerformanceEvaluationSource(input: {
 
 function buildSalesPerformanceDryRunPreview(source: string): string[] {
 	const importantLinePattern =
-		/^(売上目標|実績売上額|粗利目標|実績粗利額|粗利達成率|商談件数|成約件数|案件化件数|仕入れ件数|仕入れ金額|専売許可件数):/;
+		/^(合計|粗利|成約|仕入れ|商談|案件化|専売): .+\/\d+点/;
 	return source
 		.split(/\n+/)
 		.map((line) => line.trim())
@@ -11439,6 +11675,7 @@ export {
 	buildSalesPerformanceEvaluationSource as buildSalesPerformanceEvaluationSourceForTest,
 	buildSalesPerformanceDryRunPreview as buildSalesPerformanceDryRunPreviewForTest,
 	buildSalesPerformanceReviewSource as buildSalesPerformanceReviewSourceForTest,
+	computeSalesPerformanceQuantitativeScore as computeSalesPerformanceQuantitativeScoreForTest,
 	buildSalesPerformanceRelatedSource as buildSalesPerformanceRelatedSourceForTest,
 	buildSalesPerformanceRelatedSourceWithStats as buildSalesPerformanceRelatedSourceWithStatsForTest,
 	buildSalesPerformanceReviewPatches as buildSalesPerformanceReviewPatchesForTest,
@@ -11637,6 +11874,7 @@ function buildSalesPerformanceReviewPrompts(
 		"- 総合スコアを新規採点しない",
 		"- 評価ランクを新規確定しない",
 		"- 評価ステータスを確定にしない",
+		"- 定量評価（実績）65点はWorkerがコード計算済み。提示された定量内訳をそのまま使い、AIが点を付け直さない",
 		"- 給与、報酬、昇格、処遇判断をしない",
 		"- テスト/監査除外データを本番評価根拠にしない",
 		"- 人格評価をしない",
@@ -11649,11 +11887,11 @@ function buildSalesPerformanceReviewPrompts(
 			? [
 					"- 定性評価対象ログ（貢献ログ・顧客接点ログ・発言ログ）は0件。定性評価を行わない",
 					"- actionGuidance と contributionView には定性評価文を書かず「データ不足のため評価不可」とだけ書く",
-					"- 定量評価は営業の実績数字だけを見る。売上、粗利、達成率、商談件数、成約件数、案件化件数、仕入れ件数、仕入れ金額など",
+					"- 定量評価は提示されたWorker計算済み内訳を根拠にコメントだけ書く。点数や配点を変更しない",
 				]
 			: [
-					"- 評価は二軸で見る。定量評価（実績）65点、定性評価（活動ログ）35点を基本配分にする",
-					"- 定量評価は営業の実績数字だけを見る。売上、粗利、達成率、商談件数、成約件数、案件化件数、仕入れ件数、仕入れ金額など",
+					"- 評価は二軸で見る。定量評価（実績）65点はWorker計算済み、定性評価（活動ログ）35点は活動ログから見る",
+					"- 定量評価は提示されたWorker計算済み内訳を根拠にコメントだけ書く。点数や配点を変更しない",
 					"- 定性評価は活動ログDBに集約された貢献ログ、顧客接点ログ、発言ログだけを見る",
 					"- 行動評価と貢献評価は、定性評価の確認論点としてマネージャー面談に落とす",
 				]),
