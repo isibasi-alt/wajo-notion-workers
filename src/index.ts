@@ -5382,6 +5382,69 @@ worker.webhook("processProjectWallHitWebhook", {
 	},
 });
 
+worker.webhook("processMultiAgentCommanderRunWebhook", {
+	title: "マルチエージェント基盤 Commander発火Webhook",
+	description:
+		"マルチエージェント基盤 Mission DBの「Commander Run」ボタンから起動。Anthropic Claude（既定 claude-opus-4-7）でCommander応答を生成し、Final Answer列に書き戻す。F1最小通電フェーズ・自己ブートストラップ用。設計図正本: 20_Project/マルチエージェント基盤/_F1_最小通電設計.md",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const missionPageId = extractWebhookPageId(body);
+			if (!missionPageId) {
+				throw new Error(
+					"pageId / entity.id のいずれからもMissionページIDを特定できませんでした。",
+				);
+			}
+			await processMultiAgentCommanderRun(
+				missionPageId,
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processMultiAgentAgentARunWebhook", {
+	title: "マルチエージェント基盤 AgentA発火Webhook",
+	description:
+		"マルチエージェント基盤 Tasks DBの「AgentA Run」ボタンから起動。AgentA（実行担当）がTaskを実行し、Result列に書き戻す。F2最小通電フェーズ。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const taskPageId = extractWebhookPageId(body);
+			if (!taskPageId) {
+				throw new Error(
+					"pageId / entity.id のいずれからもTaskページIDを特定できませんでした。",
+				);
+			}
+			await processMultiAgentAgentARun(
+				taskPageId,
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processMultiAgentAgentBRunWebhook", {
+	title: "マルチエージェント基盤 AgentB(Skeptic)発火Webhook",
+	description:
+		"マルチエージェント基盤 Tasks DBの「AgentB Run」ボタンから起動。AgentB（Skeptic役）がAgentA応答を疑い役として検証し、AgentB Review列に書き戻す。F3。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const taskPageId = extractWebhookPageId(body);
+			if (!taskPageId) {
+				throw new Error(
+					"pageId / entity.id のいずれからもTaskページIDを特定できませんでした。",
+				);
+			}
+			await processMultiAgentAgentBRun(
+				taskPageId,
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
 // ────────────────────────────────────────────────────────────────────────────
 
 async function processBusinessCard(
@@ -26894,3 +26957,718 @@ async function processProjectWallHit(
 
 // ノルマ申請書への成約自動紐付け（linkUnclaimedClosingsToQuota）は、退役webhook
 // processMonthlyQuotaLinkWebhook の削除（2026-06-12）に伴い呼び出し元ゼロとなったため削除した。
+
+// ────────────────────────────────────────────────────────────────────────────
+// マルチエージェント基盤（F1：最小通電）
+// 設計図正本: 20_Project/マルチエージェント基盤/_F1_最小通電設計.md
+// 発火Webhook: processMultiAgentCommanderRunWebhook
+// ────────────────────────────────────────────────────────────────────────────
+
+const MULTI_AGENT_COMMANDER_SYSTEM_PROMPT = `あなたは石橋大右（和上ホールディングス代表）のマルチエージェント基盤の「Commander（司令塔）」です。
+
+最大責務は、本来のプロジェクトの意味（Project Why）を見失わないこと。
+
+毎回の応答で以下を確認：
+1. この判断は Project Why に沿っているか
+2. 小タスクの達成が目的化していないか
+3. 目の前の問題解決が、本来の勝ち筋を壊していないか
+4. 石橋大右さんの判断軸に反していないか
+5. 進めるべきか、立ち止まるべきか
+
+応答には必ず以下を含める：
+- 今回の判断
+- その理由
+- Project Why との整合
+- 次の一手
+
+応答は日本語。お伺い締め（「次に進めるならGOくれたら」式）禁止。`;
+
+async function callMultiAgentCommanderClaude(input: {
+	system: string;
+	user: string;
+	maxTokens: number;
+}): Promise<string> {
+	const apiKey = (
+		process.env.WAJO_ANTHROPIC_API_KEY ||
+		process.env.ANTHROPIC_API_KEY ||
+		""
+	).trim();
+	const model = (
+		process.env.WAJO_MULTI_AGENT_COMMANDER_MODEL ||
+		process.env.COMMANDER_MODEL ||
+		"claude-opus-4-7"
+	).trim();
+	if (!apiKey) {
+		throw new Error(
+			"WAJO_ANTHROPIC_API_KEY / ANTHROPIC_API_KEY が未設定です（Commander呼出に必要）",
+		);
+	}
+
+	const response = await fetch("https://api.anthropic.com/v1/messages", {
+		method: "POST",
+		headers: {
+			"x-api-key": apiKey,
+			"anthropic-version": "2023-06-01",
+			"content-type": "application/json",
+		},
+		body: JSON.stringify({
+			model,
+			max_tokens: input.maxTokens,
+			system: input.system,
+			messages: [{ role: "user", content: input.user }],
+		}),
+	});
+
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(
+			`Anthropic API error ${response.status}: ${errorText.slice(0, 200)}`,
+		);
+	}
+
+	const json = (await response.json()) as {
+		content?: Array<{ type?: string; text?: string }>;
+	};
+	const raw =
+		json.content?.find((part) => typeof part?.text === "string")?.text ??
+		json.content?.[0]?.text;
+	if (!raw) throw new Error("Anthropic からレスポンスが返りませんでした");
+	return raw;
+}
+
+function extractMultiAgentPlainText(prop: unknown): string {
+	if (!prop || typeof prop !== "object") return "";
+	const p = prop as Record<string, unknown>;
+	if (p.type === "title") {
+		const arr = Array.isArray(p.title) ? (p.title as Array<Record<string, unknown>>) : [];
+		return arr.map((t) => (typeof t?.plain_text === "string" ? t.plain_text : "")).join("");
+	}
+	if (p.type === "rich_text") {
+		const arr = Array.isArray(p.rich_text)
+			? (p.rich_text as Array<Record<string, unknown>>)
+			: [];
+		return arr.map((t) => (typeof t?.plain_text === "string" ? t.plain_text : "")).join("");
+	}
+	if (p.type === "select") {
+		const sel = p.select as Record<string, unknown> | null | undefined;
+		return typeof sel?.name === "string" ? sel.name : "";
+	}
+	return "";
+}
+
+const MULTI_AGENT_TASKS_DATA_SOURCE_ID =
+	process.env.WAJO_MULTI_AGENT_TASKS_DATA_SOURCE_ID ||
+	"9d14741a-d630-4658-932d-7d842f943901";
+
+const MULTI_AGENT_DISCUSSIONS_DATA_SOURCE_ID =
+	process.env.WAJO_MULTI_AGENT_DISCUSSIONS_DATA_SOURCE_ID ||
+	"fbbc1257-3144-4725-8338-f376dac4f934";
+
+async function recordMultiAgentDiscussionEntry(
+	notion: NotionClient,
+	params: {
+		missionPageId: string;
+		taskPageId?: string | null;
+		speaker: "Commander" | "AgentA" | "AgentB";
+		content: string;
+		turn: number;
+	},
+): Promise<void> {
+	try {
+		const now = new Date();
+		const datePart = now.toISOString().slice(0, 10).replace(/-/g, "");
+		const timePart = now
+			.toISOString()
+			.slice(11, 19)
+			.replace(/:/g, "");
+		const discussionId = `D-${datePart}-${timePart}-${params.speaker}`;
+
+		const properties: Record<string, unknown> = {
+			"Discussion ID": {
+				title: [{ type: "text", text: { content: discussionId } }],
+			},
+			"Mission": { relation: [{ id: params.missionPageId }] },
+			"Speaker": { select: { name: params.speaker } },
+			"Content": {
+				rich_text: [
+					{
+						type: "text",
+						text: { content: params.content.slice(0, 1990) },
+					},
+				],
+			},
+			"Discussion Status": { select: { name: "Open" } },
+			"Turn": { number: params.turn },
+		};
+
+		if (params.taskPageId) {
+			properties["Linked Task"] = {
+				relation: [{ id: params.taskPageId }],
+			};
+		}
+
+		await notion.pages.create({
+			parent: { data_source_id: MULTI_AGENT_DISCUSSIONS_DATA_SOURCE_ID },
+			properties,
+		});
+	} catch (err) {
+		console.warn(
+			`[multi-agent] recordMultiAgentDiscussionEntry failed (non-fatal): ${String(err)}`,
+		);
+	}
+}
+
+function extractNextTaskInstructionFromCommanderAnswer(
+	answer: string,
+): string | null {
+	const patterns = [
+		/##\s*次の一手\s*\n([\s\S]*?)(?=\n##\s|\n---|\n#\s|$)/,
+		/##\s*次のタスク\s*\n([\s\S]*?)(?=\n##\s|\n---|\n#\s|$)/,
+		/##\s*次のアクション\s*\n([\s\S]*?)(?=\n##\s|\n---|\n#\s|$)/,
+	];
+	for (const re of patterns) {
+		const m = answer.match(re);
+		if (m && m[1]) {
+			const text = m[1].trim();
+			if (text.length >= 10) return text;
+		}
+	}
+	return null;
+}
+
+async function createTaskFromCommanderAnswer(
+	notion: NotionClient,
+	missionPageId: string,
+	instruction: string,
+): Promise<string | null> {
+	const now = new Date();
+	const datePart = now.toISOString().slice(0, 10).replace(/-/g, "");
+	const timePart = now
+		.toISOString()
+		.slice(11, 19)
+		.replace(/:/g, "");
+	const taskId = `T-${datePart}-${timePart}-auto`;
+
+	const created = (await notion.pages.create({
+		parent: { data_source_id: MULTI_AGENT_TASKS_DATA_SOURCE_ID },
+		properties: {
+			"Task ID": {
+				title: [{ type: "text", text: { content: taskId } }],
+			},
+			"Mission": { relation: [{ id: missionPageId }] },
+			"Instruction": {
+				rich_text: [
+					{
+						type: "text",
+						text: { content: instruction.slice(0, 1900) },
+					},
+				],
+			},
+			"Assigned To": { select: { name: "AgentA" } },
+			"Task Status": { select: { name: "Pending" } },
+		},
+	})) as unknown as { id?: string };
+
+	return created.id ?? null;
+}
+
+async function processMultiAgentCommanderRun(
+	missionPageId: string,
+	notion: NotionClient,
+): Promise<void> {
+	console.log(`[multi-agent] Commander start: ${missionPageId}`);
+
+	const page = (await notion.pages.retrieve({ page_id: missionPageId })) as unknown as {
+		properties?: Record<string, unknown>;
+	};
+	const props = (page.properties ?? {}) as Record<string, unknown>;
+
+	const title =
+		extractMultiAgentPlainText(props["Title"]) ||
+		extractMultiAgentPlainText(props["Name"]) ||
+		extractMultiAgentPlainText(props["名前"]);
+	const projectName = extractMultiAgentPlainText(props["Project Name"]);
+	const projectWhy = extractMultiAgentPlainText(props["Project Why"]);
+	const contextSummary = extractMultiAgentPlainText(props["Context Summary"]);
+	const successCriteria = extractMultiAgentPlainText(props["Success Criteria"]);
+
+	const nowIso = new Date().toISOString();
+
+	try {
+		await notion.pages.update({
+			page_id: missionPageId,
+			properties: {
+				"Mission Status": { select: { name: "Running" } },
+				"Last Action At": { date: { start: nowIso } },
+			},
+		});
+	} catch (err) {
+		console.warn(
+			`[multi-agent] Failed to set Mission Status=Running: ${String(err)}`,
+		);
+	}
+
+	const userPrompt = [
+		"# Mission",
+		`- Title: ${title || "(未入力)"}`,
+		`- Project Name: ${projectName || "(未入力)"}`,
+		"",
+		"# Project Why（本来目的）",
+		projectWhy || "(未入力)",
+		"",
+		"# Context Summary（背景）",
+		contextSummary || "(未入力)",
+		"",
+		"# Success Criteria（成功条件）",
+		successCriteria || "(未入力)",
+		"",
+		"---",
+		"このMissionに対してCommanderとして応答せよ。設計図v4 §11.2 の出力ルールに従い、『今回の判断／その理由／Project Why との整合／次の一手』を必ず含める。",
+	].join("\n");
+
+	let finalAnswer: string;
+	try {
+		finalAnswer = await callMultiAgentCommanderClaude({
+			system: MULTI_AGENT_COMMANDER_SYSTEM_PROMPT,
+			user: userPrompt,
+			maxTokens: 4096,
+		});
+	} catch (err) {
+		console.error(`[multi-agent] Anthropic call failed: ${String(err)}`);
+		await notion.pages.update({
+			page_id: missionPageId,
+			properties: {
+				"Mission Status": { select: { name: "Error" } },
+				"Final Answer": {
+					rich_text: [
+						{
+							type: "text",
+							text: {
+								content: `Commander failed: ${String(err).slice(0, 1900)}`,
+							},
+						},
+					],
+				},
+				"Last Action At": { date: { start: new Date().toISOString() } },
+			},
+		});
+		throw err;
+	}
+
+	const truncated =
+		finalAnswer.length > 1990 ? finalAnswer.slice(0, 1990) + "…" : finalAnswer;
+
+	await notion.pages.update({
+		page_id: missionPageId,
+		properties: {
+			"Final Answer": {
+				rich_text: [{ type: "text", text: { content: truncated } }],
+			},
+			"Mission Status": { select: { name: "Completed" } },
+			"Last Action At": { date: { start: new Date().toISOString() } },
+		},
+	});
+
+	console.log(
+		`[multi-agent] Commander completed: ${missionPageId} (${finalAnswer.length} chars)`,
+	);
+
+	// F4: Commander応答をDiscussion DBにturn=1で記録
+	await recordMultiAgentDiscussionEntry(notion, {
+		missionPageId,
+		speaker: "Commander",
+		content: finalAnswer,
+		turn: 1,
+	});
+
+	// F2.5 自動連鎖：Commander応答の「次の一手」セクションからTaskを自動起票し、
+	// 同期でAgentAを実行する。失敗してもCommander本体は成功扱い（警告のみ）。
+	const nextInstruction = extractNextTaskInstructionFromCommanderAnswer(finalAnswer);
+	if (nextInstruction) {
+		try {
+			console.log(`[multi-agent] Auto-chain: creating Task from Commander answer`);
+			const newTaskPageId = await createTaskFromCommanderAnswer(
+				notion,
+				missionPageId,
+				nextInstruction,
+			);
+			if (newTaskPageId) {
+				console.log(
+					`[multi-agent] Auto-chain: invoking AgentA on ${newTaskPageId}`,
+				);
+				await processMultiAgentAgentARun(newTaskPageId, notion);
+				// F3: AgentA完了直後にAgentB（Skeptic）も自動実行
+				try {
+					console.log(
+						`[multi-agent] Auto-chain: invoking AgentB on ${newTaskPageId}`,
+					);
+					await processMultiAgentAgentBRun(newTaskPageId, notion);
+				} catch (agentBErr) {
+					console.warn(
+						`[multi-agent] AgentB auto-chain failed (non-fatal): ${String(agentBErr)}`,
+					);
+				}
+			}
+		} catch (chainErr) {
+			console.warn(
+				`[multi-agent] Auto-chain failed (non-fatal): ${String(chainErr)}`,
+			);
+		}
+	} else {
+		console.log(
+			`[multi-agent] Auto-chain: no 「次の一手」section found in answer`,
+		);
+	}
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// マルチエージェント基盤 F2: AgentA（実行担当）
+// ────────────────────────────────────────────────────────────────────────────
+
+const MULTI_AGENT_AGENT_A_SYSTEM_PROMPT = `あなたは石橋大右（和上ホールディングス代表）のマルチエージェント基盤の「Agent A（実行担当）」です。
+
+Commanderから渡された指示（Instruction）を、Project Why に照らして実行します。Skeptic役はAgent Bが別途担うため、Agent Aは『前に進める』『素直に実行する』ことを優先します。
+
+毎回の応答で：
+1. 指示を素直に受け取り、まず実行する
+2. 実行結果と、その実行が Project Why に資するかの自己評価を含める
+3. 形骸化した報告は禁止。具体的な根拠・成果物・次に必要な情報源を示す
+
+応答には必ず以下を含める：
+- 実行結果（やったこと・分かったこと・成果物）
+- 使った根拠（参照したMission文脈・前提・Why整合）
+- 残った不確実性（自分が処理できなかった点・Skepticに見てほしい点）
+- 自己評価スコア（0-100の整数。低めに見積もる）
+- 次に必要な情報・タスク
+
+応答は日本語。お伺い締め（「次に進めるならGOくれたら」式）禁止。`;
+
+async function processMultiAgentAgentARun(
+	taskPageId: string,
+	notion: NotionClient,
+): Promise<void> {
+	console.log(`[multi-agent] AgentA start: ${taskPageId}`);
+
+	const taskPage = (await notion.pages.retrieve({
+		page_id: taskPageId,
+	})) as unknown as { properties?: Record<string, unknown> };
+	const taskProps = (taskPage.properties ?? {}) as Record<string, unknown>;
+
+	const taskId =
+		extractMultiAgentPlainText(taskProps["Task ID"]) ||
+		extractMultiAgentPlainText(taskProps["Title"]);
+	const instruction = extractMultiAgentPlainText(taskProps["Instruction"]);
+	const assignedTo = extractMultiAgentPlainText(taskProps["Assigned To"]);
+
+	const missionProp = taskProps["Mission"] as
+		| { type?: string; relation?: Array<{ id?: string }> }
+		| undefined;
+	const missionRelationArr =
+		missionProp?.type === "relation" && Array.isArray(missionProp.relation)
+			? missionProp.relation
+			: [];
+	const missionPageId = missionRelationArr[0]?.id;
+
+	let missionTitle = "";
+	let missionWhy = "";
+	let missionContextSummary = "";
+	if (missionPageId) {
+		try {
+			const missionPage = (await notion.pages.retrieve({
+				page_id: missionPageId,
+			})) as unknown as { properties?: Record<string, unknown> };
+			const missionProps = (missionPage.properties ?? {}) as Record<
+				string,
+				unknown
+			>;
+			missionTitle = extractMultiAgentPlainText(missionProps["Title"]);
+			missionWhy = extractMultiAgentPlainText(missionProps["Project Why"]);
+			missionContextSummary = extractMultiAgentPlainText(
+				missionProps["Context Summary"],
+			);
+		} catch (err) {
+			console.warn(`[multi-agent] Mission fetch failed: ${String(err)}`);
+		}
+	}
+
+	const nowIso = new Date().toISOString();
+
+	try {
+		await notion.pages.update({
+			page_id: taskPageId,
+			properties: {
+				"Task Status": { select: { name: "Running" } },
+				"Last Action At": { date: { start: nowIso } },
+			},
+		});
+	} catch (err) {
+		console.warn(
+			`[multi-agent] Failed to set Task Status=Running: ${String(err)}`,
+		);
+	}
+
+	const userPrompt = [
+		"# Task",
+		`- Task ID: ${taskId || "(未入力)"}`,
+		`- Assigned To: ${assignedTo || "(未入力)"}`,
+		"",
+		"# Instruction（Commanderからの指示）",
+		instruction || "(未入力)",
+		"",
+		"# 紐づくMission",
+		`- Title: ${missionTitle || "(未取得)"}`,
+		"",
+		"# Project Why（本来目的）",
+		missionWhy || "(未取得)",
+		"",
+		"# Context Summary",
+		missionContextSummary || "(未取得)",
+		"",
+		"---",
+		"このTaskをAgent Aとして実行せよ。応答に『実行結果／使った根拠／残った不確実性／自己評価スコア(0-100整数)／次に必要な情報』を必ず含める。",
+	].join("\n");
+
+	let result: string;
+	try {
+		result = await callMultiAgentCommanderClaude({
+			system: MULTI_AGENT_AGENT_A_SYSTEM_PROMPT,
+			user: userPrompt,
+			maxTokens: 4096,
+		});
+	} catch (err) {
+		console.error(`[multi-agent] AgentA Anthropic call failed: ${String(err)}`);
+		await notion.pages.update({
+			page_id: taskPageId,
+			properties: {
+				"Task Status": { select: { name: "Failed" } },
+				"Result": {
+					rich_text: [
+						{
+							type: "text",
+							text: {
+								content: `AgentA failed: ${String(err).slice(0, 1900)}`,
+							},
+						},
+					],
+				},
+				"Last Action At": { date: { start: new Date().toISOString() } },
+			},
+		});
+		throw err;
+	}
+
+	const truncated =
+		result.length > 1990 ? result.slice(0, 1990) + "…" : result;
+
+	await notion.pages.update({
+		page_id: taskPageId,
+		properties: {
+			"Result": {
+				rich_text: [{ type: "text", text: { content: truncated } }],
+			},
+			"Task Status": { select: { name: "Done" } },
+			"Last Action At": { date: { start: new Date().toISOString() } },
+		},
+	});
+
+	console.log(
+		`[multi-agent] AgentA completed: ${taskPageId} (${result.length} chars)`,
+	);
+
+	// F4: AgentA応答をDiscussion DBにturn=2で記録
+	if (missionPageId) {
+		await recordMultiAgentDiscussionEntry(notion, {
+			missionPageId,
+			taskPageId,
+			speaker: "AgentA",
+			content: result,
+			turn: 2,
+		});
+	}
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// マルチエージェント基盤 F3: AgentB（Skeptic / 疑い役）
+// 設計図v4 §8.2 Skeptic原則：うまくいく前提を疑う・反証を探す・代替案も必須
+// ────────────────────────────────────────────────────────────────────────────
+
+const MULTI_AGENT_AGENT_B_SYSTEM_PROMPT = `あなたは石橋大右（和上ホールディングス代表）のマルチエージェント基盤の「Agent B（Skeptic / 疑い役）」です。
+
+Agent A（実行担当）の応答を読み、設計図v4 §8.2 の Skeptic 原則に従って疑ってかかります：
+- うまくいく前提を疑う
+- 実行結果を鵜呑みにしない
+- 必ず抜け漏れ・副作用・反証を探す
+- 「それは本当にプロジェクト目的に資するか」を問い続ける
+- 可能なら代替案も出す
+
+ただし「批判だけで進まない」ことも禁止（設計図v4 §13.1）。反証と代替案をセットで出す。
+
+応答には必ず以下を含める：
+- 検証結果（疑い・抜け漏れ・反証）3項目以上
+- 致命度（Pass / Concern / Reject の3段階で1つだけ選ぶ、末尾に【Verdict: Pass】等の形で明示）
+- 代替案または改善案（必須・1つ以上）
+- Project Why との整合性チェック
+- 自己評価スコア（0-100の整数。低めに見積もる）
+
+応答は日本語。お伺い締め禁止。形骸的な「特に問題なし」は禁止（最低1つは突っ込む）。`;
+
+function extractAgentBVerdict(reviewText: string): "Pass" | "Concern" | "Reject" {
+	const m = reviewText.match(/【\s*Verdict\s*[:：]\s*(Pass|Concern|Reject)\s*】/i);
+	if (m) {
+		const v = m[1];
+		if (/^pass$/i.test(v)) return "Pass";
+		if (/^concern$/i.test(v)) return "Concern";
+		if (/^reject$/i.test(v)) return "Reject";
+	}
+	if (/Reject|致命|重大な欠陥|やり直し/i.test(reviewText)) return "Reject";
+	if (/Concern|懸念|要修正|警戒/i.test(reviewText)) return "Concern";
+	return "Pass";
+}
+
+async function processMultiAgentAgentBRun(
+	taskPageId: string,
+	notion: NotionClient,
+): Promise<void> {
+	console.log(`[multi-agent] AgentB start: ${taskPageId}`);
+
+	const taskPage = (await notion.pages.retrieve({
+		page_id: taskPageId,
+	})) as unknown as { properties?: Record<string, unknown> };
+	const taskProps = (taskPage.properties ?? {}) as Record<string, unknown>;
+
+	const taskId =
+		extractMultiAgentPlainText(taskProps["Task ID"]) ||
+		extractMultiAgentPlainText(taskProps["Title"]);
+	const instruction = extractMultiAgentPlainText(taskProps["Instruction"]);
+	const agentAResult = extractMultiAgentPlainText(taskProps["Result"]);
+
+	if (!agentAResult || agentAResult.trim().length < 10) {
+		console.warn(
+			`[multi-agent] AgentB skipped: AgentA Result is empty for ${taskPageId}`,
+		);
+		await notion.pages.update({
+			page_id: taskPageId,
+			properties: {
+				"AgentB Review": {
+					rich_text: [
+						{
+							type: "text",
+							text: {
+								content:
+									"AgentB skipped: AgentA Result が空のため疑い役を実行できません。",
+							},
+						},
+					],
+				},
+				"AgentB Verdict": { select: { name: "Concern" } },
+				"Last Action At": { date: { start: new Date().toISOString() } },
+			},
+		});
+		return;
+	}
+
+	const missionProp = taskProps["Mission"] as
+		| { type?: string; relation?: Array<{ id?: string }> }
+		| undefined;
+	const missionRelationArr =
+		missionProp?.type === "relation" && Array.isArray(missionProp.relation)
+			? missionProp.relation
+			: [];
+	const missionPageId = missionRelationArr[0]?.id;
+
+	let missionWhy = "";
+	let missionTitle = "";
+	if (missionPageId) {
+		try {
+			const missionPage = (await notion.pages.retrieve({
+				page_id: missionPageId,
+			})) as unknown as { properties?: Record<string, unknown> };
+			const missionProps = (missionPage.properties ?? {}) as Record<
+				string,
+				unknown
+			>;
+			missionTitle = extractMultiAgentPlainText(missionProps["Title"]);
+			missionWhy = extractMultiAgentPlainText(missionProps["Project Why"]);
+		} catch (err) {
+			console.warn(`[multi-agent] Mission fetch failed: ${String(err)}`);
+		}
+	}
+
+	const userPrompt = [
+		"# Task（AgentBが疑う対象）",
+		`- Task ID: ${taskId || "(未入力)"}`,
+		"",
+		"# Instruction（Commanderからの指示）",
+		instruction || "(未入力)",
+		"",
+		"# AgentA Result（疑う対象の応答）",
+		agentAResult,
+		"",
+		"# 紐づくMission",
+		`- Title: ${missionTitle || "(未取得)"}`,
+		"",
+		"# Project Why",
+		missionWhy || "(未取得)",
+		"",
+		"---",
+		"このAgentA応答を Agent B（Skeptic）として疑え。応答に『検証結果(3項目以上)／致命度【Verdict: Pass|Concern|Reject】／代替案(必須)／Why整合性／自己評価スコア(0-100整数)』を必ず含める。",
+	].join("\n");
+
+	let review: string;
+	try {
+		review = await callMultiAgentCommanderClaude({
+			system: MULTI_AGENT_AGENT_B_SYSTEM_PROMPT,
+			user: userPrompt,
+			maxTokens: 4096,
+		});
+	} catch (err) {
+		console.error(`[multi-agent] AgentB Anthropic call failed: ${String(err)}`);
+		await notion.pages.update({
+			page_id: taskPageId,
+			properties: {
+				"AgentB Review": {
+					rich_text: [
+						{
+							type: "text",
+							text: {
+								content: `AgentB failed: ${String(err).slice(0, 1900)}`,
+							},
+						},
+					],
+				},
+				"AgentB Verdict": { select: { name: "Concern" } },
+				"Last Action At": { date: { start: new Date().toISOString() } },
+			},
+		});
+		throw err;
+	}
+
+	const verdict = extractAgentBVerdict(review);
+	const truncated = review.length > 1990 ? review.slice(0, 1990) + "…" : review;
+
+	await notion.pages.update({
+		page_id: taskPageId,
+		properties: {
+			"AgentB Review": {
+				rich_text: [{ type: "text", text: { content: truncated } }],
+			},
+			"AgentB Verdict": { select: { name: verdict } },
+			"Last Action At": { date: { start: new Date().toISOString() } },
+		},
+	});
+
+	console.log(
+		`[multi-agent] AgentB completed: ${taskPageId} verdict=${verdict} (${review.length} chars)`,
+	);
+
+	// F4: AgentB応答をDiscussion DBにturn=3で記録
+	if (missionPageId) {
+		await recordMultiAgentDiscussionEntry(notion, {
+			missionPageId,
+			taskPageId,
+			speaker: "AgentB",
+			content: `【Verdict: ${verdict}】\n${review}`,
+			turn: 3,
+		});
+	}
+}
