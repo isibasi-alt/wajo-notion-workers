@@ -26979,7 +26979,58 @@ async function callMultiAgentCommanderClaude(input: {
 	system: string;
 	user: string;
 	maxTokens: number;
+	agent?: "claude" | "codex";
 }): Promise<string> {
+	// CLI ブリッジ経路：WAJO_CLI_BRIDGE_URL と WAJO_CLI_BRIDGE_TOKEN が設定されていれば
+	// Mac 上の `claude -p` / `codex exec` を tunnel 経由で呼ぶ
+	// （MAX/Pro サブスクで動く・API課金ゼロ）
+	const bridgeUrl = (process.env.WAJO_CLI_BRIDGE_URL || "").trim();
+	const bridgeToken = (process.env.WAJO_CLI_BRIDGE_TOKEN || "").trim();
+	if (bridgeUrl && bridgeToken) {
+		const defaultAgent =
+			(process.env.WAJO_MULTI_AGENT_BRIDGE_DEFAULT_AGENT || "")
+				.toLowerCase()
+				.trim() === "codex"
+				? "codex"
+				: "claude";
+		const agent = input.agent ?? defaultAgent;
+		const combinedPrompt = `${input.system}\n\n---\n\n${input.user}`;
+		const bridgeRes = await fetch(`${bridgeUrl}/run`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: `Bearer ${bridgeToken}`,
+			},
+			body: JSON.stringify({
+				agent,
+				prompt: combinedPrompt,
+				timeout: 240000,
+			}),
+		});
+		if (!bridgeRes.ok) {
+			const errorText = await bridgeRes.text();
+			throw new Error(
+				`CLI Bridge ${bridgeRes.status}: ${errorText.slice(0, 200)}`,
+			);
+		}
+		const bridgeData = (await bridgeRes.json()) as {
+			stdout?: string;
+			stderr?: string;
+			exitCode?: number;
+		};
+		if (bridgeData.exitCode !== 0) {
+			throw new Error(
+				`CLI ${agent} exit ${bridgeData.exitCode}: ${(bridgeData.stderr || "").slice(0, 300)}`,
+			);
+		}
+		const stdout = (bridgeData.stdout || "").trim();
+		if (!stdout) {
+			throw new Error(`CLI ${agent} から空応答が返りました`);
+		}
+		return stdout;
+	}
+
+	// 既存フォールバック：Anthropic API 直叩き（ブリッジ未設定時）
 	const apiKey = (
 		process.env.WAJO_ANTHROPIC_API_KEY ||
 		process.env.ANTHROPIC_API_KEY ||
@@ -26992,7 +27043,7 @@ async function callMultiAgentCommanderClaude(input: {
 	).trim();
 	if (!apiKey) {
 		throw new Error(
-			"WAJO_ANTHROPIC_API_KEY / ANTHROPIC_API_KEY が未設定です（Commander呼出に必要）",
+			"WAJO_ANTHROPIC_API_KEY / ANTHROPIC_API_KEY が未設定（CLI Bridge も未設定）",
 		);
 	}
 
