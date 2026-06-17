@@ -60,6 +60,10 @@ assert.deepEqual(
 	},
 	{ 粗利: 13, 成約: 6, 仕入れ: 5, 商談: 4, 案件化: 3, 専売: 2, 合計: 33 },
 );
+assert.equal(
+	half.合計,
+	half.粗利 + half.成約 + half.仕入れ + half.商談 + half.案件化 + half.専売,
+);
 
 const zero = computeSalesPerformanceQuantitativeScoreForTest({
 	"月次粗利達成率（申請連動）": formulaNumber(0),
@@ -87,13 +91,13 @@ assert.equal(over.details.専売.clippedAchievementRate, 1);
 const missing = computeSalesPerformanceQuantitativeScoreForTest({});
 assert.equal(missing.合計, 0);
 assert.match(missing.details.粗利.detail, /未取得/);
-assert.match(missing.details.案件化.detail, /未取得/);
+assert.match(missing.details.案件化.detail, /分母未確定/);
 
 const projectConversionTargetFormulaOnly = computeSalesPerformanceQuantitativeScoreForTest({
 	"月次案件化達成率（申請連動）": formulaNumber(1),
 });
 assert.equal(projectConversionTargetFormulaOnly.案件化, 0);
-assert.match(projectConversionTargetFormulaOnly.details.案件化.detail, /未取得/);
+assert.match(projectConversionTargetFormulaOnly.details.案件化.detail, /分母未確定/);
 
 const fallback = computeSalesPerformanceQuantitativeScoreForTest({
 	"実績粗利額（自動）": rollupNumber(5_000_000),

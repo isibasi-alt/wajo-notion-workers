@@ -11290,6 +11290,7 @@ function computeSalesPerformanceQuantitativeItem(
 			: null;
 	const clippedAchievementRate =
 		achievementRate === null ? 0 : Math.min(Math.max(achievementRate, 0), 1);
+	// 各項目を個別に四捨五入して整数点にする。合計は丸め済み項目点の和。
 	const score = Math.round(clippedAchievementRate * item.weight);
 	const sourceCandidates = [
 		...(item.rateAliases.length > 0 ? [item.rateAliases.join(" / ")] : []),
@@ -11297,7 +11298,7 @@ function computeSalesPerformanceQuantitativeItem(
 	].join(" または ");
 	const detail =
 		achievementRate === null
-			? `未取得: ${sourceCandidates} を取得できません`
+			? missingSalesPerformanceQuantitativeDetail(item, sourceCandidates, rate)
 			: `取得: ${rate.rateSource}`;
 	return {
 		label: item.key,
@@ -11312,6 +11313,17 @@ function computeSalesPerformanceQuantitativeItem(
 		targetLabel: item.targetLabel,
 		detail,
 	};
+}
+
+function missingSalesPerformanceQuantitativeDetail(
+	item: SalesPerformanceQuantitativeItem,
+	sourceCandidates: string,
+	rate: { actual: number | null; target: number | null },
+): string {
+	if (item.key === "案件化" && rate.target === null) {
+		return "分母未確定: 問い合わせ数の月次集計列が未確定のため、案件化達成率は0点扱い";
+	}
+	return `未取得: ${sourceCandidates} を取得できません`;
 }
 
 function readSalesPerformanceAchievementRate(
