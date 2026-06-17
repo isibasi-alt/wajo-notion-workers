@@ -27314,13 +27314,34 @@ async function processMultiAgentCommanderRun(
 			? combinedAnswer.slice(0, 1990) + "…"
 			: combinedAnswer;
 
+	// 議論モード時、Commander応答本文に「Mission Status: <値>」宣言があれば抽出して反映。
+	// なければ Completed のまま。これにより Final Answer 本文と Notion Status の矛盾を防ぐ。
+	let finalStatusName = "Completed";
+	if (isDebate) {
+		const m = finalAnswer.match(
+			/Mission\s*Status\s*[:：]\s*\*{0,2}\s*(Draft|Running|Discussion|WaitingHuman|Completed|Error)\b/i,
+		);
+		if (m && m[1]) {
+			const candidate = m[1];
+			const canonical = ["Draft", "Running", "Discussion", "WaitingHuman", "Completed", "Error"].find(
+				(s) => s.toLowerCase() === candidate.toLowerCase(),
+			);
+			if (canonical) {
+				finalStatusName = canonical;
+				console.log(
+					`[multi-agent] Debate mode: Mission Status from answer = ${canonical}`,
+				);
+			}
+		}
+	}
+
 	await notion.pages.update({
 		page_id: missionPageId,
 		properties: {
 			"Final Answer": {
 				rich_text: [{ type: "text", text: { content: truncated } }],
 			},
-			"Mission Status": { select: { name: "Completed" } },
+			"Mission Status": { select: { name: finalStatusName } },
 			"Last Action At": { date: { start: new Date().toISOString() } },
 		},
 	});
