@@ -194,7 +194,11 @@ async function main() {
 	});
 	assert.match(
 		normalPrompts.systemPrompt,
-		/評価は二軸で見る。定量評価（実績）65点、定性評価（活動ログ）35点を基本配分にする/,
+		/評価は二軸で見る。定量評価（実績）65点はWorker計算済み、定性評価（活動ログ）35点は活動ログから見る/,
+	);
+	assert.match(
+		normalPrompts.systemPrompt,
+		/提示された定量内訳をそのまま使い、AIが点を付け直さない/,
 	);
 	assert.match(
 		normalPrompts.systemPrompt,
