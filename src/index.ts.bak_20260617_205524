@@ -4395,31 +4395,6 @@ worker.webhook("processProjectLostRequestWebhook", {
 	},
 });
 
-worker.webhook("processProjectLostReportWebhook", {
-	title: "WAJO 案件失注報告Webhook",
-	description:
-		"案件管理DBの営業用「❌ 失注報告する」ボタンから起動。失注理由・失注先・学びの必須3項目が揃っていれば即時失注確定（マネージャー承認なし）。リトライ可能性は任意。失注は評価の宝として AI学習ログにも反映します。",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			const body = event.body as Record<string, unknown>;
-			const projectPageId = extractProjectPageIdFromWebhook(body);
-			if (!projectPageId) {
-				throw new Error(
-					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
-				);
-			}
-			await processProjectLostReport(projectPageId, notion as unknown as NotionClient, {
-				reason: extractLostReasonFromWebhook(body),
-				memo: extractLostMemoFromWebhook(body),
-				destination: extractLostDestinationFromWebhook(body),
-				learning: extractLostLearningFromWebhook(body),
-				retryProbability: extractRetryProbabilityFromWebhook(body),
-				triggerUserId: extractTriggerUserIdFromWebhook(body),
-			});
-		}
-	},
-});
-
 worker.webhook("processProjectLostApproveWebhook", {
 	title: "WAJO 案件失注承認Webhook",
 	description:
@@ -24840,36 +24815,6 @@ async function processInquiryLost(
 	};
 }
 
-// === 失注報告（新ボタン）専用オプション ===
-// マネージャー承認なし・必須3項目（理由/行き先/学び）で即時失注確定
-type LostReportOptions = LostActionOptions & {
-	destination?: string;     // 失注先・行き先（必須）
-	learning?: string;        // 失注の学び（必須）
-	retryProbability?: string; // リトライ可能性（任意：高/中/低）
-};
-
-function extractLostDestinationFromWebhook(body: Record<string, unknown>): string | undefined {
-	return (
-		readNestedString(body, ["失注先・行き先"]) ??
-		readNestedString(body, ["data", "失注先・行き先"]) ??
-		readNestedString(body, ["properties", "失注先・行き先"])
-	);
-}
-function extractLostLearningFromWebhook(body: Record<string, unknown>): string | undefined {
-	return (
-		readNestedString(body, ["失注の学び"]) ??
-		readNestedString(body, ["data", "失注の学び"]) ??
-		readNestedString(body, ["properties", "失注の学び"])
-	);
-}
-function extractRetryProbabilityFromWebhook(body: Record<string, unknown>): string | undefined {
-	return (
-		readNestedString(body, ["リトライ可能性"]) ??
-		readNestedString(body, ["data", "リトライ可能性"]) ??
-		readNestedString(body, ["properties", "リトライ可能性"])
-	);
-}
-
 async function processProjectLostRequest(
 	projectPageId: string,
 	notion: NotionClient,
@@ -24926,103 +24871,6 @@ async function processProjectLostRequest(
 	return {
 		action: "requested",
 		message: "案件を失注申請中にし、マネージャー承認待ちとして記録しました。",
-	};
-}
-
-// === 営業用ワンボタン失注報告（マネージャー承認なし・必須3項目で即時失注確定）===
-async function processProjectLostReport(
-	projectPageId: string,
-	notion: NotionClient,
-	options: LostReportOptions = {},
-): Promise<{ action: string; message: string }> {
-	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
-	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
-
-	// --- 必須3項目チェック ---
-	const reasons = normalizeLostReasons(options.reason);
-	const destination = (options.destination || "").trim();
-	const learning = (options.learning || "").trim();
-	const missing: string[] = [];
-	if (reasons.length === 0) missing.push("失注理由（カテゴリ）");
-	if (!destination) missing.push("失注先・行き先");
-	if (!learning) missing.push("失注の学び");
-	if (missing.length > 0) {
-		await createPageComment(
-			notion,
-			projectPage.id,
-			[
-				`⚠️ 必須項目が未入力のため、失注報告を止めました: ${projectName}`,
-				"",
-				`未入力: ${missing.join(" / ")}`,
-				"失注は評価の宝です。次に活かすため、3項目とも入力してから再実行してください。",
-			].join("\n"),
-		);
-		return {
-			action: "needs-required-fields",
-			message: `必須未入力（${missing.join("/")}）のため失注確定していません。`,
-		};
-	}
-
-	// --- 監査メモ ---
-	const previousPhase = projectLostPreviousPhase(projectPage);
-	const memo = buildLostAuditMemo({
-		actionLabel: "案件失注報告",
-		reasons,
-		memo: `行き先: ${destination}\n学び: ${learning}`,
-		previousPhase,
-	});
-
-	// --- プロパティ更新（即時❌失注確定） ---
-	const patches: Record<string, SafePatch> = {
-		ステータス: { kind: "select", value: "❌ 失注" },
-		成約日: { kind: "clear" },
-		失注理由: { kind: "multi_select", values: reasons },
-		失注理由メモ: { kind: "text", value: options.memo || lostReasonText(reasons) },
-		"失注先・行き先": { kind: "text", value: destination },
-		"失注の学び": { kind: "text", value: learning },
-		失注日: { kind: "date", value: todayDateJST() },
-		失注前フェーズ: { kind: "text", value: previousPhase },
-		管理アクション状態: { kind: "select", value: "失注承認" },
-		管理アクション日: { kind: "date", value: todayDateJST() },
-		管理アクションメモ: { kind: "text", value: memo },
-		最終アクション日: { kind: "date", value: todayDateJST() },
-	};
-	if (options.retryProbability) {
-		patches["リトライ可能性"] = { kind: "select", value: options.retryProbability };
-	}
-	if (options.triggerUserId) {
-		patches["失注処理者"] = { kind: "people", ids: [options.triggerUserId] };
-	}
-	await safeUpdateExistingProperties(notion, projectPage, patches);
-
-	// --- 営業部通知 ---
-	await notifySalesTeam(
-		notion,
-		projectPage.id,
-		[
-			`📉 失注を報告しました: ${projectName}`,
-			`理由: ${lostReasonText(reasons)}`,
-			`行き先: ${destination}`,
-			`学び: ${learning}`,
-			options.retryProbability ? `リトライ可能性: ${options.retryProbability}` : "",
-			"ステータスを `❌ 失注` へ確定しました（マネージャー承認は不要）。",
-		].filter(Boolean).join("\n"),
-	);
-
-	// --- AI学習ログに「失注」結果反映 ---
-	await markAiLearningLogsOutcome(notion, {
-		relationProperty: "関連案件",
-		pageId: projectPage.id,
-		outcome: "失注",
-		scoreThreshold: 50,
-		note: "失注報告Workerが営業の手入力（理由・行き先・学び）を反映。",
-	}).catch((error) => {
-		console.log("lost report learning outcome skipped", String(error));
-	});
-
-	return {
-		action: "reported",
-		message: `失注報告を確定しました。理由「${lostReasonText(reasons)}」、行き先「${destination}」、学び「${learning}」を記録しました。`,
 	};
 }
 
