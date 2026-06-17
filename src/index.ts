@@ -27167,8 +27167,17 @@ async function createTaskFromCommanderAnswer(
 async function processMultiAgentCommanderRun(
 	missionPageId: string,
 	notion: NotionClient,
+	debateContext?: {
+		previousVerdict: "Pass" | "Concern" | "Reject";
+		previousReview: string;
+		previousAgentAResult: string;
+		previousTaskId: string;
+	},
 ): Promise<void> {
-	console.log(`[multi-agent] Commander start: ${missionPageId}`);
+	const isDebate = !!debateContext;
+	console.log(
+		`[multi-agent] Commander start: ${missionPageId} debate=${isDebate ? "yes" : "no"}`,
+	);
 
 	const page = (await notion.pages.retrieve({ page_id: missionPageId })) as unknown as {
 		properties?: Record<string, unknown>;
@@ -27183,6 +27192,16 @@ async function processMultiAgentCommanderRun(
 	const projectWhy = extractMultiAgentPlainText(props["Project Why"]);
 	const contextSummary = extractMultiAgentPlainText(props["Context Summary"]);
 	const successCriteria = extractMultiAgentPlainText(props["Success Criteria"]);
+	const existingFinalAnswer = isDebate
+		? extractMultiAgentPlainText(props["Final Answer"])
+		: "";
+	const discussionsProp = props["Discussions"] as
+		| { type?: string; relation?: Array<unknown> }
+		| undefined;
+	const priorDiscussionCount =
+		discussionsProp?.type === "relation" && Array.isArray(discussionsProp.relation)
+			? discussionsProp.relation.length
+			: 0;
 
 	const nowIso = new Date().toISOString();
 
@@ -27190,33 +27209,65 @@ async function processMultiAgentCommanderRun(
 		await notion.pages.update({
 			page_id: missionPageId,
 			properties: {
-				"Mission Status": { select: { name: "Running" } },
+				"Mission Status": {
+					select: { name: isDebate ? "Discussion" : "Running" },
+				},
 				"Last Action At": { date: { start: nowIso } },
 			},
 		});
 	} catch (err) {
 		console.warn(
-			`[multi-agent] Failed to set Mission Status=Running: ${String(err)}`,
+			`[multi-agent] Failed to set Mission Status: ${String(err)}`,
 		);
 	}
 
-	const userPrompt = [
-		"# Mission",
-		`- Title: ${title || "(未入力)"}`,
-		`- Project Name: ${projectName || "(未入力)"}`,
-		"",
-		"# Project Why（本来目的）",
-		projectWhy || "(未入力)",
-		"",
-		"# Context Summary（背景）",
-		contextSummary || "(未入力)",
-		"",
-		"# Success Criteria（成功条件）",
-		successCriteria || "(未入力)",
-		"",
-		"---",
-		"このMissionに対してCommanderとして応答せよ。設計図v4 §11.2 の出力ルールに従い、『今回の判断／その理由／Project Why との整合／次の一手』を必ず含める。",
-	].join("\n");
+	const userPrompt = isDebate
+		? [
+				"# Mission（議論モード・再判断）",
+				`- Title: ${title || "(未入力)"}`,
+				`- Project Name: ${projectName || "(未入力)"}`,
+				"",
+				"# Project Why（本来目的）",
+				projectWhy || "(未入力)",
+				"",
+				"# Context Summary（背景）",
+				contextSummary || "(未入力)",
+				"",
+				"# Success Criteria（成功条件）",
+				successCriteria || "(未入力)",
+				"",
+				"---",
+				"# これまでの議論経過",
+				"",
+				"## あなた（Commander）の前回判断",
+				existingFinalAnswer || "(取得不可)",
+				"",
+				"## AgentA（実行担当）の実行結果",
+				debateContext!.previousAgentAResult || "(取得不可)",
+				"",
+				`## AgentB（Skeptic）からの指摘【Verdict: ${debateContext!.previousVerdict}】`,
+				debateContext!.previousReview || "(取得不可)",
+				"",
+				"---",
+				"上記の議論を踏まえ、Commanderとして**議論モードの最終判断**を出せ。AgentBの指摘を真摯に受け止め、必要なら方針を修正・撤回し、納得できるなら理由を述べて維持する。新たなTaskは発行しない（既に議論が成立している）。応答に『議論を踏まえた最終判断／AgentB指摘への一つずつの対応／Project Why との整合／次の人間アクション』を必ず含める。",
+			].join("\n")
+		: [
+				"# Mission",
+				`- Title: ${title || "(未入力)"}`,
+				`- Project Name: ${projectName || "(未入力)"}`,
+				"",
+				"# Project Why（本来目的）",
+				projectWhy || "(未入力)",
+				"",
+				"# Context Summary（背景）",
+				contextSummary || "(未入力)",
+				"",
+				"# Success Criteria（成功条件）",
+				successCriteria || "(未入力)",
+				"",
+				"---",
+				"このMissionに対してCommanderとして応答せよ。設計図v4 §11.2 の出力ルールに従い、『今回の判断／その理由／Project Why との整合／次の一手』を必ず含める。",
+			].join("\n");
 
 	let finalAnswer: string;
 	try {
@@ -27247,8 +27298,13 @@ async function processMultiAgentCommanderRun(
 		throw err;
 	}
 
+	const combinedAnswer = isDebate
+		? `${existingFinalAnswer}\n\n---\n\n# 議論モード・最終判断\n\n${finalAnswer}`
+		: finalAnswer;
 	const truncated =
-		finalAnswer.length > 1990 ? finalAnswer.slice(0, 1990) + "…" : finalAnswer;
+		combinedAnswer.length > 1990
+			? combinedAnswer.slice(0, 1990) + "…"
+			: combinedAnswer;
 
 	await notion.pages.update({
 		page_id: missionPageId,
@@ -27262,16 +27318,26 @@ async function processMultiAgentCommanderRun(
 	});
 
 	console.log(
-		`[multi-agent] Commander completed: ${missionPageId} (${finalAnswer.length} chars)`,
+		`[multi-agent] Commander completed: ${missionPageId} debate=${isDebate ? "yes" : "no"} (${finalAnswer.length} chars)`,
 	);
 
-	// F4: Commander応答をDiscussion DBにturn=1で記録
+	// F4: Commander応答をDiscussion DBに記録
+	// turn番号は議論モード時は (現Discussion数 / 3) + 1、初回は 1
+	const commanderTurn = isDebate
+		? Math.floor(priorDiscussionCount / 3) + 1
+		: 1;
 	await recordMultiAgentDiscussionEntry(notion, {
 		missionPageId,
 		speaker: "Commander",
-		content: finalAnswer,
-		turn: 1,
+		content: isDebate ? `【議論モード・最終判断】\n${finalAnswer}` : finalAnswer,
+		turn: commanderTurn,
 	});
+
+	// F6: 議論モード時は自動連鎖をskip（既に議論が成立している）
+	if (isDebate) {
+		console.log(`[multi-agent] Debate mode: auto-chain skipped`);
+		return;
+	}
 
 	// F2.5 自動連鎖：Commander応答の「次の一手」セクションからTaskを自動起票し、
 	// 同期でAgentAを実行する。失敗してもCommander本体は成功扱い（警告のみ）。
@@ -27653,7 +27719,7 @@ async function processMultiAgentAgentBRun(
 		`[multi-agent] AgentB completed: ${taskPageId} verdict=${verdict} (${review.length} chars)`,
 	);
 
-	// F4: AgentB応答をDiscussion DBにturn=3で記録
+	// F4: AgentB応答をDiscussion DBに記録（turn=3固定。議論モードでもAgentB再起動はないため）
 	if (missionPageId) {
 		await recordMultiAgentDiscussionEntry(notion, {
 			missionPageId,
@@ -27662,5 +27728,54 @@ async function processMultiAgentAgentBRun(
 			content: `【Verdict: ${verdict}】\n${review}`,
 			turn: 3,
 		});
+	}
+
+	// F6: 議論モード遷移
+	// Verdict=Concern/Reject の場合、Discussion件数をチェックして上限内なら
+	// Commander を再呼出（議論モード）。上限超過なら Mission Status=WaitingHuman。
+	if (missionPageId && (verdict === "Concern" || verdict === "Reject")) {
+		try {
+			const missionForCount = (await notion.pages.retrieve({
+				page_id: missionPageId,
+			})) as unknown as { properties?: Record<string, unknown> };
+			const discussionsRel = missionForCount.properties?.["Discussions"] as
+				| { type?: string; relation?: Array<unknown> }
+				| undefined;
+			const currentDiscussionCount =
+				discussionsRel?.type === "relation" && Array.isArray(discussionsRel.relation)
+					? discussionsRel.relation.length
+					: 0;
+
+			// 1ターン = Commander + AgentA + AgentB = 3件
+			// 初回ラウンド完了時=3件、議論モードCommander応答1回ごとに+1件
+			// 上限=議論モードCommander応答3回まで → currentDiscussionCount >= 6 で停止
+			if (currentDiscussionCount >= 6) {
+				console.log(
+					`[multi-agent] Debate turn limit reached (${currentDiscussionCount} discussions): setting WaitingHuman`,
+				);
+				await notion.pages.update({
+					page_id: missionPageId,
+					properties: {
+						"Mission Status": { select: { name: "WaitingHuman" } },
+						"Last Action At": { date: { start: new Date().toISOString() } },
+					},
+				});
+				return;
+			}
+
+			console.log(
+				`[multi-agent] Debate mode trigger: verdict=${verdict} count=${currentDiscussionCount} → invoking Commander re-judgment`,
+			);
+			await processMultiAgentCommanderRun(missionPageId, notion, {
+				previousVerdict: verdict,
+				previousReview: review,
+				previousAgentAResult: agentAResult,
+				previousTaskId: taskPageId,
+			});
+		} catch (debateErr) {
+			console.warn(
+				`[multi-agent] Debate mode failed (non-fatal): ${String(debateErr)}`,
+			);
+		}
 	}
 }
