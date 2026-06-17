@@ -24944,8 +24944,6 @@ async function processProjectLostReport(
 	const learning = (options.learning || "").trim();
 	const missing: string[] = [];
 	if (reasons.length === 0) missing.push("失注理由（カテゴリ）");
-	if (!destination) missing.push("失注先・行き先");
-	if (!learning) missing.push("失注の学び");
 	if (missing.length > 0) {
 		await createPageComment(
 			notion,
@@ -24968,7 +24966,7 @@ async function processProjectLostReport(
 	const memo = buildLostAuditMemo({
 		actionLabel: "案件失注報告",
 		reasons,
-		memo: `行き先: ${destination}\n学び: ${learning}`,
+		memo: [destination ? `行き先: ${destination}` : "", learning ? `学び: ${learning}` : ""].filter(Boolean).join("\n"),
 		previousPhase,
 	});
 
@@ -24978,8 +24976,6 @@ async function processProjectLostReport(
 		成約日: { kind: "clear" },
 		失注理由: { kind: "multi_select", values: reasons },
 		失注理由メモ: { kind: "text", value: options.memo || lostReasonText(reasons) },
-		"失注先・行き先": { kind: "text", value: destination },
-		"失注の学び": { kind: "text", value: learning },
 		失注日: { kind: "date", value: todayDateJST() },
 		失注前フェーズ: { kind: "text", value: previousPhase },
 		管理アクション状態: { kind: "select", value: "失注承認" },
@@ -24987,6 +24983,8 @@ async function processProjectLostReport(
 		管理アクションメモ: { kind: "text", value: memo },
 		最終アクション日: { kind: "date", value: todayDateJST() },
 	};
+	if (destination) patches["失注先・行き先"] = { kind: "text", value: destination };
+	if (learning) patches["失注の学び"] = { kind: "text", value: learning };
 	if (options.retryProbability) {
 		patches["リトライ可能性"] = { kind: "select", value: options.retryProbability };
 	}
@@ -25002,8 +25000,8 @@ async function processProjectLostReport(
 		[
 			`📉 失注を報告しました: ${projectName}`,
 			`理由: ${lostReasonText(reasons)}`,
-			`行き先: ${destination}`,
-			`学び: ${learning}`,
+			destination ? `行き先: ${destination}` : "",
+			learning ? `学び: ${learning}` : "",
 			options.retryProbability ? `リトライ可能性: ${options.retryProbability}` : "",
 			"ステータスを `❌ 失注` へ確定しました（マネージャー承認は不要）。",
 		].filter(Boolean).join("\n"),
@@ -25022,7 +25020,7 @@ async function processProjectLostReport(
 
 	return {
 		action: "reported",
-		message: `失注報告を確定しました。理由「${lostReasonText(reasons)}」、行き先「${destination}」、学び「${learning}」を記録しました。`,
+		message: `失注報告を確定しました。理由「${lostReasonText(reasons)}」${destination ? `、行き先「${destination}」` : ""}${learning ? `、学び「${learning}」` : ""}を記録しました。`,
 	};
 }
 
