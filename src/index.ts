@@ -1226,7 +1226,6 @@ async function attachMonthlyEvalPdf(
 	const fileName = generateMonthlyEvalPdfFileName(snapshot);
 	const pdfBytes = await generateMonthlyEvalPdf(evalPageId, notion);
 	const created = await notion.fileUploads.create({
-		mode: "single_part",
 		filename: fileName,
 		content_type: "application/pdf",
 	});
@@ -1246,13 +1245,6 @@ async function attachMonthlyEvalPdf(
 			data: new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" }),
 		},
 	});
-	if (notion.fileUploads.complete) {
-		try {
-			await notion.fileUploads.complete({ file_upload_id: fileUploadId });
-		} catch {
-			// single_partではcomplete不要の場合があるため無視
-		}
-	}
 
 	await notion.pages.update({
 		page_id: page.id,

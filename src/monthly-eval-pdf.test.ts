@@ -217,7 +217,6 @@ async function main(): Promise<void> {
 	assert.equal(result.fileName, "月次評価_2026年5月_山田太郎.pdf");
 	assert.equal(uploadCreateCalls.length, 1);
 	assert.deepEqual(uploadCreateCalls[0], {
-		mode: "single_part",
 		filename: "月次評価_2026年5月_山田太郎.pdf",
 		content_type: "application/pdf",
 	});
@@ -227,7 +226,7 @@ async function main(): Promise<void> {
 	assert.equal(sentFile?.filename, "月次評価_2026年5月_山田太郎.pdf");
 	assert.ok(sentFile?.data instanceof Blob);
 	assert.equal(sentFile?.data.type, "application/pdf");
-	assert.deepEqual(uploadCompleteCalls, [{ file_upload_id: "file-upload-1" }]);
+	assert.deepEqual(uploadCompleteCalls, [], "single-part uploadではcompleteを呼ばない");
 	assert.deepEqual(updateCalls[0], {
 		page_id: "monthly-eval-test",
 		properties: {
