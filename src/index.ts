@@ -5334,6 +5334,27 @@ worker.webhook("processProjectWallHitWebhook", {
 	},
 });
 
+worker.webhook("processMultiAgentCommanderRunWebhook", {
+	title: "マルチエージェント基盤 Commander発火Webhook",
+	description:
+		"マルチエージェント基盤 Mission DBの「Commander Run」ボタンから起動。Anthropic Claude（既定 claude-opus-4-7）でCommander応答を生成し、Final Answer列に書き戻す。F1最小通電フェーズ・自己ブートストラップ用。設計図正本: 20_Project/マルチエージェント基盤/_F1_最小通電設計.md",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const missionPageId = extractWebhookPageId(body);
+			if (!missionPageId) {
+				throw new Error(
+					"pageId / entity.id のいずれからもMissionページIDを特定できませんでした。",
+				);
+			}
+			await processMultiAgentCommanderRun(
+				missionPageId,
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
 // ────────────────────────────────────────────────────────────────────────────
 
 async function processBusinessCard(
@@ -26846,3 +26867,206 @@ async function processProjectWallHit(
 
 // ノルマ申請書への成約自動紐付け（linkUnclaimedClosingsToQuota）は、退役webhook
 // processMonthlyQuotaLinkWebhook の削除（2026-06-12）に伴い呼び出し元ゼロとなったため削除した。
+
+// ────────────────────────────────────────────────────────────────────────────
+// マルチエージェント基盤（F1：最小通電）
+// 設計図正本: 20_Project/マルチエージェント基盤/_F1_最小通電設計.md
+// 発火Webhook: processMultiAgentCommanderRunWebhook
+// ────────────────────────────────────────────────────────────────────────────
+
+const MULTI_AGENT_COMMANDER_SYSTEM_PROMPT = `あなたは石橋大右（和上ホールディングス代表）のマルチエージェント基盤の「Commander（司令塔）」です。
+
+最大責務は、本来のプロジェクトの意味（Project Why）を見失わないこと。
+
+毎回の応答で以下を確認：
+1. この判断は Project Why に沿っているか
+2. 小タスクの達成が目的化していないか
+3. 目の前の問題解決が、本来の勝ち筋を壊していないか
+4. 石橋大右さんの判断軸に反していないか
+5. 進めるべきか、立ち止まるべきか
+
+応答には必ず以下を含める：
+- 今回の判断
+- その理由
+- Project Why との整合
+- 次の一手
+
+応答は日本語。お伺い締め（「次に進めるならGOくれたら」式）禁止。`;
+
+async function callMultiAgentCommanderClaude(input: {
+	system: string;
+	user: string;
+	maxTokens: number;
+	temperature: number;
+}): Promise<string> {
+	const apiKey = (
+		process.env.WAJO_ANTHROPIC_API_KEY ||
+		process.env.ANTHROPIC_API_KEY ||
+		""
+	).trim();
+	const model = (
+		process.env.WAJO_MULTI_AGENT_COMMANDER_MODEL ||
+		process.env.COMMANDER_MODEL ||
+		"claude-opus-4-7"
+	).trim();
+	if (!apiKey) {
+		throw new Error(
+			"WAJO_ANTHROPIC_API_KEY / ANTHROPIC_API_KEY が未設定です（Commander呼出に必要）",
+		);
+	}
+
+	const response = await fetch("https://api.anthropic.com/v1/messages", {
+		method: "POST",
+		headers: {
+			"x-api-key": apiKey,
+			"anthropic-version": "2023-06-01",
+			"content-type": "application/json",
+		},
+		body: JSON.stringify({
+			model,
+			max_tokens: input.maxTokens,
+			system: input.system,
+			messages: [{ role: "user", content: input.user }],
+			temperature: input.temperature,
+		}),
+	});
+
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(
+			`Anthropic API error ${response.status}: ${errorText.slice(0, 200)}`,
+		);
+	}
+
+	const json = (await response.json()) as {
+		content?: Array<{ type?: string; text?: string }>;
+	};
+	const raw =
+		json.content?.find((part) => typeof part?.text === "string")?.text ??
+		json.content?.[0]?.text;
+	if (!raw) throw new Error("Anthropic からレスポンスが返りませんでした");
+	return raw;
+}
+
+function extractMultiAgentPlainText(prop: unknown): string {
+	if (!prop || typeof prop !== "object") return "";
+	const p = prop as Record<string, unknown>;
+	if (p.type === "title") {
+		const arr = Array.isArray(p.title) ? (p.title as Array<Record<string, unknown>>) : [];
+		return arr.map((t) => (typeof t?.plain_text === "string" ? t.plain_text : "")).join("");
+	}
+	if (p.type === "rich_text") {
+		const arr = Array.isArray(p.rich_text)
+			? (p.rich_text as Array<Record<string, unknown>>)
+			: [];
+		return arr.map((t) => (typeof t?.plain_text === "string" ? t.plain_text : "")).join("");
+	}
+	if (p.type === "select") {
+		const sel = p.select as Record<string, unknown> | null | undefined;
+		return typeof sel?.name === "string" ? sel.name : "";
+	}
+	return "";
+}
+
+async function processMultiAgentCommanderRun(
+	missionPageId: string,
+	notion: NotionClient,
+): Promise<void> {
+	console.log(`[multi-agent] Commander start: ${missionPageId}`);
+
+	const page = (await notion.pages.retrieve({ page_id: missionPageId })) as unknown as {
+		properties?: Record<string, unknown>;
+	};
+	const props = (page.properties ?? {}) as Record<string, unknown>;
+
+	const title =
+		extractMultiAgentPlainText(props["Title"]) ||
+		extractMultiAgentPlainText(props["Name"]) ||
+		extractMultiAgentPlainText(props["名前"]);
+	const projectName = extractMultiAgentPlainText(props["Project Name"]);
+	const projectWhy = extractMultiAgentPlainText(props["Project Why"]);
+	const contextSummary = extractMultiAgentPlainText(props["Context Summary"]);
+	const successCriteria = extractMultiAgentPlainText(props["Success Criteria"]);
+
+	const nowIso = new Date().toISOString();
+
+	try {
+		await notion.pages.update({
+			page_id: missionPageId,
+			properties: {
+				"Mission Status": { select: { name: "Running" } },
+				"Last Action At": { date: { start: nowIso } },
+			},
+		});
+	} catch (err) {
+		console.warn(
+			`[multi-agent] Failed to set Mission Status=Running: ${String(err)}`,
+		);
+	}
+
+	const userPrompt = [
+		"# Mission",
+		`- Title: ${title || "(未入力)"}`,
+		`- Project Name: ${projectName || "(未入力)"}`,
+		"",
+		"# Project Why（本来目的）",
+		projectWhy || "(未入力)",
+		"",
+		"# Context Summary（背景）",
+		contextSummary || "(未入力)",
+		"",
+		"# Success Criteria（成功条件）",
+		successCriteria || "(未入力)",
+		"",
+		"---",
+		"このMissionに対してCommanderとして応答せよ。設計図v4 §11.2 の出力ルールに従い、『今回の判断／その理由／Project Why との整合／次の一手』を必ず含める。",
+	].join("\n");
+
+	let finalAnswer: string;
+	try {
+		finalAnswer = await callMultiAgentCommanderClaude({
+			system: MULTI_AGENT_COMMANDER_SYSTEM_PROMPT,
+			user: userPrompt,
+			maxTokens: 4096,
+			temperature: 0.4,
+		});
+	} catch (err) {
+		console.error(`[multi-agent] Anthropic call failed: ${String(err)}`);
+		await notion.pages.update({
+			page_id: missionPageId,
+			properties: {
+				"Mission Status": { select: { name: "Error" } },
+				"Final Answer": {
+					rich_text: [
+						{
+							type: "text",
+							text: {
+								content: `Commander failed: ${String(err).slice(0, 1900)}`,
+							},
+						},
+					],
+				},
+				"Last Action At": { date: { start: new Date().toISOString() } },
+			},
+		});
+		throw err;
+	}
+
+	const truncated =
+		finalAnswer.length > 1990 ? finalAnswer.slice(0, 1990) + "…" : finalAnswer;
+
+	await notion.pages.update({
+		page_id: missionPageId,
+		properties: {
+			"Final Answer": {
+				rich_text: [{ type: "text", text: { content: truncated } }],
+			},
+			"Mission Status": { select: { name: "Completed" } },
+			"Last Action At": { date: { start: new Date().toISOString() } },
+		},
+	});
+
+	console.log(
+		`[multi-agent] Commander completed: ${missionPageId} (${finalAnswer.length} chars)`,
+	);
+}
