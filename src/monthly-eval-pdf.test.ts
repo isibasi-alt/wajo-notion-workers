@@ -134,16 +134,20 @@ async function main(): Promise<void> {
 	const uploadSendCalls: Array<Record<string, unknown>> = [];
 	const uploadCompleteCalls: Array<Record<string, unknown>> = [];
 	const commentCalls: Array<Record<string, unknown>> = [];
+	const operationOrder: string[] = [];
 	const notion = {
 		dataSources: {
 			query: async () => ({ results: [] }),
 		},
 		pages: {
 			create: async () => ({ id: "unused" }),
-			retrieve: async () => ({
-				id: "monthly-eval-test",
-				properties: sampleMonthlyEvalProperties(),
-			}),
+			retrieve: async () => {
+				operationOrder.push("page-retrieve");
+				return {
+					id: "monthly-eval-test",
+					properties: sampleMonthlyEvalProperties(),
+				};
+			},
 			update: async (args: Record<string, unknown>) => {
 				updateCalls.push(args);
 				return { id: "monthly-eval-test", properties: sampleMonthlyEvalProperties() };
@@ -151,6 +155,7 @@ async function main(): Promise<void> {
 		},
 		fileUploads: {
 			create: async (args: Record<string, unknown>) => {
+				operationOrder.push("file-upload-create");
 				uploadCreateCalls.push(args);
 				return { id: "file-upload-1" };
 			},
@@ -165,6 +170,13 @@ async function main(): Promise<void> {
 		},
 		comments: {
 			create: async (args: Record<string, unknown>) => {
+				const content = (
+					(args.rich_text as Array<Record<string, unknown>>)[0]?.text as Record<
+						string,
+						unknown
+					>
+				)?.content;
+				operationOrder.push(`comment:${String(content)}`);
 				commentCalls.push(args);
 				return {};
 			},
@@ -204,10 +216,33 @@ async function main(): Promise<void> {
 			},
 		},
 	});
-	assert.equal(commentCalls.length, 1);
+	assert.equal(commentCalls.length, 2);
 	assert.deepEqual((commentCalls[0]?.parent as Record<string, unknown>), { page_id: "monthly-eval-test" });
-	const commentText = (((commentCalls[0]?.rich_text as Array<Record<string, unknown>>)[0]?.text as Record<string, unknown>)?.content);
-	assert.match(String(commentText), /^PDFを添付しました（.+）$/);
+	assert.deepEqual((commentCalls[1]?.parent as Record<string, unknown>), { page_id: "monthly-eval-test" });
+	const generatingCommentText = (
+		(commentCalls[0]?.rich_text as Array<Record<string, unknown>>)[0]?.text as Record<
+			string,
+			unknown
+		>
+	)?.content;
+	const attachedCommentText = (
+		(commentCalls[1]?.rich_text as Array<Record<string, unknown>>)[0]?.text as Record<
+			string,
+			unknown
+		>
+	)?.content;
+	assert.equal(String(generatingCommentText), "📄 PDFを生成中です…しばらくお待ちください");
+	assert.match(String(attachedCommentText), /^PDFを添付しました（.+）$/);
+	assert.ok(
+		operationOrder.indexOf("comment:📄 PDFを生成中です…しばらくお待ちください") <
+			operationOrder.indexOf("file-upload-create"),
+		"生成中コメントはPDFアップロード開始より前に投稿される",
+	);
+	assert.deepEqual(operationOrder.slice(0, 3), [
+		"page-retrieve",
+		"comment:📄 PDFを生成中です…しばらくお待ちください",
+		"page-retrieve",
+	]);
 
 	await assert.rejects(
 		() => attachMonthlyEvalPdfForTest(

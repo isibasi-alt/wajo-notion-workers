@@ -1194,6 +1194,8 @@ async function attachMonthlyEvalPdf(
 		throw new Error("月次評価DBに「評価PDF」プロパティ(files)が見つかりません。");
 	}
 
+	await createPageComment(notion, page.id, "📄 PDFを生成中です…しばらくお待ちください");
+
 	const snapshot = buildMonthlyEvalPdfSnapshot(page);
 	const fileName = generateMonthlyEvalPdfFileName(snapshot);
 	const pdfBytes = await generateMonthlyEvalPdf(evalPageId, notion);
