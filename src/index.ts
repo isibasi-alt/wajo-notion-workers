@@ -4402,10 +4402,18 @@ worker.webhook("processProjectLostReportWebhook", {
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			const body = event.body as Record<string, unknown>;
-			const projectPageId = extractProjectPageIdFromWebhook(body);
+			console.log("LOSTREPORT_BODY=", JSON.stringify(body));
+			const projectPageId =
+				extractProjectPageIdFromWebhook(body) ??
+				readNestedString(body, ["data", "id"]) ??
+				readNestedString(body, ["source", "id"]) ??
+				readNestedString(body, ["source", "page_id"]) ??
+				readNestedString(body, ["page", "page_id"]) ??
+				readNestedString(body, ["data", "page", "id"]);
 			if (!projectPageId) {
 				throw new Error(
-					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
+					"案件ページIDを特定できませんでした。Notionボタンの送信データにページIDが入っていません。 body=" +
+						JSON.stringify(body).slice(0, 800),
 				);
 			}
 			await processProjectLostReport(projectPageId, notion as unknown as NotionClient, {
