@@ -1115,7 +1115,7 @@ type MonthlyEvalPdfSnapshot = {
 	targetMonth: string;
 	closedAt: string;
 	evaluationStatus: string;
-	statusStamp: "中間" | "確定";
+	statusStamp: "集計中" | "確定";
 	quantitativeScore: number;
 	qualitativeScore: number;
 	totalScore: number;
@@ -1184,7 +1184,7 @@ function buildMonthlyEvalPdfSnapshot(page: Page): MonthlyEvalPdfSnapshot {
 		targetMonth,
 		closedAt: formatMonthlyEvalDateTime(dateStartFromProperty(properties["締め日時"])),
 		evaluationStatus: status || "未設定",
-		statusStamp: status === "確定" ? "確定" : "中間",
+		statusStamp: status === "確定" ? "確定" : "集計中",
 		quantitativeScore: normalizeMonthlyEvalScore(numberValue(properties["定量スコア"])),
 		qualitativeScore: normalizeMonthlyEvalScore(numberValue(properties["定性スコア"])),
 		totalScore: normalizeMonthlyEvalScore(numberValue(properties["総合スコア"])),
@@ -1570,7 +1570,7 @@ function monthlyEvalRankColor(rank: string): ReturnType<typeof rgb> {
 }
 
 function generateMonthlyEvalPdfFileName(snapshot: MonthlyEvalPdfSnapshot): string {
-	return `月次評価_${sanitizeFileName(snapshot.targetMonth)}_${sanitizeFileName(snapshot.salesPersonName)}_${snapshot.statusStamp}.pdf`;
+	return `月次評価_${sanitizeFileName(snapshot.targetMonth)}_${sanitizeFileName(snapshot.salesPersonName)}.pdf`;
 }
 
 export {

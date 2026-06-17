@@ -96,7 +96,7 @@ async function main(): Promise<void> {
 	assert.equal(snapshot.qualitativeScore, 28);
 	assert.equal(
 		generateMonthlyEvalPdfFileNameForTest(snapshot),
-		"月次評価_2026年5月_山田太郎_確定.pdf",
+		"月次評価_2026年5月_山田太郎.pdf",
 	);
 
 	const middleSnapshot = buildMonthlyEvalPdfSnapshotForTest({
@@ -106,10 +106,10 @@ async function main(): Promise<void> {
 			評価ステータス: selectProperty("下書き"),
 		},
 	});
-	assert.equal(middleSnapshot.statusStamp, "中間");
+	assert.equal(middleSnapshot.statusStamp, "集計中");
 	assert.equal(
 		generateMonthlyEvalPdfFileNameForTest(middleSnapshot),
-		"月次評価_2026年5月_山田太郎_中間.pdf",
+		"月次評価_2026年5月_山田太郎.pdf",
 	);
 
 	const bytes = await buildMonthlyEvalPdfBytesForTest(snapshot);
