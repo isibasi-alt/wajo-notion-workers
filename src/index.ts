@@ -1,9 +1,11 @@
 import { Worker, WebhookVerificationError } from "@notionhq/workers";
 import { j } from "@notionhq/workers/schema-builder";
+import fontkit from "@pdf-lib/fontkit";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { generateInspectedShoutaBrief, type ShoutaInput } from "./shouta-brief";
-import { PDFDocument, StandardFonts, rgb, type PDFImage } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 import {
 	evaluateLandTreasure,
 	type LandTreasureEvaluation,
@@ -1104,6 +1106,479 @@ type Page = {
 	id: string;
 	url?: string;
 	properties?: Record<string, unknown>;
+};
+
+type MonthlyEvalPdfSnapshot = {
+	pageId: string;
+	evaluationName: string;
+	salesPersonName: string;
+	targetMonth: string;
+	closedAt: string;
+	evaluationStatus: string;
+	statusStamp: "中間" | "確定";
+	quantitativeScore: number;
+	qualitativeScore: number;
+	totalScore: number;
+	rank: string;
+	kpis: Array<{ label: string; value: string; hint?: string }>;
+	activities: Array<{ label: string; value: string }>;
+	memoSections: Array<{ title: string; body: string }>;
+	commentSections: Array<{ title: string; body: string }>;
+};
+
+type MonthlyEvalPdfFonts = {
+	regular: PDFFont;
+	bold: PDFFont;
+};
+
+const MONTHLY_EVAL_PDF_PAGE_WIDTH = 595.28;
+const MONTHLY_EVAL_PDF_PAGE_HEIGHT = 841.89;
+const MONTHLY_EVAL_JAPANESE_FONT_CANDIDATES = [
+	process.env.WAJO_PDF_JAPANESE_FONT_PATH ?? "",
+	"/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+	"/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
+	"/System/Library/Fonts/ヒラギノ角ゴシック W5.ttc",
+	"/System/Library/Fonts/AppleSDGothicNeo.ttc",
+	"/System/Library/Fonts/Hiragino Sans GB.ttc",
+].filter(Boolean);
+
+const MONTHLY_EVAL_COLORS = {
+	bg: rgb(0.043, 0.043, 0.078),
+	panel: rgb(0.075, 0.075, 0.122),
+	panelSoft: rgb(0.102, 0.102, 0.169),
+	line: rgb(0.149, 0.149, 0.227),
+	text: rgb(0.957, 0.957, 0.973),
+	muted: rgb(0.541, 0.541, 0.639),
+	violet: rgb(0.486, 0.361, 1),
+	cyan: rgb(0.133, 0.827, 0.933),
+	lime: rgb(0.639, 0.902, 0.208),
+	coral: rgb(0.984, 0.443, 0.522),
+	amber: rgb(0.984, 0.749, 0.141),
+	white: rgb(1, 1, 1),
+};
+
+async function generateMonthlyEvalPdf(
+	evalPageId: string,
+	notion: NotionClient,
+): Promise<Buffer> {
+	const page = await notion.pages.retrieve({ page_id: evalPageId });
+	const snapshot = buildMonthlyEvalPdfSnapshot(page);
+	const bytes = await buildMonthlyEvalPdfBytes(snapshot);
+	return Buffer.from(bytes);
+}
+
+function buildMonthlyEvalPdfSnapshot(page: Page): MonthlyEvalPdfSnapshot {
+	const properties = page.properties ?? {};
+	const status = text(properties["評価ステータス"]);
+	const targetMonth = text(properties["対象月"]) || "-";
+	const salesPersonName = personLabelsFromProperty(properties["対象営業ユーザー"]).join("、") || "-";
+	const rank = text(properties["評価ランク"]) || "-";
+	const grossRate = numberValue(properties["粗利達成率"]);
+	const dailyRate = numberValue(properties["日報継続率"]);
+	const caseRate = numberValue(properties["案件化率"]);
+
+	return {
+		pageId: page.id,
+		evaluationName: text(properties["評価名"]) || "月次評価",
+		salesPersonName,
+		targetMonth,
+		closedAt: formatMonthlyEvalDateTime(dateStartFromProperty(properties["締め日時"])),
+		evaluationStatus: status || "未設定",
+		statusStamp: status === "確定" ? "確定" : "中間",
+		quantitativeScore: normalizeMonthlyEvalScore(numberValue(properties["定量スコア"])),
+		qualitativeScore: normalizeMonthlyEvalScore(numberValue(properties["定性スコア"])),
+		totalScore: normalizeMonthlyEvalScore(numberValue(properties["総合スコア"])),
+		rank,
+		kpis: [
+			{
+				label: "粗利達成率",
+				value: formatMonthlyEvalRate(grossRate),
+				hint: `目標 ${formatMonthlyEvalCurrency(numberValue(properties["粗利目標額"]))}`,
+			},
+			{ label: "実績粗利額", value: formatMonthlyEvalCurrency(numberValue(properties["実績粗利額"])) },
+			{ label: "成約数", value: formatMonthlyEvalCount(numberValue(properties["成約数"]), "件") },
+			{ label: "商談数", value: formatMonthlyEvalCount(numberValue(properties["商談数"]), "件") },
+			{
+				label: "案件化数",
+				value: formatMonthlyEvalCount(numberValue(properties["案件化数"]), "件"),
+				hint: `案件化率 ${formatMonthlyEvalRate(caseRate)}`,
+			},
+			{ label: "仕入れ件数", value: formatMonthlyEvalCount(numberValue(properties["仕入れ件数"]), "件") },
+		],
+		activities: [
+			{ label: "日報提出数", value: formatMonthlyEvalCount(numberValue(properties["日報提出数"]), "件") },
+			{ label: "日報継続率", value: formatMonthlyEvalRate(dailyRate) },
+			{ label: "発言ログ数", value: formatMonthlyEvalCount(numberValue(properties["発言ログ数"]), "件") },
+			{ label: "顧客接点数", value: formatMonthlyEvalCount(numberValue(properties["顧客接点数"]), "件") },
+			{ label: "営業貢献数", value: formatMonthlyEvalCount(numberValue(properties["営業貢献数"]), "件") },
+			{ label: "ナレッジ採用数", value: formatMonthlyEvalCount(numberValue(properties["ナレッジ採用数"]), "件") },
+			{ label: "AI活用pt", value: formatMonthlyEvalCount(numberValue(properties["AI活用pt"]), "pt") },
+		],
+		memoSections: [
+			{ title: "人見さんメモ", body: text(properties["人見さんメモ本文"]) },
+			{ title: "成長ポイント", body: text(properties["成長ポイント"]) },
+			{ title: "改善ポイント", body: text(properties["改善ポイント"]) },
+			{ title: "次月テーマ", body: text(properties["次月テーマ"]) },
+			{ title: "上司確認事項", body: text(properties["上司確認事項"]) },
+		],
+		commentSections: [
+			{ title: "マネージャーコメント", body: text(properties["マネージャーコメント"]) },
+			{ title: "本人コメント", body: text(properties["本人コメント"]) },
+		],
+	};
+}
+
+async function buildMonthlyEvalPdfBytes(snapshot: MonthlyEvalPdfSnapshot): Promise<Uint8Array> {
+	const pdf = await PDFDocument.create();
+	pdf.registerFontkit(fontkit);
+	const fonts = await embedMonthlyEvalPdfFonts(pdf);
+	const page = pdf.addPage([MONTHLY_EVAL_PDF_PAGE_WIDTH, MONTHLY_EVAL_PDF_PAGE_HEIGHT]);
+	const width = page.getWidth();
+	const height = page.getHeight();
+	const colors = MONTHLY_EVAL_COLORS;
+
+	page.drawRectangle({ x: 0, y: 0, width, height, color: colors.bg });
+	drawMonthlyEvalTopRule(page);
+	drawMonthlyEvalHeader(page, fonts, snapshot);
+	drawMonthlyEvalScoreHero(page, fonts, snapshot);
+	drawMonthlyEvalScoreBars(page, fonts, snapshot);
+	drawMonthlyEvalKpiCards(page, fonts, snapshot);
+	drawMonthlyEvalActivityAndMemo(page, fonts, snapshot);
+	drawMonthlyEvalComments(page, fonts, snapshot);
+	drawMonthlyEvalFooter(page, fonts, snapshot);
+
+	return pdf.save();
+}
+
+async function embedMonthlyEvalPdfFonts(pdf: PDFDocument): Promise<MonthlyEvalPdfFonts> {
+	const fontPath = resolveMonthlyEvalJapaneseFontPath();
+	if (fontPath) {
+		const fontBytes = readFileSync(fontPath);
+		const regular = fontPath.toLowerCase().endsWith(".ttc")
+			? await pdf.embedFont(fontBytes)
+			: await pdf.embedFont(fontBytes, { subset: true });
+		return { regular, bold: regular };
+	}
+	throw new Error(
+		"月次評価PDFの日本語フォントが見つかりません。WAJO_PDF_JAPANESE_FONT_PATH でttf/otfフォントのパスを指定してください。",
+	);
+}
+
+function resolveMonthlyEvalJapaneseFontPath(): string | null {
+	for (const candidate of MONTHLY_EVAL_JAPANESE_FONT_CANDIDATES) {
+		if (candidate && existsSync(candidate)) return candidate;
+	}
+	return null;
+}
+
+function drawMonthlyEvalTopRule(page: PDFPage): void {
+	const colors = MONTHLY_EVAL_COLORS;
+	page.drawRectangle({ x: 0, y: 837, width: 198, height: 5, color: colors.violet });
+	page.drawRectangle({ x: 198, y: 837, width: 198, height: 5, color: colors.cyan });
+	page.drawRectangle({ x: 396, y: 837, width: 200, height: 5, color: colors.lime });
+}
+
+function drawMonthlyEvalHeader(
+	page: PDFPage,
+	fonts: MonthlyEvalPdfFonts,
+	snapshot: MonthlyEvalPdfSnapshot,
+): void {
+	const colors = MONTHLY_EVAL_COLORS;
+	const margin = 34;
+	drawPdfText(page, "WAJO SALES OS", margin, 809, 8, fonts.bold, colors.cyan);
+	drawPdfText(page, "月次評価レポート", margin, 784, 24, fonts.bold, colors.text);
+	drawPdfText(page, snapshot.evaluationName, margin, 763, 10, fonts.regular, colors.muted);
+
+	const stampColor = snapshot.statusStamp === "確定" ? colors.lime : colors.amber;
+	page.drawRectangle({ x: 498, y: 780, width: 62, height: 30, color: stampColor, borderWidth: 0 });
+	drawPdfText(page, snapshot.statusStamp, 515, 789, 13, fonts.bold, colors.bg);
+	drawPdfText(page, `対象月 ${snapshot.targetMonth}`, 390, 754, 9, fonts.regular, colors.text);
+	drawPdfText(page, `締め ${snapshot.closedAt || "-"}`, 390, 738, 9, fonts.regular, colors.muted);
+	drawPdfText(page, `担当 ${snapshot.salesPersonName}`, 34, 738, 10, fonts.regular, colors.text);
+}
+
+function drawMonthlyEvalScoreHero(
+	page: PDFPage,
+	fonts: MonthlyEvalPdfFonts,
+	snapshot: MonthlyEvalPdfSnapshot,
+): void {
+	const colors = MONTHLY_EVAL_COLORS;
+	const y = 610;
+	drawPanel(page, 34, y, 527, 105);
+	drawPdfText(page, "総合スコア", 58, y + 75, 11, fonts.regular, colors.muted);
+	drawPdfText(page, String(snapshot.totalScore), 58, y + 24, 46, fonts.bold, colors.text);
+	drawPdfText(page, "/ 100", 142, y + 34, 16, fonts.regular, colors.muted);
+
+	const rankColor = monthlyEvalRankColor(snapshot.rank);
+	page.drawRectangle({ x: 420, y: y + 25, width: 96, height: 56, color: rankColor });
+	drawPdfText(page, "RANK", 450, y + 62, 8, fonts.bold, colors.bg);
+	drawPdfText(page, snapshot.rank || "-", 457, y + 32, 25, fonts.bold, colors.bg);
+
+	drawWrappedPdfText(
+		page,
+		"定量と活動ログを分けて確認し、次月の打ち手へつなげる評価スナップショットです。",
+		212,
+		y + 72,
+		185,
+		8,
+		10,
+		fonts.regular,
+		colors.muted,
+		2,
+	);
+	drawPdfText(page, `評価ステータス: ${snapshot.evaluationStatus}`, 212, y + 45, 11, fonts.regular, colors.text);
+	drawPdfText(page, "人見さんメモ枠つき", 212, y + 28, 10, fonts.regular, colors.cyan);
+}
+
+function drawMonthlyEvalScoreBars(
+	page: PDFPage,
+	fonts: MonthlyEvalPdfFonts,
+	snapshot: MonthlyEvalPdfSnapshot,
+): void {
+	drawPanel(page, 34, 548, 527, 46);
+	drawScoreBar(page, fonts, 58, 572, "定量スコア", snapshot.quantitativeScore, 65, MONTHLY_EVAL_COLORS.violet);
+	drawScoreBar(page, fonts, 314, 572, "定性スコア", snapshot.qualitativeScore, 35, MONTHLY_EVAL_COLORS.cyan);
+}
+
+function drawMonthlyEvalKpiCards(
+	page: PDFPage,
+	fonts: MonthlyEvalPdfFonts,
+	snapshot: MonthlyEvalPdfSnapshot,
+): void {
+	const startX = 34;
+	const startY = 407;
+	const cardW = 165;
+	const cardH = 58;
+	const gap = 16;
+	drawPdfText(page, "KPI", startX, 501, 13, fonts.bold, MONTHLY_EVAL_COLORS.text);
+	snapshot.kpis.forEach((item, index) => {
+		const col = index % 3;
+		const row = Math.floor(index / 3);
+		const x = startX + col * (cardW + gap);
+		const y = startY + (1 - row) * (cardH + 13);
+		drawPanel(page, x, y, cardW, cardH);
+		drawPdfText(page, item.label, x + 14, y + 37, 8, fonts.regular, MONTHLY_EVAL_COLORS.muted);
+		drawPdfText(page, item.value, x + 14, y + 17, 15, fonts.bold, MONTHLY_EVAL_COLORS.text);
+		if (item.hint) drawPdfText(page, item.hint, x + 14, y + 7, 6.5, fonts.regular, MONTHLY_EVAL_COLORS.cyan);
+	});
+}
+
+function drawMonthlyEvalActivityAndMemo(
+	page: PDFPage,
+	fonts: MonthlyEvalPdfFonts,
+	snapshot: MonthlyEvalPdfSnapshot,
+): void {
+	const colors = MONTHLY_EVAL_COLORS;
+	drawPanel(page, 34, 232, 220, 142);
+	drawPdfText(page, "活動ログ", 52, 351, 13, fonts.bold, colors.text);
+	let y = 328;
+	for (const item of snapshot.activities) {
+		drawPdfText(page, item.label, 52, y, 8, fonts.regular, colors.muted);
+		drawPdfText(page, item.value, 174, y, 10, fonts.bold, colors.text);
+		y -= 15;
+	}
+
+	drawPanel(page, 271, 232, 290, 142, colors.panelSoft);
+	drawPdfText(page, "人見さんメモ", 289, 351, 13, fonts.bold, colors.cyan);
+	const memo = snapshot.memoSections
+		.map((section) => `${section.title}: ${section.body || "-"}`)
+		.join("\n");
+	drawWrappedPdfText(page, memo, 289, 333, 250, 8, 11, fonts.regular, colors.text, 9);
+}
+
+function drawMonthlyEvalComments(
+	page: PDFPage,
+	fonts: MonthlyEvalPdfFonts,
+	snapshot: MonthlyEvalPdfSnapshot,
+): void {
+	const colors = MONTHLY_EVAL_COLORS;
+	const sections = [
+		...snapshot.memoSections.filter((section) => section.title !== "人見さんメモ").slice(0, 3),
+		...snapshot.commentSections,
+	];
+	drawPanel(page, 34, 72, 527, 134);
+	drawPdfText(page, "コメント・次月アクション", 52, 183, 13, fonts.bold, colors.text);
+	let y = 162;
+	for (const section of sections.slice(0, 5)) {
+		drawPdfText(page, section.title, 52, y, 8.5, fonts.bold, colors.amber);
+		const usedLines = drawWrappedPdfText(
+			page,
+			section.body || "-",
+			150,
+			y,
+			380,
+			8,
+			11,
+			fonts.regular,
+			colors.text,
+			2,
+		);
+		y -= Math.max(16, usedLines * 11 + 4);
+		if (y < 86) break;
+	}
+}
+
+function drawMonthlyEvalFooter(
+	page: PDFPage,
+	fonts: MonthlyEvalPdfFonts,
+	snapshot: MonthlyEvalPdfSnapshot,
+): void {
+	drawPdfText(
+		page,
+		`Monthly Evaluation Snapshot / ${snapshot.pageId}`,
+		34,
+		38,
+		7,
+		fonts.regular,
+		MONTHLY_EVAL_COLORS.muted,
+	);
+	drawPdfText(page, "CONFIDENTIAL", 486, 38, 7, fonts.bold, MONTHLY_EVAL_COLORS.coral);
+}
+
+function drawScoreBar(
+	page: PDFPage,
+	fonts: MonthlyEvalPdfFonts,
+	x: number,
+	y: number,
+	label: string,
+	score: number,
+	max: number,
+	color: ReturnType<typeof rgb>,
+): void {
+	const colors = MONTHLY_EVAL_COLORS;
+	const barWidth = 160;
+	drawPdfText(page, `${label} ${score}/${max}`, x, y + 10, 9, fonts.bold, colors.text);
+	page.drawRectangle({ x, y, width: barWidth, height: 7, color: colors.line });
+	page.drawRectangle({ x, y, width: barWidth * Math.min(1, Math.max(0, score / max)), height: 7, color });
+}
+
+function drawPanel(
+	page: PDFPage,
+	x: number,
+	y: number,
+	width: number,
+	height: number,
+	color = MONTHLY_EVAL_COLORS.panel,
+): void {
+	page.drawRectangle({
+		x,
+		y,
+		width,
+		height,
+		color,
+		borderColor: MONTHLY_EVAL_COLORS.line,
+		borderWidth: 0.8,
+	});
+}
+
+function drawPdfText(
+	page: PDFPage,
+	textValue: string,
+	x: number,
+	y: number,
+	size: number,
+	font: PDFFont,
+	color: ReturnType<typeof rgb>,
+): void {
+	page.drawText(textValue || "-", { x, y, size, font, color });
+}
+
+function drawWrappedPdfText(
+	page: PDFPage,
+	textValue: string,
+	x: number,
+	y: number,
+	maxWidth: number,
+	size: number,
+	lineHeight: number,
+	font: PDFFont,
+	color: ReturnType<typeof rgb>,
+	maxLines: number,
+): number {
+	const lines = wrapPdfText(textValue || "-", font, size, maxWidth).slice(0, maxLines);
+	lines.forEach((line, index) => {
+		const suffix = index === maxLines - 1 && wrapPdfText(textValue || "-", font, size, maxWidth).length > maxLines
+			? "..."
+			: "";
+		drawPdfText(page, `${line}${suffix}`, x, y - index * lineHeight, size, font, color);
+	});
+	return lines.length;
+}
+
+function wrapPdfText(textValue: string, font: PDFFont, size: number, maxWidth: number): string[] {
+	const normalized = textValue.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	const lines: string[] = [];
+	for (const sourceLine of normalized.split("\n")) {
+		let current = "";
+		for (const char of Array.from(sourceLine)) {
+			const next = `${current}${char}`;
+			if (current && font.widthOfTextAtSize(next, size) > maxWidth) {
+				lines.push(current);
+				current = char.trimStart();
+			} else {
+				current = next;
+			}
+		}
+		lines.push(current || "");
+	}
+	return lines.filter((line) => line.trim().length > 0);
+}
+
+function normalizeMonthlyEvalScore(value: number | null): number {
+	if (value === null || !Number.isFinite(value)) return 0;
+	return Math.max(0, Math.round(value));
+}
+
+function formatMonthlyEvalRate(value: number | null): string {
+	if (value === null || !Number.isFinite(value)) return "-";
+	const percent = Math.abs(value) <= 1.5 ? value * 100 : value;
+	return `${Math.round(percent * 10) / 10}%`;
+}
+
+function formatMonthlyEvalCurrency(value: number | null): string {
+	if (value === null || !Number.isFinite(value)) return "-";
+	return `¥${Math.round(value).toLocaleString("ja-JP")}`;
+}
+
+function formatMonthlyEvalCount(value: number | null, unit: string): string {
+	if (value === null || !Number.isFinite(value)) return "-";
+	return `${Math.round(value).toLocaleString("ja-JP")}${unit}`;
+}
+
+function formatMonthlyEvalDateTime(value: string): string {
+	if (!value) return "-";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return value;
+	return new Intl.DateTimeFormat("ja-JP", {
+		timeZone: "Asia/Tokyo",
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+	}).format(date);
+}
+
+function monthlyEvalRankColor(rank: string): ReturnType<typeof rgb> {
+	const colors = MONTHLY_EVAL_COLORS;
+	if (rank === "S") return colors.lime;
+	if (rank === "A") return colors.cyan;
+	if (rank === "B") return colors.violet;
+	if (rank === "C") return colors.amber;
+	if (rank === "D") return colors.coral;
+	return colors.line;
+}
+
+function generateMonthlyEvalPdfFileName(snapshot: MonthlyEvalPdfSnapshot): string {
+	return `月次評価_${sanitizeFileName(snapshot.targetMonth)}_${sanitizeFileName(snapshot.salesPersonName)}_${snapshot.statusStamp}.pdf`;
+}
+
+export {
+	buildMonthlyEvalPdfBytes as buildMonthlyEvalPdfBytesForTest,
+	buildMonthlyEvalPdfSnapshot as buildMonthlyEvalPdfSnapshotForTest,
+	generateMonthlyEvalPdf as generateMonthlyEvalPdfForTest,
+	generateMonthlyEvalPdfFileName as generateMonthlyEvalPdfFileNameForTest,
+	resolveMonthlyEvalJapaneseFontPath as resolveMonthlyEvalJapaneseFontPathForTest,
 };
 
 type CardInput = {

@@ -54,6 +54,7 @@
 		"test:deal-meeting-relation-name": "tsx src/deal-meeting-relation-name.test.ts",
 		"test:meeting-deal-two-button": "tsx src/meeting-deal-two-button.test.ts",
 		"test:meeting-evaluation-log-extraction": "tsx src/meeting-evaluation-log-extraction.test.ts",
+		"test:monthly-eval-pdf": "tsx src/monthly-eval-pdf.test.ts",
 		"test:monthly-performance-link": "tsx src/monthly-performance-link.test.ts",
 		"test:monthly-performance-skips-audit-record": "tsx src/monthly-performance-skips-audit-record.test.ts",
 		"test:project-document-request": "tsx src/project-document-request.test.ts",
