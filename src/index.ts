@@ -1154,9 +1154,9 @@ const MONTHLY_EVAL_BUNDLED_JAPANESE_FONT_DIRS = [
 	join(__dirname, "..", "assets", "fonts"),
 ];
 const MONTHLY_EVAL_BUNDLED_REGULAR_FONT_CANDIDATES =
-	MONTHLY_EVAL_BUNDLED_JAPANESE_FONT_DIRS.map((dir) => join(dir, "NotoSansJP-Regular.otf"));
+	MONTHLY_EVAL_BUNDLED_JAPANESE_FONT_DIRS.map((dir) => join(dir, "NotoSansJP-Subset-Regular.otf"));
 const MONTHLY_EVAL_BUNDLED_BOLD_FONT_CANDIDATES =
-	MONTHLY_EVAL_BUNDLED_JAPANESE_FONT_DIRS.map((dir) => join(dir, "NotoSansJP-Bold.otf"));
+	MONTHLY_EVAL_BUNDLED_JAPANESE_FONT_DIRS.map((dir) => join(dir, "NotoSansJP-Subset-Bold.otf"));
 const MONTHLY_EVAL_MACOS_JAPANESE_FONT_CANDIDATES = [
 	"/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
 	"/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",

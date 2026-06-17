@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { PDFDocument } from "pdf-lib";
 import {
 	attachMonthlyEvalPdfForTest,
@@ -92,23 +92,28 @@ async function main(): Promise<void> {
 	assert.ok(fontPath, "日本語対応フォント候補がローカルに存在する");
 	assert.match(
 		fontPath.replace(/\\/g, "/"),
-		/assets\/fonts\/NotoSansJP-Regular\.otf$/,
-		"本番Worker bundleに同梱するNoto Sans JP Regularを優先して使う",
+		/assets\/fonts\/NotoSansJP-Subset-Regular\.otf$/,
+		"本番Worker bundleに同梱するNoto Sans JP Subset Regularを優先して使う",
 	);
 	const fontPaths = resolveMonthlyEvalJapaneseFontPathsForTest();
 	assert.ok(fontPaths, "月次評価PDF用のRegular/Boldフォント候補が解決できる");
 	assert.match(
 		fontPaths.regular.replace(/\\/g, "/"),
-		/assets\/fonts\/NotoSansJP-Regular\.otf$/,
+		/assets\/fonts\/NotoSansJP-Subset-Regular\.otf$/,
 		"Regularは同梱Noto Sans JPを使う",
 	);
 	assert.match(
 		fontPaths.bold.replace(/\\/g, "/"),
-		/assets\/fonts\/NotoSansJP-Bold\.otf$/,
+		/assets\/fonts\/NotoSansJP-Subset-Bold\.otf$/,
 		"Boldは同梱Noto Sans JP Boldを使う",
 	);
 	assert.ok(existsSync(fontPaths.regular), "Regularフォントファイルが存在する");
 	assert.ok(existsSync(fontPaths.bold), "Boldフォントファイルが存在する");
+	const regularFontSize = statSync(fontPaths.regular).size;
+	const boldFontSize = statSync(fontPaths.bold).size;
+	assert.ok(regularFontSize <= 3 * 1024 * 1024, "Regular subsetは3MiB以下にする");
+	assert.ok(boldFontSize <= 3 * 1024 * 1024, "Bold subsetは3MiB以下にする");
+	assert.ok(regularFontSize + boldFontSize <= 6 * 1024 * 1024, "PDFフォント合計は6MiB以下にする");
 
 	const snapshot = buildMonthlyEvalPdfSnapshotForTest({
 		id: "monthly-eval-test",
