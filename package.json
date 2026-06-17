@@ -52,7 +52,7 @@
 		"verify:land-evaluation-v2-remote": "node scripts/verify-land-evaluation-remote.mjs",
 		"deploy:land-evaluation-v2": "NOTION_KEYRING=0 npx ntn workers deploy --local-build --no-git",
 		"test:lost-order-system": "tsx src/lost-order-system.test.ts",
-		"test:meeting-deal-openai-config": "tsx src/meeting-deal-openai-config.test.ts",
+		"test:meeting-deal-anthropic-config": "tsx src/meeting-deal-anthropic-config.test.ts",
 		"test:deal-meeting-relation-name": "tsx src/deal-meeting-relation-name.test.ts",
 		"test:meeting-deal-two-button": "tsx src/meeting-deal-two-button.test.ts",
 		"test:meeting-evaluation-log-extraction": "tsx src/meeting-evaluation-log-extraction.test.ts",

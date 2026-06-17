@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { callAnthropicChatForTest } from "./index";
+import {
+	callAnthropicChatForTest,
+	DEAL_MEETING_FEEDBACK_RESPONSE_FORMAT,
+} from "./index";
 
 async function main() {
 	const originalFetch = globalThis.fetch;
@@ -32,6 +35,7 @@ async function main() {
 			user: "user prompt",
 			maxTokens: 1234,
 			temperature: 0,
+			jsonSchema: DEAL_MEETING_FEEDBACK_RESPONSE_FORMAT,
 		});
 
 		assert.equal(raw, "{\"ok\":true}");
@@ -45,12 +49,46 @@ async function main() {
 		assert.equal((capturedInit?.headers as Record<string, string>)["content-type"], "application/json");
 
 		const body = JSON.parse(String(capturedInit?.body)) as Record<string, unknown>;
-		assert.deepEqual(body, {
-			model: "claude-test-model",
-			max_tokens: 1234,
-			system: "system prompt",
-			messages: [{ role: "user", content: "user prompt" }],
-			temperature: 0,
+		assert.equal(body.model, "claude-test-model");
+		assert.equal(body.max_tokens, 1234);
+		assert.equal(body.system, "system prompt");
+		assert.deepEqual(body.messages, [{ role: "user", content: "user prompt" }]);
+		assert.equal(body.temperature, 0);
+		assert.equal(body.response_format, undefined);
+		assert.deepEqual(body.output_config, {
+			format: {
+				type: "json_schema",
+				schema: {
+					type: "object",
+					additionalProperties: false,
+					required: [
+						"score",
+						"salesFeedback",
+						"improvementPoints",
+						"nextTalkImage",
+						"followMailHint",
+						"closingHint",
+						"status",
+						"memo",
+					],
+					properties: {
+						score: { type: "number" },
+						salesFeedback: { type: "string" },
+						improvementPoints: {
+							type: "array",
+							items: { type: "string" },
+						},
+						nextTalkImage: { type: "string" },
+						followMailHint: { type: "string" },
+						closingHint: { type: "string" },
+						status: {
+							type: "string",
+							enum: ["返却済", "要確認", "対象外"],
+						},
+						memo: { type: "string" },
+					},
+				},
+			},
 		});
 	} finally {
 		globalThis.fetch = originalFetch;

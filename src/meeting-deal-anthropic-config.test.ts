@@ -24,22 +24,29 @@ function functionBody(name: string): string {
 	throw new Error(`${name} body was not closed`);
 }
 
-for (const name of [
-	"callOpenAIMeetingMemoFormat",
-	"callOpenAIMeetingFeedback",
-	"callOpenAIManagerReview",
-	"callOpenAISalesPerformanceReview",
-	"callOpenAIDealMeetingFeedback",
-	"callOpenAISecondReview",
-	"callOpenAIDealNextActions",
-	"callOpenAISalesTalkFinalize",
-	"callOpenAIMeetingPrepReport",
-]) {
+const anthropicTextCalls: Array<[string, string]> = [
+	["callAnthropicMeetingMemoFormat", "MEETING_MEMO_RESPONSE_FORMAT"],
+	["callAnthropicMeetingFeedback", "MEETING_FEEDBACK_RESPONSE_FORMAT"],
+	["callAnthropicManagerReview", "MANAGER_REVIEW_RESPONSE_FORMAT"],
+	["callAnthropicSalesPerformanceReview", "SALES_PERFORMANCE_REVIEW_RESPONSE_FORMAT"],
+	["callAnthropicDealMeetingFeedback", "DEAL_MEETING_FEEDBACK_RESPONSE_FORMAT"],
+	["callAnthropicSecondReview", "SECOND_REVIEW_RESPONSE_FORMAT"],
+	["callAnthropicDealNextActions", "DEAL_NEXT_ACTION_RESPONSE_FORMAT"],
+	["callAnthropicSalesTalkFinalize", "SALES_TALK_FINALIZE_RESPONSE_FORMAT"],
+	["callAnthropicMeetingPrepReport", "MEETING_PREP_RESPONSE_FORMAT"],
+];
+
+for (const [name, responseFormatName] of anthropicTextCalls) {
 	const body = functionBody(name);
 	assert.match(
 		body,
 		/callAnthropicChat\(/,
 		`${name} should use the Anthropic chat helper`,
+	);
+	assert.match(
+		body,
+		new RegExp(`jsonSchema:\\s*${responseFormatName}`),
+		`${name} should pass its JSON schema to Anthropic structured outputs`,
 	);
 	assert.doesNotMatch(
 		body,
@@ -58,4 +65,19 @@ for (const name of [
 	);
 }
 
-console.log("meeting-deal-openai-config.test.ts passed");
+const legacyProviderPrefix = ["call", "Open", "AI"].join("");
+for (const staleSuffix of [
+	"MeetingMemoFormat",
+	"MeetingFeedback",
+	"ManagerReview",
+	"SalesPerformanceReview",
+	"DealMeetingFeedback",
+	"SecondReview",
+	"DealNextActions",
+	"SalesTalkFinalize",
+	"MeetingPrepReport",
+]) {
+	assert.doesNotMatch(source, new RegExp(`async function ${legacyProviderPrefix}${staleSuffix}\\b`));
+}
+
+console.log("meeting-deal-anthropic-config.test.ts passed");

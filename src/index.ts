@@ -8394,7 +8394,7 @@ async function processMeetingMemoFormat(
 
 	let formatted: MeetingMemoAIResponse;
 	try {
-		formatted = await callOpenAIMeetingMemoFormat({
+		formatted = await callAnthropicMeetingMemoFormat({
 			title: titleText,
 			meetingType,
 			source,
@@ -8412,7 +8412,7 @@ async function processMeetingMemoFormat(
 			meetingPageId: meetingPage.id,
 			action: "error",
 			status: "エラー",
-			message: `OpenAI API呼び出し失敗: ${message}`,
+			message: `Anthropic API呼び出し失敗: ${message}`,
 		};
 	}
 
@@ -8542,7 +8542,7 @@ function buildMeetingMemoFormatMemo(
 	return lines.join("\n").slice(0, 1800);
 }
 
-async function callOpenAIMeetingMemoFormat(input: {
+async function callAnthropicMeetingMemoFormat(input: {
 	title: string;
 	meetingType: string;
 	source: string;
@@ -8607,6 +8607,7 @@ async function callOpenAIMeetingMemoFormat(input: {
 		user: userPrompt,
 		maxTokens: 2000,
 		temperature: 0,
+		jsonSchema: MEETING_MEMO_RESPONSE_FORMAT,
 	});
 	return parseMeetingMemoAIResponse(raw);
 }
@@ -9384,7 +9385,7 @@ async function processMeetingFeedback(
 
 	let feedback: MeetingFeedbackAIResponse;
 	try {
-		feedback = await callOpenAIMeetingFeedback({
+		feedback = await callAnthropicMeetingFeedback({
 			title: titleText,
 			meetingType,
 			source,
@@ -9402,7 +9403,7 @@ async function processMeetingFeedback(
 			meetingPageId: meetingPage.id,
 			action: "error",
 			status: "エラー",
-			message: `OpenAI API呼び出し失敗: ${message}`,
+			message: `Anthropic API呼び出し失敗: ${message}`,
 		};
 	}
 
@@ -10514,7 +10515,7 @@ function buildMeetingTaskResultMemo(input: {
 	].filter(Boolean).join("\n").slice(0, 1800);
 }
 
-async function callOpenAIMeetingFeedback(input: {
+async function callAnthropicMeetingFeedback(input: {
 	title: string;
 	meetingType: string;
 	source: string;
@@ -10560,6 +10561,7 @@ async function callOpenAIMeetingFeedback(input: {
 		user: userPrompt,
 		maxTokens: 2000,
 		temperature: 0,
+		jsonSchema: MEETING_FEEDBACK_RESPONSE_FORMAT,
 	});
 	return parseMeetingFeedbackAIResponse(raw);
 }
@@ -10695,7 +10697,7 @@ async function processManagerReview(
 
 	let review: ManagerReviewAIResponse;
 	try {
-		review = await callOpenAIManagerReview({
+		review = await callAnthropicManagerReview({
 			title: titleText,
 			source,
 			missing,
@@ -10716,7 +10718,7 @@ async function processManagerReview(
 			managerReviewPageId: managerReviewPage.id,
 			action: "error",
 			status: "要確認",
-			message: `OpenAI API呼び出し失敗: ${message}`,
+			message: `Anthropic API呼び出し失敗: ${message}`,
 		};
 	}
 
@@ -10840,7 +10842,7 @@ function buildManagerReviewMemo(
 	return lines.join("\n").slice(0, 1800);
 }
 
-async function callOpenAIManagerReview(input: {
+async function callAnthropicManagerReview(input: {
 	title: string;
 	source: string;
 	missing: string[];
@@ -10883,6 +10885,7 @@ async function callOpenAIManagerReview(input: {
 		user: userPrompt,
 		maxTokens: 4000,
 		temperature: 0,
+		jsonSchema: MANAGER_REVIEW_RESPONSE_FORMAT,
 	});
 	return parseManagerReviewAIResponse(raw);
 }
@@ -11014,7 +11017,7 @@ async function processSalesPerformanceReview(
 
 	let review: SalesPerformanceReviewAIResponse;
 	try {
-		review = await callOpenAISalesPerformanceReview({
+		review = await callAnthropicSalesPerformanceReview({
 			title: titleText,
 			auditStatus,
 			targetPeriod,
@@ -11039,7 +11042,7 @@ async function processSalesPerformanceReview(
 			salesPerformancePageId: performancePage.id,
 			action: "error",
 			status: "要確認",
-			message: `OpenAI API呼び出し失敗: ${message}`,
+			message: `Anthropic API呼び出し失敗: ${message}`,
 			sourcePreview: [],
 		};
 	}
@@ -11660,7 +11663,7 @@ function buildSalesPerformanceReviewPrompts(
 	return { systemPrompt, userPrompt };
 }
 
-async function callOpenAISalesPerformanceReview(
+async function callAnthropicSalesPerformanceReview(
 	input: SalesPerformanceReviewPromptInput,
 ): Promise<SalesPerformanceReviewAIResponse> {
 	const { systemPrompt, userPrompt } = buildSalesPerformanceReviewPrompts(input);
@@ -11670,6 +11673,7 @@ async function callOpenAISalesPerformanceReview(
 		user: userPrompt,
 		maxTokens: 4000,
 		temperature: 0,
+		jsonSchema: SALES_PERFORMANCE_REVIEW_RESPONSE_FORMAT,
 	});
 	return parseSalesPerformanceReviewAIResponse(raw);
 }
@@ -11697,10 +11701,12 @@ async function callAnthropicChat(input: {
 	user: string;
 	maxTokens: number;
 	temperature: number;
+	jsonSchema?: WajoJsonSchemaResponseFormat;
 }): Promise<string> {
 	const { apiKey, model } = resolveWajoAnthropicConfig(process.env);
 	if (!apiKey) throw new Error("WAJO_ANTHROPIC_API_KEY / ANTHROPIC_API_KEY が未設定です");
 
+	const outputConfig = buildAnthropicOutputConfig(input.jsonSchema);
 	const response = await fetch("https://api.anthropic.com/v1/messages", {
 		method: "POST",
 		headers: {
@@ -11714,6 +11720,7 @@ async function callAnthropicChat(input: {
 			system: input.system,
 			messages: [{ role: "user", content: input.user }],
 			temperature: input.temperature,
+			...(outputConfig ? { output_config: outputConfig } : {}),
 		}),
 	});
 
@@ -11730,6 +11737,54 @@ async function callAnthropicChat(input: {
 		json.content?.[0]?.text;
 	if (!raw) throw new Error("Anthropic からレスポンスが返りませんでした");
 	return raw;
+}
+
+type WajoJsonSchemaResponseFormat = {
+	type: "json_schema";
+	json_schema: {
+		name: string;
+		strict?: boolean;
+		schema: unknown;
+	};
+};
+
+const ANTHROPIC_JSON_SCHEMA_UNSUPPORTED_KEYS = new Set([
+	"minimum",
+	"maximum",
+	"exclusiveMinimum",
+	"exclusiveMaximum",
+	"minLength",
+	"maxLength",
+	"pattern",
+	"format",
+	"minItems",
+	"maxItems",
+	"multipleOf",
+]);
+
+function buildAnthropicOutputConfig(
+	responseFormat: WajoJsonSchemaResponseFormat | undefined,
+): { format: { type: "json_schema"; schema: unknown } } | undefined {
+	if (!responseFormat) return undefined;
+	return {
+		format: {
+			type: "json_schema",
+			schema: sanitizeAnthropicJsonSchema(responseFormat.json_schema.schema),
+		},
+	};
+}
+
+function sanitizeAnthropicJsonSchema(schema: unknown): unknown {
+	if (Array.isArray(schema)) {
+		return schema.map((item) => sanitizeAnthropicJsonSchema(item));
+	}
+	if (!schema || typeof schema !== "object") return schema;
+	const result: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(schema)) {
+		if (ANTHROPIC_JSON_SCHEMA_UNSUPPORTED_KEYS.has(key)) continue;
+		result[key] = sanitizeAnthropicJsonSchema(value);
+	}
+	return result;
 }
 
 export {
@@ -15284,14 +15339,14 @@ async function processDealMeetingFeedback(
 
 	let feedback: DealMeetingFeedbackAIResponse;
 	try {
-		feedback = await callOpenAIDealMeetingFeedback(payload);
+		feedback = await callAnthropicDealMeetingFeedback(payload);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return {
 			dealPageId: input.dealPageId,
 			action: "error",
 			score: null,
-			message: `OpenAI API呼び出し失敗: ${message}`,
+			message: `Anthropic API呼び出し失敗: ${message}`,
 		};
 	}
 
@@ -15374,7 +15429,7 @@ function buildDealMeetingFeedbackPayload(
 	return lines.join("\n").slice(0, 12000);
 }
 
-async function callOpenAIDealMeetingFeedback(
+async function callAnthropicDealMeetingFeedback(
 	payload: string,
 ): Promise<DealMeetingFeedbackAIResponse> {
 	const systemPrompt = [
@@ -15407,6 +15462,7 @@ async function callOpenAIDealMeetingFeedback(
 		user: payload,
 		maxTokens: 2000,
 		temperature: 0,
+		jsonSchema: DEAL_MEETING_FEEDBACK_RESPONSE_FORMAT,
 	});
 	return parseDealMeetingFeedbackAIResponse(raw);
 }
@@ -15489,7 +15545,7 @@ async function processDealFeedbackSecondReview(
 		meetingContext = await fetchMeetingContext(notion, deal.relatedMeetingId);
 	}
 
-	// OpenAI送信ペイロード構築（個人情報を除外）
+	// Anthropic送信ペイロード構築（個人情報を除外）
 	const payload = buildSecondReviewPayload(deal, meetingContext);
 
 	if (input.dryRun) {
@@ -15506,10 +15562,10 @@ async function processDealFeedbackSecondReview(
 		};
 	}
 
-	// OpenAI 呼び出し
+	// Anthropic 呼び出し
 	let reviewResponse: SecondReviewAIResponse;
 	try {
-		reviewResponse = await callOpenAISecondReview(payload);
+		reviewResponse = await callAnthropicSecondReview(payload);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		await safeUpdateExistingProperties(notion, dealPage, {
@@ -15523,7 +15579,7 @@ async function processDealFeedbackSecondReview(
 			dealPageId: input.dealPageId,
 			action: "error",
 			quality: null,
-			message: `OpenAI API呼び出し失敗: ${message}`,
+			message: `Anthropic API呼び出し失敗: ${message}`,
 		};
 	}
 
@@ -15643,7 +15699,7 @@ function buildSecondReviewPayload(
 	return lines.join("\n").slice(0, 6000);
 }
 
-async function callOpenAISecondReview(payload: string): Promise<SecondReviewAIResponse> {
+async function callAnthropicSecondReview(payload: string): Promise<SecondReviewAIResponse> {
 	const systemPrompt = [
 		"あなたは和上ホールディングスの営業フィードバック二次レビュアーです。",
 		"一次AIが返した営業フィードバックを、営業現場で本当に次の商談に使えるかという観点でレビューしてください。",
@@ -15672,6 +15728,7 @@ async function callOpenAISecondReview(payload: string): Promise<SecondReviewAIRe
 		user: payload,
 		maxTokens: 4000,
 		temperature: 0,
+		jsonSchema: SECOND_REVIEW_RESPONSE_FORMAT,
 	});
 
 	return parseSecondReviewResponse(raw);
@@ -15807,7 +15864,7 @@ async function processDealNextActions(
 	const existingTasks = await findTeamTasksByDeal(notion, deal.page.id);
 	let aiResponse: DealNextActionAIResponse;
 	try {
-		aiResponse = await callOpenAIDealNextActions(source);
+		aiResponse = await callAnthropicDealNextActions(source);
 	} catch (error) {
 		return {
 			dealPageId: input.dealPageId,
@@ -15908,7 +15965,7 @@ function buildDealNextActionPayload(
 	return lines.join("\n").slice(0, 10000);
 }
 
-async function callOpenAIDealNextActions(
+async function callAnthropicDealNextActions(
 	payload: string,
 ): Promise<DealNextActionAIResponse> {
 	const today = new Date().toISOString().slice(0, 10);
@@ -15941,6 +15998,7 @@ async function callOpenAIDealNextActions(
 		user: payload,
 		maxTokens: 2000,
 		temperature: 0,
+		jsonSchema: DEAL_NEXT_ACTION_RESPONSE_FORMAT,
 	});
 	return parseDealNextActionAIResponse(raw);
 }
@@ -16642,7 +16700,7 @@ async function processSalesTalkFinalize(
 
 	let aiResponse: SalesTalkFinalizeAIResponse;
 	try {
-		aiResponse = await callOpenAISalesTalkFinalize(news);
+		aiResponse = await callAnthropicSalesTalkFinalize(news);
 	} catch (error) {
 		return {
 			newsPageId: input.newsPageId,
@@ -16728,7 +16786,7 @@ function readSalesTalkNews(page: Page): SalesTalkNewsInfo {
 	};
 }
 
-async function callOpenAISalesTalkFinalize(
+async function callAnthropicSalesTalkFinalize(
 	news: SalesTalkNewsInfo,
 ): Promise<SalesTalkFinalizeAIResponse> {
 	const systemPrompt = [
@@ -16764,6 +16822,7 @@ async function callOpenAISalesTalkFinalize(
 		user: payload,
 		maxTokens: 4000,
 		temperature: 0,
+		jsonSchema: SALES_TALK_FINALIZE_RESPONSE_FORMAT,
 	});
 	return parseSalesTalkFinalizeAIResponse(raw);
 }
@@ -20022,14 +20081,14 @@ async function buildMeetingPrepReportWithAI(
 	const { apiKey } = resolveWajoAnthropicConfig(process.env);
 	if (!apiKey) return fallback;
 	try {
-		return await callOpenAIMeetingPrepReport(company, fallback);
+		return await callAnthropicMeetingPrepReport(company, fallback);
 	} catch (error) {
 		console.log("meeting prep AI fallback used", String(error));
 		return fallback;
 	}
 }
 
-async function callOpenAIMeetingPrepReport(
+async function callAnthropicMeetingPrepReport(
 	company: CompanyInfo,
 	fallback: MeetingPrepReport,
 ): Promise<MeetingPrepReport> {
@@ -20083,6 +20142,7 @@ async function callOpenAIMeetingPrepReport(
 		user: userPrompt.slice(0, 12000),
 		maxTokens: 4000,
 		temperature: 0,
+		jsonSchema: MEETING_PREP_RESPONSE_FORMAT,
 	});
 	return normalizeMeetingPrepAIResponse(raw, fallback);
 }
