@@ -4,6 +4,7 @@ import fontkit from "@pdf-lib/fontkit";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { generateInspectedShoutaBrief, type ShoutaInput } from "./shouta-brief";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 import {
@@ -1131,6 +1132,11 @@ type MonthlyEvalPdfFonts = {
 	bold: PDFFont;
 };
 
+type MonthlyEvalPdfFontPaths = {
+	regular: string;
+	bold: string;
+};
+
 type MonthlyEvalPdfAttachResult = {
 	action: "attached";
 	pageId: string;
@@ -1141,13 +1147,33 @@ type MonthlyEvalPdfAttachResult = {
 
 const MONTHLY_EVAL_PDF_PAGE_WIDTH = 595.28;
 const MONTHLY_EVAL_PDF_PAGE_HEIGHT = 841.89;
-const MONTHLY_EVAL_JAPANESE_FONT_CANDIDATES = [
-	process.env.WAJO_PDF_JAPANESE_FONT_PATH ?? "",
+const MONTHLY_EVAL_BUNDLED_JAPANESE_FONT_DIRS = [
+	join(process.cwd(), "dist", "assets", "fonts"),
+	join(process.cwd(), "assets", "fonts"),
+	join(__dirname, "assets", "fonts"),
+	join(__dirname, "..", "assets", "fonts"),
+];
+const MONTHLY_EVAL_BUNDLED_REGULAR_FONT_CANDIDATES =
+	MONTHLY_EVAL_BUNDLED_JAPANESE_FONT_DIRS.map((dir) => join(dir, "NotoSansJP-Regular.otf"));
+const MONTHLY_EVAL_BUNDLED_BOLD_FONT_CANDIDATES =
+	MONTHLY_EVAL_BUNDLED_JAPANESE_FONT_DIRS.map((dir) => join(dir, "NotoSansJP-Bold.otf"));
+const MONTHLY_EVAL_MACOS_JAPANESE_FONT_CANDIDATES = [
 	"/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
 	"/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
 	"/System/Library/Fonts/ヒラギノ角ゴシック W5.ttc",
 	"/System/Library/Fonts/AppleSDGothicNeo.ttc",
 	"/System/Library/Fonts/Hiragino Sans GB.ttc",
+];
+const MONTHLY_EVAL_JAPANESE_REGULAR_FONT_CANDIDATES = [
+	process.env.WAJO_PDF_JAPANESE_FONT_PATH ?? "",
+	...MONTHLY_EVAL_BUNDLED_REGULAR_FONT_CANDIDATES,
+	...MONTHLY_EVAL_MACOS_JAPANESE_FONT_CANDIDATES,
+].filter(Boolean);
+const MONTHLY_EVAL_JAPANESE_BOLD_FONT_CANDIDATES = [
+	process.env.WAJO_PDF_JAPANESE_FONT_PATH ?? "",
+	...MONTHLY_EVAL_BUNDLED_BOLD_FONT_CANDIDATES,
+	...MONTHLY_EVAL_BUNDLED_REGULAR_FONT_CANDIDATES,
+	...MONTHLY_EVAL_MACOS_JAPANESE_FONT_CANDIDATES,
 ].filter(Boolean);
 
 const MONTHLY_EVAL_COLORS = {
@@ -1338,21 +1364,42 @@ async function buildMonthlyEvalPdfBytes(snapshot: MonthlyEvalPdfSnapshot): Promi
 }
 
 async function embedMonthlyEvalPdfFonts(pdf: PDFDocument): Promise<MonthlyEvalPdfFonts> {
-	const fontPath = resolveMonthlyEvalJapaneseFontPath();
-	if (fontPath) {
-		const fontBytes = readFileSync(fontPath);
-		const regular = fontPath.toLowerCase().endsWith(".ttc")
-			? await pdf.embedFont(fontBytes)
-			: await pdf.embedFont(fontBytes, { subset: true });
-		return { regular, bold: regular };
+	const fontPaths = resolveMonthlyEvalJapaneseFontPaths();
+	if (fontPaths) {
+		const regular = await embedMonthlyEvalPdfFont(pdf, fontPaths.regular);
+		const bold =
+			fontPaths.bold === fontPaths.regular
+				? regular
+				: await embedMonthlyEvalPdfFont(pdf, fontPaths.bold);
+		return { regular, bold };
 	}
 	throw new Error(
-		"月次評価PDFの日本語フォントが見つかりません。WAJO_PDF_JAPANESE_FONT_PATH でttf/otfフォントのパスを指定してください。",
+		"月次評価PDFの日本語フォントが見つかりません。assets/fonts にNoto Sans JPを同梱するか、WAJO_PDF_JAPANESE_FONT_PATH でttf/otfフォントのパスを指定してください。",
 	);
 }
 
+async function embedMonthlyEvalPdfFont(pdf: PDFDocument, fontPath: string): Promise<PDFFont> {
+	const fontBytes = readFileSync(fontPath);
+	return fontPath.toLowerCase().endsWith(".ttc")
+		? pdf.embedFont(fontBytes)
+		: pdf.embedFont(fontBytes, { subset: true });
+}
+
+function resolveMonthlyEvalJapaneseFontPaths(): MonthlyEvalPdfFontPaths | null {
+	const regular = firstExistingPath(MONTHLY_EVAL_JAPANESE_REGULAR_FONT_CANDIDATES);
+	if (!regular) return null;
+	return {
+		regular,
+		bold: firstExistingPath(MONTHLY_EVAL_JAPANESE_BOLD_FONT_CANDIDATES) ?? regular,
+	};
+}
+
 function resolveMonthlyEvalJapaneseFontPath(): string | null {
-	for (const candidate of MONTHLY_EVAL_JAPANESE_FONT_CANDIDATES) {
+	return resolveMonthlyEvalJapaneseFontPaths()?.regular ?? null;
+}
+
+function firstExistingPath(candidates: string[]): string | null {
+	for (const candidate of candidates) {
 		if (candidate && existsSync(candidate)) return candidate;
 	}
 	return null;
@@ -1667,6 +1714,7 @@ export {
 	generateMonthlyEvalPdf as generateMonthlyEvalPdfForTest,
 	generateMonthlyEvalPdfFileName as generateMonthlyEvalPdfFileNameForTest,
 	resolveMonthlyEvalJapaneseFontPath as resolveMonthlyEvalJapaneseFontPathForTest,
+	resolveMonthlyEvalJapaneseFontPaths as resolveMonthlyEvalJapaneseFontPathsForTest,
 };
 
 type CardInput = {

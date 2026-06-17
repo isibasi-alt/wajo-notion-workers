@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { PDFDocument } from "pdf-lib";
 import {
 	attachMonthlyEvalPdfForTest,
@@ -6,6 +7,7 @@ import {
 	buildMonthlyEvalPdfSnapshotForTest,
 	generateMonthlyEvalPdfFileNameForTest,
 	resolveMonthlyEvalJapaneseFontPathForTest,
+	resolveMonthlyEvalJapaneseFontPathsForTest,
 } from "./index";
 
 function titleProperty(value: string): Record<string, unknown> {
@@ -88,6 +90,25 @@ function sampleMonthlyEvalProperties(): Record<string, unknown> {
 async function main(): Promise<void> {
 	const fontPath = resolveMonthlyEvalJapaneseFontPathForTest();
 	assert.ok(fontPath, "日本語対応フォント候補がローカルに存在する");
+	assert.match(
+		fontPath.replace(/\\/g, "/"),
+		/assets\/fonts\/NotoSansJP-Regular\.otf$/,
+		"本番Worker bundleに同梱するNoto Sans JP Regularを優先して使う",
+	);
+	const fontPaths = resolveMonthlyEvalJapaneseFontPathsForTest();
+	assert.ok(fontPaths, "月次評価PDF用のRegular/Boldフォント候補が解決できる");
+	assert.match(
+		fontPaths.regular.replace(/\\/g, "/"),
+		/assets\/fonts\/NotoSansJP-Regular\.otf$/,
+		"Regularは同梱Noto Sans JPを使う",
+	);
+	assert.match(
+		fontPaths.bold.replace(/\\/g, "/"),
+		/assets\/fonts\/NotoSansJP-Bold\.otf$/,
+		"Boldは同梱Noto Sans JP Boldを使う",
+	);
+	assert.ok(existsSync(fontPaths.regular), "Regularフォントファイルが存在する");
+	assert.ok(existsSync(fontPaths.bold), "Boldフォントファイルが存在する");
 
 	const snapshot = buildMonthlyEvalPdfSnapshotForTest({
 		id: "monthly-eval-test",

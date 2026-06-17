@@ -3,7 +3,7 @@
 	"version": "0.0.0",
 	"private": true,
 	"scripts": {
-		"build": "tsc",
+		"build": "tsc && mkdir -p dist/assets/fonts && cp -R assets/fonts/. dist/assets/fonts/",
 		"check": "tsc --noEmit",
 		"gmail:inquiry:run": "zsh scripts/run-gmail-inquiry-inbox.sh",
 		"gmail:inquiry:install-5min": "zsh scripts/install-gmail-inquiry-worker-launchagent.sh",
