@@ -1131,6 +1131,14 @@ type MonthlyEvalPdfFonts = {
 	bold: PDFFont;
 };
 
+type MonthlyEvalPdfAttachResult = {
+	action: "attached";
+	pageId: string;
+	fileName: string;
+	fileUploadId: string;
+	message: string;
+};
+
 const MONTHLY_EVAL_PDF_PAGE_WIDTH = 595.28;
 const MONTHLY_EVAL_PDF_PAGE_HEIGHT = 841.89;
 const MONTHLY_EVAL_JAPANESE_FONT_CANDIDATES = [
@@ -1165,6 +1173,83 @@ async function generateMonthlyEvalPdf(
 	const snapshot = buildMonthlyEvalPdfSnapshot(page);
 	const bytes = await buildMonthlyEvalPdfBytes(snapshot);
 	return Buffer.from(bytes);
+}
+
+async function attachMonthlyEvalPdf(
+	evalPageId: string,
+	notion: NotionClient,
+	now = new Date(),
+): Promise<MonthlyEvalPdfAttachResult> {
+	if (!notion.fileUploads?.create || !notion.fileUploads.send) {
+		throw new Error("この実行環境ではPDFアップロード機能を利用できません。");
+	}
+
+	const page = await notion.pages.retrieve({ page_id: evalPageId });
+	const evaluationPdfProperty = page.properties?.["評価PDF"];
+	if (
+		!evaluationPdfProperty ||
+		typeof evaluationPdfProperty !== "object" ||
+		(evaluationPdfProperty as Record<string, unknown>).type !== "files"
+	) {
+		throw new Error("月次評価DBに「評価PDF」プロパティ(files)が見つかりません。");
+	}
+
+	const snapshot = buildMonthlyEvalPdfSnapshot(page);
+	const fileName = generateMonthlyEvalPdfFileName(snapshot);
+	const pdfBytes = await generateMonthlyEvalPdf(evalPageId, notion);
+	const created = await notion.fileUploads.create({
+		mode: "single_part",
+		filename: fileName,
+		content_type: "application/pdf",
+	});
+	const fileUploadId =
+		firstString(
+			(created as Record<string, unknown>).id,
+			readNestedString(created, ["file_upload", "id"]),
+		) ?? "";
+	if (!fileUploadId) {
+		throw new Error("PDFアップロードIDの取得に失敗しました。");
+	}
+
+	await notion.fileUploads.send({
+		file_upload_id: fileUploadId,
+		file: {
+			filename: fileName,
+			data: new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" }),
+		},
+	});
+	if (notion.fileUploads.complete) {
+		try {
+			await notion.fileUploads.complete({ file_upload_id: fileUploadId });
+		} catch {
+			// single_partではcomplete不要の場合があるため無視
+		}
+	}
+
+	await notion.pages.update({
+		page_id: page.id,
+		properties: {
+			評価PDF: {
+				files: [
+					{
+						type: "file_upload",
+						file_upload: { id: fileUploadId },
+						name: fileName,
+					},
+				],
+			},
+		},
+	});
+
+	const message = `PDFを添付しました（${formatMonthlyEvalDateTime(now.toISOString())}）`;
+	await createPageComment(notion, page.id, message);
+	return {
+		action: "attached",
+		pageId: page.id,
+		fileName,
+		fileUploadId,
+		message,
+	};
 }
 
 function buildMonthlyEvalPdfSnapshot(page: Page): MonthlyEvalPdfSnapshot {
@@ -1574,6 +1659,7 @@ function generateMonthlyEvalPdfFileName(snapshot: MonthlyEvalPdfSnapshot): strin
 }
 
 export {
+	attachMonthlyEvalPdf as attachMonthlyEvalPdfForTest,
 	buildMonthlyEvalPdfBytes as buildMonthlyEvalPdfBytesForTest,
 	buildMonthlyEvalPdfSnapshot as buildMonthlyEvalPdfSnapshotForTest,
 	generateMonthlyEvalPdf as generateMonthlyEvalPdfForTest,
@@ -4587,6 +4673,25 @@ worker.webhook("processSalesPerformanceReviewWebhook", {
 				{ salesPerformancePageId, dryRun: false },
 				notion as unknown as NotionClient,
 			);
+		}
+	},
+});
+
+worker.webhook("attachMonthlyEvalPdfWebhook", {
+	title: "WAJO 月次評価PDF添付Webhook",
+	description:
+		"月次評価レコードのページIDからPDFを生成し、評価PDFプロパティへ添付します。",
+	execute: async (events, { notion }) => {
+		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const evalPageId = extractMonthlyEvalPageIdFromWebhook(body);
+			if (!evalPageId) {
+				throw new Error(
+					"evalPageId / monthlyEvalPageId / pageId / entity.id のいずれからも月次評価ページIDを特定できませんでした。",
+				);
+			}
+			await attachMonthlyEvalPdf(evalPageId, notion as unknown as NotionClient);
 		}
 	},
 });
@@ -17771,6 +17876,33 @@ function extractSalesPerformancePageIdFromWebhook(
 		readNestedString(body, ["data", "sales_performance_page_id"]),
 		readNestedString(body, ["data", "performancePageId"]),
 		readNestedString(body, ["data", "performance_page_id"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		pageIdFromUrl(readNestedString(body, ["data", "URL"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+function extractMonthlyEvalPageIdFromWebhook(
+	body: Record<string, unknown>,
+): string | undefined {
+	return firstString(
+		body.evalPageId,
+		body.eval_page_id,
+		body.monthlyEvalPageId,
+		body.monthly_eval_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "evalPageId"]),
+		readNestedString(body, ["data", "eval_page_id"]),
+		readNestedString(body, ["data", "monthlyEvalPageId"]),
+		readNestedString(body, ["data", "monthly_eval_page_id"]),
 		readNestedString(body, ["data", "pageId"]),
 		readNestedString(body, ["data", "page_id"]),
 		pageIdFromUrl(readNestedString(body, ["data", "url"])),

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { PDFDocument } from "pdf-lib";
 import {
+	attachMonthlyEvalPdfForTest,
 	buildMonthlyEvalPdfBytesForTest,
 	buildMonthlyEvalPdfSnapshotForTest,
 	generateMonthlyEvalPdfFileNameForTest,
@@ -40,6 +41,10 @@ function peopleProperty(name: string): Record<string, unknown> {
 	};
 }
 
+function filesProperty(): Record<string, unknown> {
+	return { type: "files", files: [] };
+}
+
 function sampleMonthlyEvalProperties(): Record<string, unknown> {
 	return {
 		評価名: titleProperty("2026年5月 山田太郎｜月次評価"),
@@ -76,6 +81,7 @@ function sampleMonthlyEvalProperties(): Record<string, unknown> {
 		上司確認事項: richTextProperty("専売許可の事前確認を月初に行う。"),
 		マネージャーコメント: richTextProperty("数字と活動の両面で前進。次月は案件化率を重点確認。"),
 		本人コメント: richTextProperty("紹介案件の追客速度を上げる。"),
+		評価PDF: filesProperty(),
 	};
 }
 
@@ -122,6 +128,104 @@ async function main(): Promise<void> {
 	const page = pdf.getPage(0);
 	assert.ok(Math.abs(page.getWidth() - 595.28) < 1, "A4縦の幅");
 	assert.ok(Math.abs(page.getHeight() - 841.89) < 1, "A4縦の高さ");
+
+	const updateCalls: Array<Record<string, unknown>> = [];
+	const uploadCreateCalls: Array<Record<string, unknown>> = [];
+	const uploadSendCalls: Array<Record<string, unknown>> = [];
+	const uploadCompleteCalls: Array<Record<string, unknown>> = [];
+	const commentCalls: Array<Record<string, unknown>> = [];
+	const notion = {
+		dataSources: {
+			query: async () => ({ results: [] }),
+		},
+		pages: {
+			create: async () => ({ id: "unused" }),
+			retrieve: async () => ({
+				id: "monthly-eval-test",
+				properties: sampleMonthlyEvalProperties(),
+			}),
+			update: async (args: Record<string, unknown>) => {
+				updateCalls.push(args);
+				return { id: "monthly-eval-test", properties: sampleMonthlyEvalProperties() };
+			},
+		},
+		fileUploads: {
+			create: async (args: Record<string, unknown>) => {
+				uploadCreateCalls.push(args);
+				return { id: "file-upload-1" };
+			},
+			send: async (args: Record<string, unknown>) => {
+				uploadSendCalls.push(args);
+				return {};
+			},
+			complete: async (args: Record<string, unknown>) => {
+				uploadCompleteCalls.push(args);
+				return {};
+			},
+		},
+		comments: {
+			create: async (args: Record<string, unknown>) => {
+				commentCalls.push(args);
+				return {};
+			},
+		},
+	};
+	const result = await attachMonthlyEvalPdfForTest(
+		"monthly-eval-test",
+		notion as never,
+		new Date("2026-06-17T03:00:00.000Z"),
+	);
+	assert.equal(result.action, "attached");
+	assert.equal(result.fileName, "月次評価_2026年5月_山田太郎.pdf");
+	assert.equal(uploadCreateCalls.length, 1);
+	assert.deepEqual(uploadCreateCalls[0], {
+		mode: "single_part",
+		filename: "月次評価_2026年5月_山田太郎.pdf",
+		content_type: "application/pdf",
+	});
+	assert.equal(uploadSendCalls.length, 1);
+	assert.equal(uploadSendCalls[0]?.file_upload_id, "file-upload-1");
+	const sentFile = uploadSendCalls[0]?.file as { filename?: string; data?: Blob } | undefined;
+	assert.equal(sentFile?.filename, "月次評価_2026年5月_山田太郎.pdf");
+	assert.ok(sentFile?.data instanceof Blob);
+	assert.equal(sentFile?.data.type, "application/pdf");
+	assert.deepEqual(uploadCompleteCalls, [{ file_upload_id: "file-upload-1" }]);
+	assert.deepEqual(updateCalls[0], {
+		page_id: "monthly-eval-test",
+		properties: {
+			評価PDF: {
+				files: [
+					{
+						type: "file_upload",
+						file_upload: { id: "file-upload-1" },
+						name: "月次評価_2026年5月_山田太郎.pdf",
+					},
+				],
+			},
+		},
+	});
+	assert.equal(commentCalls.length, 1);
+	assert.deepEqual((commentCalls[0]?.parent as Record<string, unknown>), { page_id: "monthly-eval-test" });
+	const commentText = (((commentCalls[0]?.rich_text as Array<Record<string, unknown>>)[0]?.text as Record<string, unknown>)?.content);
+	assert.match(String(commentText), /^PDFを添付しました（.+）$/);
+
+	await assert.rejects(
+		() => attachMonthlyEvalPdfForTest(
+			"monthly-eval-missing-pdf-property",
+			{
+				...notion,
+				pages: {
+					...notion.pages,
+					retrieve: async () => {
+						const { 評価PDF: _evaluationPdf, ...properties } = sampleMonthlyEvalProperties();
+						return { id: "monthly-eval-missing-pdf-property", properties };
+					},
+				},
+			} as never,
+			new Date("2026-06-17T03:00:00.000Z"),
+		),
+		/評価PDF/,
+	);
 
 	console.log("monthly-eval-pdf: all assertions passed");
 }
