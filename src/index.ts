@@ -269,11 +269,16 @@ function fallbackDeepResearch(companyName: string): DeepResearch {
 		linkedinUrl: "",
 		corporateNumber: "",
 		executiveSns: "",
+		officialSns: "",
+		linkedinProfiles: "",
+		jobSignals: "",
+		reviews: "",
 		recentNews: "",
 		renewableSignals: "",
 		decisionMaker: "",
 		objections: "",
 		citations: [],
+		sourceType: "mixed",
 	};
 }
 
@@ -313,6 +318,10 @@ function normalizeDeepResearch(
 		linkedinUrl: pick(input.linkedinUrl, ""),
 		corporateNumber: pick(input.corporateNumber, ""),
 		executiveSns: pick(input.executiveSns, ""),
+		officialSns: pick(input.officialSns, ""),
+		linkedinProfiles: pick(input.linkedinProfiles, ""),
+		jobSignals: pick(input.jobSignals, ""),
+		reviews: pick(input.reviews, ""),
 		recentNews: pick(input.recentNews, ""),
 		renewableSignals: pick(input.renewableSignals, ""),
 		decisionMaker: pick(input.decisionMaker, ""),
@@ -320,6 +329,10 @@ function normalizeDeepResearch(
 		citations: Array.isArray(input.citations)
 			? input.citations.filter((c): c is string => typeof c === "string")
 			: [],
+		sourceType:
+			input.sourceType === "official" || input.sourceType === "external"
+				? input.sourceType
+				: "mixed",
 	};
 }
 
@@ -1042,6 +1055,7 @@ async function assessTargetPlausibility(
 }
 
 const MAX_PENDING_LIMIT = 10;
+const companyResearchInFlight = new Set<string>();
 const DEFAULT_SALES_NEWS_KEYWORDS = [
 	"系統用蓄電池",
 	"蓄電池 補助金",
@@ -1720,6 +1734,8 @@ type CardInput = {
 	pageId: string;
 	pageData?: Page;
 	dryRun?: boolean;
+	routing?: "company" | "broker" | "later";
+	engagementIntent?: "active" | "save-only";
 	// 入口で営業が決めた熱量。false 相当なら企業連携だけ行い、外部調査/3C/商談準備は走らせない。
 	deepResearch?: boolean;
 	// 画像インテイク経由の明示実行(自分で「処理中」を立てた直後に呼ぶため終端ガードを通す)
@@ -2000,6 +2016,11 @@ type DeepResearch = Research & {
 	decisionMaker: string;    // 想定決裁者
 	objections: string;       // 想定反論・懸念
 	citations: string[];      // 出典URL
+	officialSns: string;      // 公式SNS情報
+	linkedinProfiles: string; // LinkedIn情報
+	jobSignals: string;       // 求人情報や従業員レビュー
+	reviews: string;          // 口コミ情報
+	sourceType: "official" | "external" | "mixed"; // 内部監査向け分割フラグ
 };
 
 type TdbProfile = {
