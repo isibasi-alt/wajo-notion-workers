@@ -391,10 +391,11 @@ async function main() {
 	assert.ok(companyUpdate);
 	const closingPatch = companyUpdate!.properties?.["成約へのポイント"];
 	const closingText = richTextFromPatch(closingPatch);
+	assert.equal(hasStrikethroughText(closingPatch), true);
 	assert.match(closingText, /【取れていない事実】/);
 	assert.match(closingText, /【取れば取れる】/);
 	assert.match(closingText, /【初回ヒアリングで取る】/);
-	assert.equal(forbidden.test(closingText), false);
+	assert.match(closingText, /【修正情報】/);
 
 	const saveOnlyCase = makeNotionForCardCase(
 		"仮説ですが、推測ですが、成約までの決裁タイミングは未確認です。",
