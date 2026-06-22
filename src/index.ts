@@ -204,7 +204,7 @@ function buildResearchQueries(input: {
 }): Array<{ aspect: string; prompt: string }> {
 	const c = `会社名:${input.companyName} / ドメイン:${input.domain || "不明"} / 住所:${input.address || "不明"}`;
 	const common =
-		"日本語で、公開情報のみに基づき、各事実に出典URLを併記。裏取りできない点は『推測ですが』と明記。";
+		"日本語で、公開情報のみに基づき、各事実に出典URLを併記。公開情報で裏取りできない軸は推測で埋めず『【取れていない事実】X が未確認。【取れば取れる】Y があれば X を取得可能』形式で取得不能な情報源を明示する（例：『公式サイトURLがあれば事業内容を取得可能』『TDB企業コードがあれば財務・与信を取得可能』『LinkedIn URLがあれば代表者経歴を取得可能』）。";
 	return [
 		{
 			aspect: "basic",
@@ -236,22 +236,26 @@ function buildResearchQueries(input: {
 export { buildResearchQueries as buildResearchQueriesForTest };
 
 function fallbackDeepResearch(companyName: string): DeepResearch {
-	const base = `推測ですが、${companyName}の公開情報が不足しているため、和上の営業仮説として整理します。`;
+	const base = `${companyName}は、Perplexity公開情報の取得前段階。事実不足のため断定せず、初回ヒアリングで取りに行くべき軸を3段構造で列挙する。`;
 	return {
 		summary: base,
 		currentIssue:
-			"推測ですが、電気料金やエネルギーコストの上昇が利益を圧迫している可能性があります。",
+			`【取れていない事実】${companyName}固有の現在課題（事業内容・電力使用規模・脱炭素方針・設備保有）が未確認。【取れば取れる】公式サイトURLがあれば事業内容を、TDB企業コードがあれば財務・与信を、直近プレスがあれば設備投資方針を取得可能。【初回ヒアリングで取る】電気代の利益圧迫率・脱炭素要請の出処（取引先/規制/IR）・遊休地/屋根の保有有無。`,
 		futureIssue:
-			"推測ですが、脱炭素・取引先要請への対応が今後の課題になり得ます。",
+			`【取れていない事実】${companyName}固有の中期論点が未確認。【取れば取れる】中期経営計画・IR資料があれば設備投資ロードマップを取得可能。【初回ヒアリングで取る】2-3年後の電力調達契約更新時期・設備更新計画・脱炭素対応の優先順位。`,
 		salesAngle:
-			"自家消費型太陽光による電気代圧縮と、蓄電池・FIPでの収益化を入口に提案。",
-		fit: "屋根・遊休地があれば和上の太陽光/蓄電池の適合度は高いと考えられます(要確認)。",
+			"事実が揃ってから提案を組む前提。初回は『電力コスト負担割合』『脱炭素要請の出処』『遊休地/屋根の保有』『投資判断者』の4軸を5-10分で確認する。",
+		fit:
+			"事実不足のため断定しない。初回ヒアリング後、和上の太陽光発電所仲介・系統用蓄電池・EPC/O&M・売買仲介のうちどれが適合するかを判定する。",
 		customerMarket3c:
-			"推測ですが、業界全体でエネルギーコストと脱炭素対応が共通課題。",
-		competitor3c: "推測ですが、地域の施工会社やEPCが競合になり得ます。",
+			`【取れていない事実】${companyName}固有の顧客・市場接点が未確認。【取れば取れる】業種コード・取引先公開情報・売上規模があれば市場ポジションを取得可能。【初回ヒアリングで取る】主要販売先の業種・電力使用量の業界水準との差・脱炭素関連の取引先要請。`,
+		competitor3c:
+			`【取れていない事実】${companyName}固有の競合関係が未確認。【取れば取れる】業界の取引先・既存提案先公開情報があれば競合軸を特定可能。【初回ヒアリングで取る】他社見積もり/提案を受けているか・比較軸（価格/工期/施工実績/系統知見）。`,
 		wajoRelation3c:
-			"和上は800MW実績で施工リスクが低く、売買仲介まで一気通貫で対応可能。",
-		source: "公開情報の取得が不足。要追加調査。",
+			"和上は太陽光800MW実績・売買仲介・EPC/O&M・系統用蓄電池を一気通貫で提供。事実確認後、相手の課題に応じて具体接点（数字・現場知見・他社事例）を組む。",
+		source: "公開情報未取得。Perplexity呼出失敗または接続なし。初回ヒアリング後に充実させる。",
+		closingPoint:
+			`【取れていない事実】${companyName}固有の成約決め手（決裁構造・予算規模・競合状況・タイミング要因）が未確認。【取れば取れる】IR資料・組織図公開情報・直近プレスがあれば決裁者と投資判断時期を取得可能。【初回ヒアリングで取る】(1)意思決定者と承認プロセス（誰が最終GO/NOGO・予算上限）(2)検討時期（今・3ヶ月以内・年内・来期）(3)競合提案の有無と比較軸 (4)和上の800MW実績・売買仲介・EPC一気通貫のうちどの点が刺さるか を確認する。`,
 		representative: "",
 		executives: "",
 		capital: "",
@@ -295,6 +299,7 @@ function normalizeDeepResearch(
 		competitor3c: pick(input.competitor3c, fb.competitor3c),
 		wajoRelation3c: pick(input.wajoRelation3c, fb.wajoRelation3c),
 		source: pick(input.source, fb.source),
+		closingPoint: pick(input.closingPoint, fb.closingPoint),
 		representative: pick(input.representative, ""),
 		executives: pick(input.executives, ""),
 		capital: pick(input.capital, ""),
@@ -390,11 +395,11 @@ async function researchCompanyDeep(input: {
 		const synth = await perplexityChat([
 			{
 				role: "system",
-				content: `あなたは和上ホールディングスの営業企画。次のプレイブックに沿って、収集事実だけを根拠に企業ドシエJSONを作る。断定できない点は『推測ですが』。\n${WAJO_PLAYBOOK}`,
+				content: `あなたは和上ホールディングスの営業企画。次のプレイブックに沿って、収集事実だけを根拠に企業ドシエJSONを作る。事実が不足する軸は推測で埋めず『【取れていない事実】X が未確認。【取れば取れる】Y があれば X を取得可能。【初回ヒアリングで取る】Z』の3段構造で明示する。\n${WAJO_PLAYBOOK}`,
 			},
 			{
 				role: "user",
-				content: `=== 収集事実 ===\n${factsBlock.slice(0, 12000)}\n\n会社名:${input.companyName}\n\n次のJSONキーのみで返す(値は日本語文字列): summary,currentIssue,futureIssue,salesAngle,fit,customerMarket3c,competitor3c,wajoRelation3c,source,representative,executives,capital,founded,revenue,employees,industry,listingStatus,websiteUrl,xUrl,linkedinUrl,corporateNumber,executiveSns,recentNews,renewableSignals,decisionMaker,objections`,
+				content: `=== 収集事実 ===\n${factsBlock.slice(0, 12000)}\n\n会社名:${input.companyName}\n\n次のJSONキーのみで返す(値は日本語文字列): summary,currentIssue,futureIssue,salesAngle,fit,customerMarket3c,competitor3c,wajoRelation3c,source,closingPoint,representative,executives,capital,founded,revenue,employees,industry,listingStatus,websiteUrl,xUrl,linkedinUrl,corporateNumber,executiveSns,recentNews,renewableSignals,decisionMaker,objections\n\nclosingPoint は成約までの決め手を3段構造で明示する：『【取れていない事実】X が未確認。【取れば取れる】Y があれば X を取得可能。【初回ヒアリングで取る】(1)意思決定者と承認プロセス (2)検討時期 (3)競合提案と比較軸 (4)和上のどの点が刺さるか』。`,
 			},
 		]);
 		const parsed = parseJsonLoose(synth.content);
@@ -466,6 +471,7 @@ function mergeDeepResearch(
 		competitor3c: keep(existing.competitor3c, research.competitor3c),
 		wajoRelation3c: keep(existing.wajoRelation3c, research.wajoRelation3c),
 		source: keep(existing.source, research.source),
+		closingPoint: keep(existing.closingPoint, research.closingPoint),
 		representative: keep(existing.representative, research.representative),
 		executives: keep(existing.executives, research.executives),
 		capital: keep(existing.capital, research.capital),
@@ -498,6 +504,7 @@ function isDeepResearchComplete(r: DeepResearch): boolean {
 		r.competitor3c,
 		r.wajoRelation3c,
 		r.source,
+		r.closingPoint,
 	].every((v) => v.trim().length > 0);
 }
 
@@ -1713,8 +1720,13 @@ type CardInput = {
 	pageId: string;
 	pageData?: Page;
 	dryRun?: boolean;
+	// 入口で営業が決めた熱量。false 相当なら企業連携だけ行い、外部調査/3C/商談準備は走らせない。
+	deepResearch?: boolean;
 	// 画像インテイク経由の明示実行(自分で「処理中」を立てた直後に呼ぶため終端ガードを通す)
 	force?: boolean;
+	// 名刺起点処理で商談準備レポートの自動生成を起動する。
+	// 実環境の三段階連携を有効化するためのフラグ。テストやdry-runでは false が無難。
+	autoCreateMeetingPrepReport?: boolean;
 };
 
 type CardResult = {
@@ -1962,6 +1974,11 @@ type Research = {
 	competitor3c: string;
 	wajoRelation3c: string;
 	source: string;
+	// 成約へのポイント（事実ベース・3段構造）。
+	// Why: 旧経路では Notion AI ボタン「AIで企業情報を埋める」経由でしか書かれず、
+	// ヘッジ表現連発の温床になっていた（大ちゃん 2026-06-20 指摘）。
+	// Worker 側で先に3段構造の closingPoint を入れて、Notion AI ボタンが上書きできない状態にする。
+	closingPoint: string;
 };
 
 type DeepResearch = Research & {
@@ -2266,6 +2283,7 @@ type CompanyInfo = {
 	competitor3c: string;
 	wajoRelation3c: string;
 	source: string;
+	closingPoint: string;
 	aiMemo: string;
 };
 
@@ -3164,6 +3182,10 @@ worker.tool("processBusinessCardById", {
 	schema: j.object({
 		pageId: j.string().describe("名刺管理DBのページID"),
 		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+		force: j.boolean().describe("trueなら処理済みステータスを無視して再実行します"),
+		autoCreateMeetingPrepReport: j
+			.boolean()
+			.describe("trueなら商談前準備レポート作成まで実行します。falseなら連携まで。"),
 	}),
 	outputSchema: j.object({
 		pageId: j.string(),
@@ -3172,9 +3194,18 @@ worker.tool("processBusinessCardById", {
 		companyName: j.string().nullable(),
 		message: j.string(),
 	}),
-	execute: async ({ pageId, dryRun }, { notion }) => {
+	execute: async (
+		{ pageId, dryRun, force = false, autoCreateMeetingPrepReport = true },
+		{ notion },
+	) => {
 		return processBusinessCard(
-			{ pageId, dryRun },
+			{
+				pageId,
+				dryRun,
+				force,
+				autoCreateMeetingPrepReport,
+				deepResearch: autoCreateMeetingPrepReport,
+			},
 			notion as unknown as NotionClient,
 		);
 	},
@@ -3207,7 +3238,12 @@ worker.tool("processPendingBusinessCards", {
 		for (const card of cards) {
 			results.push(
 				await processBusinessCard(
-					{ pageId: card.id, pageData: card, dryRun },
+					{
+						pageId: card.id,
+						pageData: card,
+						dryRun,
+						autoCreateMeetingPrepReport: true,
+					},
 					notion as unknown as NotionClient,
 				),
 			);
@@ -4271,6 +4307,13 @@ worker.webhook("processBusinessCardImageWebhook", {
 				{
 					imageBase64,
 					routing: firstString(body.routing, body["振り分け"]),
+					engagementIntent: firstString(
+						body.engagementIntent,
+						body.relationshipIntent,
+						body.followIntent,
+						body["営業判断"],
+						body["熱量"],
+					),
 					assigneeUserId: firstString(
 						body.assigneeUserId,
 						body["担当者"],
@@ -4287,12 +4330,15 @@ worker.webhook("processBusinessCardImageWebhook", {
 worker.tool("processBusinessCardImage", {
 	title: "WAJO 名刺画像インテイク",
 	description:
-		"名刺画像(base64)からOCR→名刺ページ作成→振り分け→企業連携・A深掘りまで実行します。新ショートカットの動作テスト用。",
+		"名刺画像(base64)からOCR→名刺ページ作成→振り分け→企業連携を実行します。営業判断=名刺だけ保存なら外部調査・3C・商談準備は走らせません。",
 	schema: j.object({
 		imageBase64: j.string().describe("名刺画像のbase64(データURL可)"),
 		routing: j
 			.string()
 			.describe("撮影時の振り分け: 企業 / 社外顧問 / あとで。空なら企業扱い"),
+		engagementIntent: j
+			.string()
+			.describe("営業判断: 本気で追う / 名刺だけ保存。空なら本気で追う"),
 		assigneeUserId: j.string().describe("担当営業のNotionユーザーID。空なら未設定"),
 		dryRun: j.boolean().describe("trueならOCRのみ実行し書き込みません"),
 	}),
@@ -4302,11 +4348,12 @@ worker.tool("processBusinessCardImage", {
 		companyId: j.string().nullable(),
 		message: j.string(),
 	}),
-	execute: async ({ imageBase64, routing, assigneeUserId, dryRun }, { notion }) => {
+	execute: async ({ imageBase64, routing, engagementIntent, assigneeUserId, dryRun }, { notion }) => {
 		return processBusinessCardImage(
 			{
 				imageBase64,
 				routing: routing || undefined,
+				engagementIntent: engagementIntent || undefined,
 				assigneeUserId: assigneeUserId || undefined,
 				dryRun,
 			},
@@ -4318,19 +4365,25 @@ worker.tool("processBusinessCardImage", {
 worker.webhook("processBusinessCardWebhook", {
 	title: "WAJO 名刺処理Webhook",
 	description:
-		"外部サービスやNotion webhookから名刺処理を起動します。body.pageId があれば1件処理、なければ未処理を拾います。",
+		"外部サービスやNotion webhookから名刺処理を起動します。body.pageId があれば1件処理、なければ未処理を拾います。営業判断=名刺だけ保存なら外部調査・3C・商談準備は走らせません。",
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			verifyWebhookSecret(event.headers, event.body);
 			const body = event.body as Record<string, unknown>;
-			const pageId = typeof body.pageId === "string" ? body.pageId : undefined;
+			const runOptions = readBusinessCardRunOptions(body);
+			const pageId = readBusinessCardWebhookPageId(body);
 			const limit =
 				typeof body.limit === "number"
 					? Math.max(1, Math.min(body.limit, MAX_PENDING_LIMIT))
 					: 1;
 			if (pageId) {
 				await processBusinessCard(
-					{ pageId, dryRun: false },
+					{
+						pageId,
+						dryRun: false,
+						deepResearch: runOptions.deepResearch,
+						autoCreateMeetingPrepReport: runOptions.autoCreateMeetingPrepReport,
+					},
 					notion as unknown as NotionClient,
 				);
 				continue;
@@ -4338,10 +4391,67 @@ worker.webhook("processBusinessCardWebhook", {
 			const cards = await findPendingCards(notion as unknown as NotionClient, limit);
 			for (const card of cards) {
 				await processBusinessCard(
-					{ pageId: card.id, pageData: card, dryRun: false },
+					{
+						pageId: card.id,
+						pageData: card,
+						dryRun: false,
+						deepResearch: runOptions.deepResearch,
+						autoCreateMeetingPrepReport: runOptions.autoCreateMeetingPrepReport,
+					},
 					notion as unknown as NotionClient,
 				);
 			}
+		}
+	},
+});
+
+worker.webhook("processBusinessCardLinkWebhook", {
+	title: "WAJO 名刺連携のみWebhook",
+	description:
+		"名刺管理DB上の単一名刺を、外部調査・3C・商談準備なしで企業連携まで実行します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const pageId = readBusinessCardWebhookPageId(body);
+			if (!pageId) {
+				throw new Error("pageId / page_id / entity.id のいずれからも名刺ページIDを特定できませんでした。");
+			}
+			await processBusinessCard(
+				{
+					pageId,
+					dryRun: false,
+					deepResearch: false,
+					autoCreateMeetingPrepReport: false,
+				},
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processBusinessCardResearchWebhook", {
+	title: "WAJO 名刺調査Webhook",
+	description:
+		"名刺管理DB上の単一名刺を、企業連携済みの想定で外部調査・3C・商談準備レポートまで実行します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const pageId = readBusinessCardWebhookPageId(body);
+			if (!pageId) {
+				throw new Error("pageId / page_id / entity.id のいずれからも名刺ページIDを特定できませんでした。");
+			}
+			await processBusinessCard(
+				{
+					pageId,
+					dryRun: false,
+					deepResearch: true,
+					autoCreateMeetingPrepReport: true,
+					force: true,
+				},
+				notion as unknown as NotionClient,
+			);
 		}
 	},
 });
@@ -5449,6 +5559,11 @@ async function processBusinessCard(
 			page_id: input.pageId,
 		}));
 	const card = readCard(page);
+	const shouldDeepResearch = Boolean(!input.dryRun && input.deepResearch !== false);
+	const shouldCreateMeetingPrep = Boolean(
+		shouldDeepResearch && input.autoCreateMeetingPrepReport,
+	);
+	const webhookStatus = text(page.properties?.["Webhook引き継ぎステータス"]);
 
 	// 終端/処理中ガード(検品指摘=オートメーション二重発火・再送で企業が二重作成される穴):
 	// 既に処理中・処理済み・対象外の名刺は再処理しない。画像インテイク経由はforceで明示的に通す。
@@ -5456,6 +5571,19 @@ async function processBusinessCard(
 	if (
 		!input.force &&
 		["処理中", "対象外", "既存企業に紐づけ済", "新規企業作成"].includes(aiState)
+	) {
+		return {
+			pageId: input.pageId,
+			action: "skipped",
+			companyId: null,
+			companyName: null,
+			message: `名刺AI処理状態=${aiState} のため再処理をスキップしました(二重処理防止)。`,
+		};
+	}
+	if (
+		!input.force &&
+		aiState === "要確認" &&
+		webhookStatus === "要確認で停止"
 	) {
 		return {
 			pageId: input.pageId,
@@ -5521,43 +5649,75 @@ async function processBusinessCard(
 			};
 		}
 
-		if (strong.length === 1) {
-			const company = strong[0]!;
-			await enrichCompany(notion, company.page, card, false);
+			if (strong.length === 1) {
+				const company = strong[0]!;
+				if (shouldDeepResearch) {
+					await enrichCompany(notion, company.page, card, false);
+				}
+				const meetingPrepSummary = shouldCreateMeetingPrep
+					? await createMeetingPrepReportFromBusinessCard(notion, company.page.id)
+					: null;
+				const linkMemo = shouldDeepResearch
+					? `既存企業に紐づけ済: ${company.reasons.join(" / ")}`
+					: `既存企業に紐づけ済: ${company.reasons.join(" / ")} / 営業判断=名刺だけ保存。外部調査・3C・商談準備は未実行。`;
+				await linkCardToCompany(
+					notion,
+					card,
+					company.page.id,
+					"既存企業に紐づけ済",
+					linkMemo,
+					meetingPrepSummary,
+					shouldDeepResearch
+						? undefined
+						: "Notion Workerが既存企業への紐づけまで実行。営業判断=名刺だけ保存のため、外部調査・3C・商談準備は未実行。",
+				);
+				return {
+					pageId: input.pageId,
+					action: "existing-linked",
+					companyId: company.page.id,
+					companyName: company.name,
+					message: shouldDeepResearch
+						? meetingPrepSummary
+							? `既存企業へ紐づけ、必要項目を補完しました。${meetingPrepSummary}`
+							: "既存企業へ紐づけ、必要項目を補完しました。"
+						: "既存企業へ紐づけました。営業判断=名刺だけ保存のため、外部調査・3C・商談準備は未実行です。",
+				};
+			}
+
+			const company = await createCompany(notion, card, weak[0], shouldDeepResearch);
+			if (shouldDeepResearch) {
+				await enrichCompany(notion, company, card, Boolean(weak[0]));
+			}
+			const meetingPrepSummary = shouldCreateMeetingPrep
+				? await createMeetingPrepReportFromBusinessCard(notion, company.id)
+				: null;
+			const companyMemo = weak[0]
+				? `近似候補はあるが強い一致なし。新規企業として作成し、重複候補へ回しました: ${weak[0].name}`
+				: "強い既存候補なし。名刺起点で新規企業を作成しました。";
 			await linkCardToCompany(
 				notion,
 				card,
-				company.page.id,
-				"既存企業に紐づけ済",
-				`既存企業に紐づけ済: ${company.reasons.join(" / ")}`,
+				company.id,
+				"新規企業作成",
+				shouldDeepResearch
+					? companyMemo
+					: `${companyMemo} 営業判断=名刺だけ保存。外部調査・3C・商談準備は未実行。`,
+				meetingPrepSummary,
+				shouldDeepResearch
+					? undefined
+					: "Notion Workerが新規企業作成と名刺連携まで実行。営業判断=名刺だけ保存のため、外部調査・3C・商談準備は未実行。",
 			);
 			return {
 				pageId: input.pageId,
-				action: "existing-linked",
-				companyId: company.page.id,
-				companyName: company.name,
-				message: "既存企業へ紐づけ、必要項目を補完しました。",
+				action: "created-company",
+				companyId: company.id,
+				companyName: card.companyName,
+				message: shouldDeepResearch
+					? meetingPrepSummary
+						? `新規企業を作成し、企業情報と3Cを返却しました。${meetingPrepSummary}`
+						: "新規企業を作成し、企業情報と3Cを返却しました。"
+					: "新規企業を作成し、名刺と連携しました。営業判断=名刺だけ保存のため、外部調査・3C・商談準備は未実行です。",
 			};
-		}
-
-		const company = await createCompany(notion, card, weak[0]);
-		await enrichCompany(notion, company, card, Boolean(weak[0]));
-		await linkCardToCompany(
-			notion,
-			card,
-			company.id,
-			"新規企業作成",
-			weak[0]
-				? `近似候補はあるが強い一致なし。新規企業として作成し、重複候補へ回しました: ${weak[0].name}`
-				: "強い既存候補なし。名刺起点で新規企業を作成しました。",
-		);
-		return {
-			pageId: input.pageId,
-			action: "created-company",
-			companyId: company.id,
-			companyName: card.companyName,
-			message: "新規企業を作成し、企業情報と3Cを返却しました。",
-		};
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		await markCardFailure(notion, card, message);
@@ -5614,6 +5774,53 @@ function normalizeCardRouting(value: string | undefined): "company" | "broker" |
 	return "company"; // 未指定/「企業」は従来通り企業連携へ
 }
 export { normalizeCardRouting as normalizeCardRoutingForTest };
+
+function normalizeCardEngagement(value: string | undefined): "active" | "save-only" {
+	const v = String(value ?? "");
+	if (
+		v.includes("名刺だけ") ||
+		v.includes("保存") ||
+		v.includes("流す") ||
+		v.includes("追わない") ||
+		v.includes("いらない")
+	) {
+		return "save-only";
+	}
+	return "active"; // 未指定は従来通り本流調査へ
+}
+export { normalizeCardEngagement as normalizeCardEngagementForTest };
+
+function readBusinessCardRunOptions(body: Record<string, unknown>): {
+	deepResearch: boolean;
+	autoCreateMeetingPrepReport: boolean;
+} {
+	const engagement = normalizeCardEngagement(
+		firstString(
+			body.engagementIntent,
+			body.relationshipIntent,
+			body.followIntent,
+			body["営業判断"],
+			body["熱量"],
+		),
+	);
+	if (engagement === "save-only") {
+		return {
+			deepResearch: false,
+			autoCreateMeetingPrepReport: false,
+		};
+	}
+	const deepResearch =
+		typeof body.deepResearch === "boolean" ? body.deepResearch : engagement === "active";
+	return {
+		deepResearch,
+		autoCreateMeetingPrepReport: deepResearch,
+	};
+}
+
+function readBusinessCardWebhookPageId(body: Record<string, unknown>): string | undefined {
+	return extractWebhookPageId(body);
+}
+export { readBusinessCardRunOptions as readBusinessCardRunOptionsForTest };
 
 async function callOpenAIBusinessCardOcr(imageDataUrl: string): Promise<BusinessCardOcr> {
 	const apiKey = process.env.OPENAI_API_KEY || process.env.WAJO_OPENAI_API_KEY;
@@ -5775,6 +5982,7 @@ async function createAdvisorFromCard(
 type BusinessCardImageInput = {
 	imageBase64: string;
 	routing?: string;
+	engagementIntent?: string;
 	assigneeUserId?: string;
 	dryRun: boolean;
 };
@@ -5803,6 +6011,8 @@ async function processBusinessCardImage(
 	const base64 = raw.startsWith("data:") && commaIndex >= 0 ? raw.slice(commaIndex + 1) : raw;
 	const dataUrl = raw.startsWith("data:") ? raw : `data:image/jpeg;base64,${base64}`;
 	const routing = normalizeCardRouting(input.routing);
+	const engagement = normalizeCardEngagement(input.engagementIntent);
+	const engagementLabel = engagement === "active" ? "本気で追う" : "名刺だけ保存";
 
 	// サイズ上限(base64で約14MB≒画像10MB)。巨大ペイロードは早期に明示エラー
 	if (base64.length > 14_000_000) {
@@ -5851,12 +6061,18 @@ async function processBusinessCardImage(
 	);
 	const routingLabel =
 		routing === "broker" ? "🤝社外顧問・ブローカー" : routing === "later" ? "❓あとで決める" : "🏢企業";
+	const entryMemo = [
+		`撮影時の振り分け: ${routingLabel}`,
+		routing !== "later" && `営業判断: ${engagementLabel}`,
+	]
+		.filter(Boolean)
+		.join("\n");
 	const initialAiState =
 		routing === "broker" ? "対象外" : routing === "later" ? "要確認" : "処理中";
 	const initialLinkState = routing === "broker" ? "対象外" : "処理中";
 	const properties: Record<string, unknown> = {
 		氏名: title("名刺(読み取り中)"),
-		メモ: richText(`撮影時の振り分け: ${routingLabel}`),
+		メモ: richText(entryMemo),
 		登録日: { date: { start: todayIsoDateInTokyo() } },
 		企業重複チェックキー: richText(imageKey),
 		名刺AI処理状態: select(initialAiState),
@@ -5904,17 +6120,15 @@ async function processBusinessCardImage(
 		};
 	}
 
-	// 4. OCR結果を反映(不正なメール形式等でNotionが400を返しても「処理中スタック」にしない=再検品指摘)
-	try {
-		const ocrProps: Record<string, unknown> = {
-			氏名: title(ocr.氏名 || ocr.会社名 || "名刺(氏名読み取り不可)"),
-			会社名: richText(ocr.会社名),
-			役職: richText([ocr.部署, ocr.役職].filter(Boolean).join(" ")),
-			住所: richText(ocr.住所),
-			メモ: richText(
-				[`撮影時の振り分け: ${routingLabel}`, ocr.メモ].filter(Boolean).join("\n"),
-			),
-		};
+		// 4. OCR結果を反映(不正なメール形式等でNotionが400を返しても「処理中スタック」にしない=再検品指摘)
+		try {
+			const ocrProps: Record<string, unknown> = {
+				氏名: title(ocr.氏名 || ocr.会社名 || "名刺(氏名読み取り不可)"),
+				会社名: richText(ocr.会社名),
+				役職: richText([ocr.部署, ocr.役職].filter(Boolean).join(" ")),
+				住所: richText(ocr.住所),
+				メモ: richText([entryMemo, ocr.メモ].filter(Boolean).join("\n")),
+			};
 		if (ocr.電話) ocrProps["電話"] = { phone_number: ocr.電話 };
 		if (ocr.メール) ocrProps["メール"] = { email: ocr.メール };
 		await notion.pages.update({ page_id: page.id, properties: ocrProps });
@@ -5937,6 +6151,21 @@ async function processBusinessCardImage(
 
 	// 5. 振り分け(入口ルール: 人がその場で選んだ結果を尊重し、AIは確実な作業だけやる)
 	if (routing === "broker") {
+		if (engagement === "save-only") {
+			await safeUpdateExistingProperties(notion, page, {
+				名刺AI処理メモ: {
+					kind: "text",
+					value:
+						"撮影時に本人が🤝社外顧問・ブローカーを選択。営業判断=名刺だけ保存のため、社外顧問DB登録とAI深掘りは未実行。",
+				},
+			});
+			return {
+				pageId: page.id,
+				action: "broker-routed",
+				companyId: null,
+				message: `名刺を保存しました。営業判断=名刺だけ保存のため、社外顧問登録とAI深掘りは未実行です(${ocr.氏名 || ocr.会社名})。`,
+			};
+		}
 		// 人=案件の種: 社外顧問DBに「関係構築中」で自動登録し、案件DBの人物タブに出す(死蔵させない)
 		let advisorNote: string;
 		try {
@@ -5955,7 +6184,7 @@ async function processBusinessCardImage(
 		await safeUpdateExistingProperties(notion, page, {
 			名刺AI処理メモ: {
 				kind: "text",
-				value: `撮影時に本人が🤝社外顧問・ブローカーを選択。${advisorNote}`,
+				value: `撮影時に本人が🤝社外顧問・ブローカーを選択。営業判断=本気で追う。${advisorNote}`,
 			},
 		});
 		return {
@@ -5982,7 +6211,13 @@ async function processBusinessCardImage(
 	// 🏢企業: 既存パイプライン(重複チェック→企業登録→A深掘り連結)へ。
 	// 自分で「処理中」を立てた直後なので force で終端ガードを通す。
 	const result = await processBusinessCard(
-		{ pageId: page.id, dryRun: false, force: true },
+		{
+			pageId: page.id,
+			dryRun: false,
+			force: true,
+			deepResearch: engagement === "active",
+			autoCreateMeetingPrepReport: engagement === "active",
+		},
 		notion,
 	);
 	return {
@@ -8442,6 +8677,7 @@ async function processCompanyResearch(
 		competitor3c: company.competitor3c,
 		wajoRelation3c: company.wajoRelation3c,
 		source: company.source,
+		closingPoint: company.closingPoint,
 	};
 	const merged = mergeDeepResearch(existing, research);
 	const complete = isDeepResearchComplete(merged);
@@ -8493,6 +8729,17 @@ async function processCompanyResearch(
 	addPatchIfBlank(patches, properties, "3C：競合分析", merged.competitor3c);
 	addPatchIfBlank(patches, properties, "3C：自社との関係性", merged.wajoRelation3c);
 	addPatchIfBlank(patches, properties, "根拠ソース", merged.source);
+	const currentClosingPoint = text(properties["成約へのポイント"]);
+	const shouldRewriteClosingPoint =
+		!currentClosingPoint || isLikelyFabricatedText(currentClosingPoint);
+	if (shouldRewriteClosingPoint) {
+		patches["成約へのポイント"] = {
+			kind: "text",
+			value: research.closingPoint || merged.closingPoint,
+		};
+	} else {
+		addPatchIfBlank(patches, properties, "成約へのポイント", merged.closingPoint);
+	}
 	await safeUpdateExistingProperties(notion, companyPage, patches);
 
 	// 5. 本文ドシエ
@@ -9205,6 +9452,15 @@ function addPatchIfBlank(
 
 function isTextPropertyBlank(property: unknown): boolean {
 	return text(property).trim().length === 0;
+}
+
+function isLikelyFabricatedText(value: string): boolean {
+	if (!value) return false;
+	return /推測|仮説|憶測/.test(normalizeWhitespace(value));
+}
+
+function normalizeWhitespace(value: string): string {
+	return value.replace(/\s+/g, "");
 }
 
 function buildMeetingMemoFormatMemo(
@@ -11790,11 +12046,11 @@ function buildSalesPerformanceReviewSource(
 			? `終了日: ${dateStartFromProperty(properties["終了日"])}`
 			: "",
 	].filter(Boolean);
-	return [
-		dates.join("\n"),
-		`【定量評価（実績）｜65点】\nAIは定量65点を付け直さない。以下はWorker計算済みの点数・内訳・達成率・生値。\n${buildSalesPerformanceQuantitativeScoreLines(quantitativeScore).join("\n")}`,
-		textLines.join("\n\n"),
-	]
+		return [
+			dates.join("\n"),
+			`【定量評価（実績）｜50点】\nAIは定量50点を付け直さない。以下はWorker計算済みの点数・内訳・達成率・生値。\n${buildSalesPerformanceQuantitativeScoreLines(quantitativeScore).join("\n")}`,
+			textLines.join("\n\n"),
+		]
 		.filter(Boolean)
 		.join("\n\n");
 }
@@ -11845,7 +12101,7 @@ type SalesPerformanceQuantitativeItem = {
 const SALES_PERFORMANCE_QUANTITATIVE_ITEMS: SalesPerformanceQuantitativeItem[] = [
 	{
 		key: "粗利",
-		weight: 25,
+		weight: 19,
 		rateAliases: [
 			"月次粗利達成率（申請連動）",
 			"粗利達成率（自動）",
@@ -11859,7 +12115,7 @@ const SALES_PERFORMANCE_QUANTITATIVE_ITEMS: SalesPerformanceQuantitativeItem[] =
 	},
 	{
 		key: "成約",
-		weight: 12,
+		weight: 9,
 		rateAliases: ["月次成約達成率（申請連動）", "成約達成率（自動）", "成約達成率"],
 		actualAliases: ["成約件数（自動）", "成約件数"],
 		targetAliases: ["成約件数目標（申請DB）", "成約目標", "目標成約件数"],
@@ -11868,7 +12124,7 @@ const SALES_PERFORMANCE_QUANTITATIVE_ITEMS: SalesPerformanceQuantitativeItem[] =
 	},
 	{
 		key: "仕入れ",
-		weight: 10,
+		weight: 8,
 		rateAliases: [
 			"月次仕入れ件数達成率（申請連動）",
 			"仕入れ達成率（自動）",
@@ -11881,7 +12137,7 @@ const SALES_PERFORMANCE_QUANTITATIVE_ITEMS: SalesPerformanceQuantitativeItem[] =
 	},
 	{
 		key: "商談",
-		weight: 8,
+		weight: 6,
 		rateAliases: ["月次商談達成率（申請連動）", "商談達成率（自動）", "商談達成率"],
 		actualAliases: ["商談件数（自動）", "商談件数"],
 		targetAliases: ["商談件数目標（申請DB）", "商談目標", "目標商談件数"],
@@ -11890,7 +12146,7 @@ const SALES_PERFORMANCE_QUANTITATIVE_ITEMS: SalesPerformanceQuantitativeItem[] =
 	},
 	{
 		key: "案件化",
-		weight: 6,
+		weight: 5,
 		rateAliases: [],
 		actualAliases: ["案件化件数"],
 		targetAliases: ["問い合わせ数（自動）", "問い合わせ数", "問い合わせ件数"],
@@ -11899,7 +12155,7 @@ const SALES_PERFORMANCE_QUANTITATIVE_ITEMS: SalesPerformanceQuantitativeItem[] =
 	},
 	{
 		key: "専売",
-		weight: 4,
+		weight: 3,
 		rateAliases: [
 			"月次専売許可達成率（申請連動）",
 			"専売許可達成率（自動）",
@@ -12039,7 +12295,7 @@ function buildSalesPerformanceQuantitativeScoreLines(
 	score: SalesPerformanceQuantitativeScore,
 ): string[] {
 	return [
-		`合計: ${score.合計}/65点`,
+		`合計: ${score.合計}/50点`,
 		...SALES_PERFORMANCE_QUANTITATIVE_ITEMS.map((item) =>
 			buildSalesPerformanceQuantitativeScoreLine(score.details[item.key]),
 		),
@@ -12083,8 +12339,9 @@ function buildSalesPerformanceDryRunPreview(source: string): string[] {
 		.map((line) => line.trim())
 		.filter(Boolean)
 		.filter((line) =>
-			line.includes("定量評価（実績）｜65点") ||
-			line.includes("定性評価（活動ログ）｜35点") ||
+				line.includes("定量評価（実績）｜50点") ||
+				line.includes("勝ちパターン化（営業貢献ログ）｜25点") ||
+				line.includes("定性評価（行動ログ）｜25点") ||
 			line.includes("補助確認事項（採点対象外）") ||
 			line.includes("採点対象: false") ||
 			line.includes("活動ログ未接続") ||
@@ -12157,11 +12414,13 @@ async function buildSalesPerformanceRelatedSourceWithStats(
 		["旧直接ログ:マネージャー評価", relationIdsFromProperty(properties["マネージャー評価"]), 5],
 	];
 	if (activityIds.length > 0) {
-		const scoringLines: string[] = [];
+		const winPatternLines: string[] = [];
+		const qualitativeLines: string[] = [];
 		const supportLines: string[] = [];
 		for (const id of activityIds.slice(0, 8)) {
 			const summary = await buildSalesActivityEvidenceSummary(notion, id);
-			if (summary.scoring) scoringLines.push(summary.scoring);
+			if (summary.winPatternScoring) winPatternLines.push(summary.winPatternScoring);
+			if (summary.qualitativeScoring) qualitativeLines.push(summary.qualitativeScoring);
 			if (summary.support) supportLines.push(summary.support);
 			qualitativeLogCounts.speechLogs += summary.qualitativeCounts.speechLogs;
 			qualitativeLogCounts.customerContactLogs +=
@@ -12170,23 +12429,25 @@ async function buildSalesPerformanceRelatedSourceWithStats(
 				summary.qualitativeCounts.contributionLogs;
 		}
 		if (activityIds.length > 8) {
-			scoringLines.push(
+			qualitativeLines.push(
 				`活動ログ件数超過: 関連活動ログ${activityIds.length}件中8件のみを評価材料として読みました。残り${activityIds.length - 8}件は人間確認または集約ルール見直しが必要です。`,
 			);
 		}
-		sections.push(`【定性評価（活動ログ）｜35点】\n貢献ログ・顧客接点ログ・発言ログだけを評価対象の定性根拠として読む。\n${scoringLines.length > 0 ? scoringLines.join("\n---\n") : "評価対象外または対象3ログ外の活動ログだけが紐づいています。"}`);
+		sections.push(`【勝ちパターン化（営業貢献ログ）｜25点】\n営業貢献ログだけを、会社に残した勝ち筋・再現性・共有価値の根拠として読む。\n${winPatternLines.length > 0 ? winPatternLines.join("\n---\n") : "営業貢献ログ未接続: 勝ちパターン化25点の根拠はまだありません。"}`);
+		sections.push(`【定性評価（行動ログ）｜25点】\n発言ログ・顧客接点ログを、日々の行動と商談プロセスの根拠として読む。AI活用度は本文ではなく回数/ポイントがある場合だけ小さく確認する。\n${qualitativeLines.length > 0 ? qualitativeLines.join("\n---\n") : "発言ログ・顧客接点ログ未接続: 定性評価25点の根拠はまだありません。"}`);
 		if (supportLines.length > 0) {
 			sections.push(
 				`【補助確認事項（採点対象外）】\nAI活用ログ、人見さんメモ、ワニポメモリーは採点根拠にせず、面談前の確認材料としてだけ扱う。\n${supportLines.join("\n---\n")}`,
 			);
 		}
 	} else {
-		sections.push("【定性評価（活動ログ）｜35点】\n活動ログ未接続: 営業マンパフォーマンスDBに関連活動ログがありません。");
+		sections.push("【勝ちパターン化（営業貢献ログ）｜25点】\n活動ログ未接続: 営業マンパフォーマンスDBに関連活動ログがありません。");
+		sections.push("【定性評価（行動ログ）｜25点】\n活動ログ未接続: 営業マンパフォーマンスDBに関連活動ログがありません。");
 	}
 	const legacyDirectCount = legacyDirectMap.reduce((sum, [, ids]) => sum + ids.length, 0);
 	if (legacyDirectCount > 0) {
 		sections.push(
-			"【データ不足・警告】\n活動ログ未集約: 直接ログはありますが、定性評価35点には使いません。活動ログDBへ集約してから評価材料にしてください。",
+			"【データ不足・警告】\n活動ログ未集約: 直接ログはありますが、50/25/25評価には使いません。活動ログDBへ集約してから評価材料にしてください。",
 		);
 	}
 	return {
@@ -12196,7 +12457,8 @@ async function buildSalesPerformanceRelatedSourceWithStats(
 }
 
 type SalesActivityEvidenceSummary = {
-	scoring: string;
+	winPatternScoring: string;
+	qualitativeScoring: string;
 	support: string;
 	qualitativeCounts: SalesPerformanceQualitativeLogCounts;
 };
@@ -12213,49 +12475,63 @@ async function buildSalesActivityEvidenceSummary(
 	pageId: string,
 ): Promise<SalesActivityEvidenceSummary> {
 	try {
-		const page = await notion.pages.retrieve({ page_id: pageId });
-		const properties = page.properties ?? {};
-		const support = buildActivitySupportEvidenceSummary(page, properties);
-		if (!checkboxValue(properties["評価対象"])) {
+			const page = await notion.pages.retrieve({ page_id: pageId });
+			const properties = page.properties ?? {};
+			const support = buildActivitySupportEvidenceSummary(page, properties);
+			if (!checkboxValue(properties["評価対象"])) {
+				return {
+					winPatternScoring: "",
+					qualitativeScoring: "",
+					support,
+					qualitativeCounts: EMPTY_SALES_PERFORMANCE_QUALITATIVE_LOG_COUNTS,
+				};
+			}
+			if (!hasActivityScoringSource(properties)) {
+				return {
+					winPatternScoring: "",
+					qualitativeScoring: "",
+					support,
+					qualitativeCounts: EMPTY_SALES_PERFORMANCE_QUALITATIVE_LOG_COUNTS,
+				};
+			}
+			const base = [
+				page.url ? `URL: ${page.url}` : "",
+				buildGenericPageSummary(properties),
+			]
+				.filter(Boolean)
+				.join("\n");
+			const winPatternSummary = await buildActivityChildEvidenceSummary(notion, properties, [
+				"関連営業貢献ログ",
+			]);
+			const qualitativeSummary = await buildActivityChildEvidenceSummary(notion, properties, [
+				"関連発言",
+				"関連顧客接点ログ",
+			]);
 			return {
-				scoring: "",
+				winPatternScoring: winPatternSummary
+					? [base, winPatternSummary].filter(Boolean).join("\n")
+					: "",
+				qualitativeScoring: qualitativeSummary
+					? [base, qualitativeSummary].filter(Boolean).join("\n")
+					: "",
 				support,
-				qualitativeCounts: EMPTY_SALES_PERFORMANCE_QUALITATIVE_LOG_COUNTS,
-			};
-		}
-		if (!hasActivityScoringSource(properties)) {
-			return {
-				scoring: "",
-				support,
-				qualitativeCounts: EMPTY_SALES_PERFORMANCE_QUALITATIVE_LOG_COUNTS,
-			};
-		}
-		const base = [
-			page.url ? `URL: ${page.url}` : "",
-			buildGenericPageSummary(properties),
-		]
-			.filter(Boolean)
-			.join("\n");
-		const childSummary = await buildActivityChildEvidenceSummary(notion, properties);
-		return {
-			scoring: [base, childSummary].filter(Boolean).join("\n"),
-			support,
-			qualitativeCounts: {
-				speechLogs: relationIdsFromProperty(properties["関連発言"]).length,
+				qualitativeCounts: {
+					speechLogs: relationIdsFromProperty(properties["関連発言"]).length,
 				customerContactLogs: relationIdsFromProperty(properties["関連顧客接点ログ"])
 					.length,
-				contributionLogs: relationIdsFromProperty(properties["関連営業貢献ログ"])
-					.length,
-			},
-		};
-	} catch (error) {
-		return {
-			scoring: `取得失敗: ${String(error).slice(0, 120)}`,
-			support: "",
-			qualitativeCounts: EMPTY_SALES_PERFORMANCE_QUALITATIVE_LOG_COUNTS,
-		};
+					contributionLogs: relationIdsFromProperty(properties["関連営業貢献ログ"])
+						.length,
+				},
+			};
+		} catch (error) {
+			return {
+				winPatternScoring: `取得失敗: ${String(error).slice(0, 120)}`,
+				qualitativeScoring: "",
+				support: "",
+				qualitativeCounts: EMPTY_SALES_PERFORMANCE_QUALITATIVE_LOG_COUNTS,
+			};
+		}
 	}
-}
 
 function hasActivityScoringSource(properties: Record<string, unknown>): boolean {
 	return (
@@ -12293,6 +12569,7 @@ function buildActivitySupportEvidenceSummary(
 async function buildActivityChildEvidenceSummary(
 	notion: NotionClient,
 	properties: Record<string, unknown>,
+	labels?: Array<"関連発言" | "関連顧客接点ログ" | "関連営業貢献ログ">,
 ): Promise<string> {
 	const childMap: Array<[string, string[], number]> = [
 		["関連発言", relationIdsFromProperty(properties["関連発言"]), 5],
@@ -12301,6 +12578,7 @@ async function buildActivityChildEvidenceSummary(
 	];
 	const sections: string[] = [];
 	for (const [label, ids, limit] of childMap) {
+		if (labels && !labels.includes(label as "関連発言" | "関連顧客接点ログ" | "関連営業貢献ログ")) continue;
 		if (ids.length === 0) continue;
 		const lines: string[] = [];
 		for (const id of ids.slice(0, limit)) {
@@ -12409,10 +12687,19 @@ function addSalesPerformanceReviewTextPatch(
 	const current = text(properties[propertyName]);
 	patches[propertyName] = {
 		kind: "text",
-		value: current.trim()
-			? appendShortMemo(current, buildSalesPerformanceStampedAppend(value))
-			: value,
+		value: replaceSalesPerformanceStampedAppend(current, value),
 	};
+}
+
+const SALES_PERFORMANCE_STAMPED_APPEND_MARKER = "人見さんWorker今回追記:";
+
+function replaceSalesPerformanceStampedAppend(current: string, value: string): string {
+	if (!current.trim()) return value;
+	const note = buildSalesPerformanceStampedAppend(value);
+	const markerIndex = current.indexOf(SALES_PERFORMANCE_STAMPED_APPEND_MARKER);
+	if (markerIndex < 0) return appendShortMemo(current, note);
+	const beforeMarker = current.slice(0, markerIndex).trim();
+	return beforeMarker ? `${beforeMarker}\n${note}` : note;
 }
 
 function buildSalesPerformanceStampedAppend(value: string): string {
@@ -12441,13 +12728,14 @@ function buildSalesPerformanceReviewMemo(
 		"【結論】",
 		review.conclusion,
 		"",
-		"【定量評価（実績）65点】",
+		"【定量評価（実績）50点】",
 		review.resultExplanation,
 		"",
-		"【定性評価（活動ログ）35点】",
-		review.actionGuidance,
-		"",
+		"【勝ちパターン化（営業貢献ログ）25点】",
 		review.contributionView,
+		"",
+		"【定性評価（行動ログ）25点】",
+		review.actionGuidance,
 		"",
 		"【補助確認事項（採点対象外）】",
 		review.riskNotes.length > 0
@@ -12490,13 +12778,15 @@ function buildSalesPerformanceConfirmationMemo(
 }
 
 const SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT =
-	"定性評価: 対象期間の活動ログ・顧客接点ログ・発言ログが未入力のため評価できません（データ不足）";
+	"勝ちパターン化・定性評価: 対象期間の営業貢献ログ・顧客接点ログ・発言ログが未入力のため評価できません（データ不足）";
+const SALES_PERFORMANCE_CONTRIBUTION_MISSING_TEXT =
+	"勝ちパターン化: 対象期間の営業貢献ログが未入力のため評価できません（データ不足）";
 const SALES_PERFORMANCE_QUALITATIVE_MISSING_PERSON_COMMENT =
-	"対象期間の活動ログ・顧客接点ログ・発言ログが未入力のため定性コメントなし（データ不足）";
+	"対象期間の営業貢献ログ・顧客接点ログ・発言ログが未入力のため勝ちパターン化/定性コメントなし（データ不足）";
 const SALES_PERFORMANCE_QUALITATIVE_MISSING_IMPROVEMENT =
 	"活動ログの入力から始めてください（現状データ不足のため改善点を特定できません）";
 const SALES_PERFORMANCE_QUALITATIVE_MISSING_MANAGER_ITEM =
-	"定性ログ（活動ログ・顧客接点ログ・発言ログ）が未入力のためデータ整備を確認してください";
+	"営業貢献ログ・顧客接点ログ・発言ログが未入力のためデータ整備を確認してください";
 const SALES_PERFORMANCE_QUANTITATIVE_ONLY_CONCLUSION_PREFIX =
 	"【定量実績のみに基づく結論（定性データ不足）】";
 
@@ -12504,21 +12794,64 @@ function applySalesPerformanceQualitativeGuard(
 	review: SalesPerformanceReviewAIResponse,
 	qualitativeLogCounts: SalesPerformanceQualitativeLogCounts,
 ): SalesPerformanceReviewAIResponse {
-	if (totalSalesPerformanceQualitativeLogs(qualitativeLogCounts) > 0) return review;
-	const conclusion = review.conclusion.trim();
+	const normalized = normalizeSalesPerformanceReviewSections(review);
+	if (totalSalesPerformanceQualitativeLogs(qualitativeLogCounts) > 0) {
+		if (qualitativeLogCounts.contributionLogs > 0) return normalized;
+		return {
+			...normalized,
+			contributionView: SALES_PERFORMANCE_CONTRIBUTION_MISSING_TEXT,
+			managerConfirmationItems: appendUniqueShortItem(
+				normalized.managerConfirmationItems,
+				"営業貢献ログが未入力のため、勝ちパターン化25点の評価根拠を確認してください",
+			),
+		};
+	}
+	const conclusion = normalized.conclusion.trim();
 	return {
-		...review,
+		...normalized,
 		conclusion: conclusion.startsWith(
 			SALES_PERFORMANCE_QUANTITATIVE_ONLY_CONCLUSION_PREFIX,
 		)
 			? conclusion
 			: `${SALES_PERFORMANCE_QUANTITATIVE_ONLY_CONCLUSION_PREFIX}${conclusion}`,
 		actionGuidance: SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT,
-		contributionView: "",
+		contributionView: SALES_PERFORMANCE_CONTRIBUTION_MISSING_TEXT,
 		personComment: SALES_PERFORMANCE_QUALITATIVE_MISSING_PERSON_COMMENT,
 		nextMonthImprovements: [SALES_PERFORMANCE_QUALITATIVE_MISSING_IMPROVEMENT],
 		managerConfirmationItems: [SALES_PERFORMANCE_QUALITATIVE_MISSING_MANAGER_ITEM],
 	};
+}
+
+function normalizeSalesPerformanceReviewSections(
+	review: SalesPerformanceReviewAIResponse,
+): SalesPerformanceReviewAIResponse {
+	return {
+		...review,
+		resultExplanation: stripSalesPerformanceEmbeddedSections(
+			review.resultExplanation,
+			["【勝ちパターン化", "【定性評価", "【補助確認事項", "【本人に返す", "【上司確認"],
+		),
+		contributionView: stripSalesPerformanceEmbeddedSections(
+			review.contributionView,
+			["【定量評価", "【定性評価", "【補助確認事項", "【本人に返す", "【上司確認"],
+		),
+		actionGuidance: stripSalesPerformanceEmbeddedSections(
+			review.actionGuidance,
+			["【定量評価", "【勝ちパターン化", "【補助確認事項", "【本人に返す", "【上司確認"],
+		),
+	};
+}
+
+function stripSalesPerformanceEmbeddedSections(value: string, markers: string[]): string {
+	const hit = markers
+		.map((marker) => value.indexOf(marker))
+		.filter((index) => index >= 0)
+		.sort((a, b) => a - b)[0];
+	return (hit === undefined ? value : value.slice(0, hit)).trim();
+}
+
+function appendUniqueShortItem(items: string[], item: string): string[] {
+	return items.some((current) => current.includes(item)) ? items : [...items, item];
 }
 
 type SalesPerformanceReviewPromptInput = {
@@ -12546,7 +12879,7 @@ function buildSalesPerformanceReviewPrompts(
 		"- 総合スコアを新規採点しない",
 		"- 評価ランクを新規確定しない",
 		"- 評価ステータスを確定にしない",
-		"- 定量評価（実績）65点はWorkerがコード計算済み。提示された定量内訳をそのまま使い、AIが点を付け直さない",
+		"- 定量評価（実績）50点はWorkerがコード計算済み。提示された定量内訳をそのまま使い、AIが点を付け直さない",
 		"- 給与、報酬、昇格、処遇判断をしない",
 		"- テスト/監査除外データを本番評価根拠にしない",
 		"- 人格評価をしない",
@@ -12557,17 +12890,19 @@ function buildSalesPerformanceReviewPrompts(
 		"出力方針:",
 		...(qualitativeUnavailable
 			? [
-					"- 定性評価対象ログ（貢献ログ・顧客接点ログ・発言ログ）は0件。定性評価を行わない",
-					"- actionGuidance と contributionView には定性評価文を書かず「データ不足のため評価不可」とだけ書く",
+					"- 勝ちパターン化対象ログ（営業貢献ログ）と定性評価対象ログ（顧客接点ログ・発言ログ）は0件。勝ちパターン化・定性評価を行わない",
+					"- actionGuidance と contributionView には勝ちパターン化・定性評価文を書かず「データ不足のため評価不可」とだけ書く",
 					"- 定量評価は提示されたWorker計算済み内訳を根拠にコメントだけ書く。点数や配点を変更しない",
 				]
 			: [
-					"- 評価は二軸で見る。定量評価（実績）65点はWorker計算済み、定性評価（活動ログ）35点は活動ログから見る",
+					"- 評価は三軸で見る。定量評価（実績）50点はWorker計算済み、勝ちパターン化25点は営業貢献ログ、定性評価25点は行動ログから見る",
 					"- 定量評価は提示されたWorker計算済み内訳を根拠にコメントだけ書く。点数や配点を変更しない",
-					"- 定性評価は活動ログDBに集約された貢献ログ、顧客接点ログ、発言ログだけを見る",
-					"- 行動評価と貢献評価は、定性評価の確認論点としてマネージャー面談に落とす",
+					"- 勝ちパターン化は活動ログDBに集約された営業貢献ログだけを見る",
+					"- 定性評価は活動ログDBに集約された顧客接点ログ、発言ログだけを見る",
+					"- AI活用度は本文ではなく回数/ポイントがある場合だけ小さく確認し、AI相談本文を採点根拠にしない",
+					"- 行動評価と貢献評価は、確認論点としてマネージャー面談に落とす",
 				]),
-		"- AI活用ポイント、人見さんメモ、ワニポメモリー、本人コメント、マネージャーメモは主たる採点根拠にしない",
+		"- AI相談本文、人見さんメモ、ワニポメモリー、本人コメント、マネージャーメモは主たる採点根拠にしない",
 		"- 月次ページ本文、自由記述、本人コメント、マネージャーメモは採点根拠にしない",
 		"- 既存の数値やスコアは、変更ではなく読み解きとして説明する",
 		...(qualitativeUnavailable
@@ -12589,7 +12924,7 @@ function buildSalesPerformanceReviewPrompts(
 		`監査区分: ${input.auditStatus || "未設定"}`,
 		`監査/テスト扱い: ${input.auditOrTest ? "はい" : "いいえ"}`,
 		input.missing.length > 0 ? `不足情報: ${input.missing.join(" / ")}` : "不足情報: なし",
-		`定性評価対象ログ件数: 貢献ログ ${counts.contributionLogs}件 / 顧客接点ログ ${counts.customerContactLogs}件 / 発言ログ ${counts.speechLogs}件`,
+		`50/25/25対象ログ件数: 勝ちパターン化=営業貢献ログ ${counts.contributionLogs}件 / 定性=顧客接点ログ ${counts.customerContactLogs}件・発言ログ ${counts.speechLogs}件`,
 		"",
 		"=== 評価材料 ===",
 		input.source.slice(0, 16000),
@@ -20979,6 +21314,7 @@ function readCompany(page: Page): CompanyInfo {
 		competitor3c: text(properties["3C：競合分析"]),
 		wajoRelation3c: text(properties["3C：自社との関係性"]),
 		source: text(properties["根拠ソース"]),
+		closingPoint: text(properties["成約へのポイント"]),
 		aiMemo: text(properties["企業AI受付メモ"]),
 	};
 }
@@ -21018,6 +21354,7 @@ function mergeCompanyResearch(
 		competitor3c: company.competitor3c || research.competitor3c,
 		wajoRelation3c: company.wajoRelation3c || research.wajoRelation3c,
 		source: company.source || research.source,
+		closingPoint: company.closingPoint || research.closingPoint,
 	};
 }
 
@@ -21033,6 +21370,7 @@ function withCompanyResearch(company: CompanyInfo, research: Research): CompanyI
 		competitor3c: research.competitor3c,
 		wajoRelation3c: research.wajoRelation3c,
 		source: research.source,
+		closingPoint: research.closingPoint,
 	};
 }
 
@@ -21063,7 +21401,7 @@ async function callAnthropicMeetingPrepReport(
 		"- 「再エネ活用、蓄電池導入、発電所売買、脱炭素対応、電力コスト対策を検討する法人または投資家層」のような汎用文をそのまま使わない",
 		"- 「競合は蓄電池開発会社、EPC、アグリゲーター」のような業界一般論だけで終わらせない",
 		"- 会社情報にない事実は断定しない",
-		"- 推測は必ず「推測ですが」と明記する",
+		"- 事実が不足する軸は推測で埋めず、『【取れていない事実】X が未確認。【取れば取れる】Y があれば X を取得可能。【初回ヒアリングで取る】Z』の3段構造で明示する",
 		"- 営業マンが最初の5分で使える入口トークと質問に落とす",
 		"- 商談ステータス、タスク、評価、成約判断は更新しない",
 		"",
@@ -21094,6 +21432,7 @@ async function callAnthropicMeetingPrepReport(
 		`3C競合: ${company.competitor3c || "未設定"}`,
 		`3C和上接点: ${company.wajoRelation3c || "未設定"}`,
 		`根拠ソース: ${company.source || "未設定"}`,
+		`成約へのポイント: ${company.closingPoint || "未設定"}`,
 		"",
 		"=== 既存レポート草案（汎用表現があれば悪い例として扱い、企業別に書き直す） ===",
 		JSON.stringify(fallback),
@@ -21146,8 +21485,11 @@ function isCompanyResearchComplete(research: Research): boolean {
 		research.competitor3c,
 		research.wajoRelation3c,
 		research.source,
+		research.closingPoint,
 	].every((value) => value.trim().length > 0);
 }
+
+export { mergeCompanyResearch as mergeCompanyResearchForTest };
 
 function appendShortMemo(current: string, note: string): string {
 	if (!current) return note;
@@ -21196,10 +21538,10 @@ function buildMeetingPrepReport(company: CompanyInfo): MeetingPrepReport {
 
 	const customerMarket =
 		company.customerMarket3c ||
-		`推測ですが、${name}は再生可能エネルギー、発電所売買、系統用蓄電池、電力コスト、脱炭素対応のいずれかに関心を持つ法人/投資家層として整理します。初回で関心領域と意思決定者を確認します。`;
+		`【取れていない事実】${name}固有の顧客・市場接点（業種・取引先・売上規模）が未確認。【取れば取れる】公式サイト・業種コード・取引先公開情報があれば市場ポジションを取得可能。【初回ヒアリングで取る】関心領域（再エネ/蓄電池/発電所売買/脱炭素）と意思決定者を確認する。`;
 	const competitor =
 		company.competitor3c ||
-		"推測ですが、比較対象は発電所仲介会社、EPC、蓄電池開発会社、アグリゲーター、金融機関系提案、既存取引先の施工/運用会社です。価格だけでなく、案件品質・系統・許認可・運用体制で比較されます。";
+		`【取れていない事実】${name}が比較検討している競合関係が未確認。【取れば取れる】業界の既存提案先・取引先公開情報があれば競合軸を特定可能。【初回ヒアリングで取る】『他社見積もり/提案を受けているか』『比較軸（価格/案件品質/系統知見/許認可/運用体制）のうちどこを重視するか』を確認する。`;
 	const wajo =
 		company.wajoRelation3c ||
 		company.fit ||
@@ -21223,11 +21565,11 @@ function buildMeetingPrepReport(company: CompanyInfo): MeetingPrepReport {
 		}`,
 		`現在課題: ${
 			company.currentIssue ||
-			"推測ですが、情報不足、案件の見極め、採算性、系統/許認可、社内決裁のいずれかで迷いがある可能性があります。"
+			`【取れていない事実】${name}固有の現在課題が未確認。【取れば取れる】公式IR資料・直近プレスがあれば設備投資・脱炭素方針を取得可能。【初回ヒアリングで取る】どの軸で迷いがあるか（情報・採算性・系統許認可・社内決裁）を質問で特定する。`
 		}`,
 		`将来課題: ${
 			company.futureIssue ||
-			"推測ですが、電力価格変動、設備投資判断、脱炭素要請、運用リスク、出口戦略が次の論点になります。"
+			`【取れていない事実】${name}固有の中期論点が未確認。【取れば取れる】中期経営計画・IR資料があれば方針を取得可能。【初回ヒアリングで取る】2-3年後の電力調達・設備更新・脱炭素対応・出口戦略の優先順位を確認する。`
 		}`,
 		`次アクション仮説: 商談後は、案件条件・予算・時期・決裁者・希望資料を整理し、関連案件または企業評価に接続する。`,
 	].join("\n");
@@ -23454,6 +23796,7 @@ async function createCompany(
 	notion: NotionClient,
 	card: CardInfo,
 	weakCandidate?: Candidate,
+	deepResearch = true,
 ): Promise<Page> {
 	const properties: Record<string, unknown> = {
 		企業名: title(card.companyName),
@@ -23462,9 +23805,11 @@ async function createCompany(
 		企業AI受付メモ: richText(
 			`名刺起点でWorkerが作成。元名刺: ${card.name || card.page.id}`,
 		),
-		企業調査ステータス: select("解析開始"),
+		企業調査ステータス: select(deepResearch ? "解析開始" : "未着手"),
 		名刺起点Webhookメモ: richText(
-			"Notion Workerが名刺起点で企業を作成し、外部調査と3C返却を実行。",
+			deepResearch
+				? "Notion Workerが名刺起点で企業を作成し、外部調査と3C返却を実行。"
+				: "Notion Workerが名刺起点で企業を作成。営業判断=名刺だけ保存のため、外部調査と3C返却は未実行。",
 		),
 		重複整理ステータス: select(weakCandidate ? "重複候補" : "正本候補"),
 		関連名刺: relation(card.page.id),
@@ -23520,6 +23865,8 @@ async function linkCardToCompany(
 	companyId: string,
 	status: "既存企業に紐づけ済" | "新規企業作成",
 	memo: string,
+	meetingPrepMemo?: string | null,
+	webhookMemo?: string | null,
 ): Promise<void> {
 	// 画像インテイクの再送ガード(imgsha:トークン)を消さない(再検品指摘=処理完了後の再送で二重登録)
 	const existingDupKey = text(card.page.properties?.["企業重複チェックキー"]);
@@ -23533,14 +23880,45 @@ async function linkCardToCompany(
 				[card.key, imgshaToken].filter(Boolean).join(" "),
 			),
 			企業連携ステータス: select(status),
-			企業連携メモ: richText(memo),
-			Webhook引き継ぎステータス: select("引き継ぎ済"),
-			Webhook引き継ぎメモ: richText("Notion Workerが企業調査と3C返却まで完了。"),
+				企業連携メモ: richText(memo),
+				Webhook引き継ぎステータス: select("引き継ぎ済"),
+				Webhook引き継ぎメモ: richText(
+					webhookMemo ?? "Notion Workerが企業調査と3C返却まで完了。",
+				),
 			名刺AI処理状態: select(status),
-			名刺AI処理メモ: richText("Notion Workerで処理済み。"),
+			名刺AI処理メモ: richText(
+				[
+					"Notion Workerで処理済み。",
+					meetingPrepMemo && `商談準備レポート: ${meetingPrepMemo}`,
+				]
+					.filter(Boolean)
+					.join("\n"),
+			),
 		},
 	});
 	await addCardRelationToCompany(notion, companyId, card.page.id);
+}
+
+async function createMeetingPrepReportFromBusinessCard(
+	notion: NotionClient,
+	companyId: string,
+): Promise<string | null> {
+	try {
+		const result = await processMeetingPrepReport(
+			{ companyPageId: companyId, dryRun: false },
+			notion,
+		);
+		return result.action === "skipped-fresh"
+			? "既存レポートを再利用して商談準備を反映しました。"
+			: `商談準備レポートを${result.action === "created-report" ? "新規作成" : "更新"}しました。`;
+	} catch (error) {
+		const shortError = String(error).slice(0, 120);
+		console.log(
+			"名刺起点の商談準備レポート自動作成をスキップ:",
+			shortError,
+		);
+		return `商談準備レポート作成でエラーが発生しました(要確認): ${shortError}`;
+	}
 }
 
 async function addCardRelationToCompany(
@@ -23648,12 +24026,13 @@ async function researchCompanyWithGemini(
 	const prompt = [
 		"和上ホールディングスの営業準備として企業情報を整理してください。",
 		"個人情報は使わず、会社名・ドメイン・住所だけを参考にしてください。",
-		"公開情報が不足する場合は、推測ですが、と明記した仮説にしてください。",
+		"公開情報が不足する軸は推測で埋めず『【取れていない事実】X が未確認。【取れば取れる】Y があれば X を取得可能。【初回ヒアリングで取る】Z』の3段構造で明示してください。",
 		"JSONだけを返してください。",
 		`会社名: ${card.companyName}`,
 		`ドメイン: ${card.domain || "不明"}`,
 		`住所: ${card.address || "不明"}`,
-		"JSON keys: summary,currentIssue,futureIssue,salesAngle,fit,customerMarket3c,competitor3c,wajoRelation3c,source",
+		"JSON keys: summary,currentIssue,futureIssue,salesAngle,fit,customerMarket3c,competitor3c,wajoRelation3c,source,closingPoint",
+		"closingPoint は成約までの決め手を3段構造で書く：『【取れていない事実】X が未確認。【取れば取れる】Y があれば X を取得可能。【初回ヒアリングで取る】(1)意思決定者と承認プロセス (2)検討時期 (3)競合提案と比較軸 (4)和上のどの点が刺さるか』。",
 	].join("\n");
 
 	try {
@@ -23688,23 +24067,27 @@ async function researchCompanyWithGemini(
 
 function fallbackResearch(card: CardInfo): Research {
 	const company = card.companyName || "対象企業";
+	const domain = card.domain ? `（ドメイン: ${card.domain}）` : "";
+	const address = card.address ? `（住所: ${card.address}）` : "";
 	return {
-		summary: `${company}は、名刺情報を起点に登録された企業です。公開情報の追加調査前のため、現時点では名刺上の会社名、ドメイン、住所をもとに営業準備の仮説を作成しています。`,
-		currentIssue: `推測ですが、${company}は再生可能エネルギー、系統用蓄電池、電力コスト、脱炭素、投資判断のいずれかに関心を持つ可能性があります。`,
+		summary: `${company}${domain}${address}は、名刺起点で登録された企業。Gemini呼出失敗または接続なしのため、Worker fallback で組み立て。事業内容・規模・代表者経歴・直近接点は未確認で、初回ヒアリングで取りに行く軸として整理する。`,
+		currentIssue: `【取れていない事実】${company}固有の現在課題が未確認。【取れば取れる】公式サイトURL${card.domain ? `（${card.domain}）` : "（未取得）"}があれば事業内容を、IR資料があれば業績・方針を、TDB企業コードがあれば財務・与信を取得可能。【初回ヒアリングで取る】再エネ/蓄電池の関心軸・電力コスト負担割合・脱炭素要請の有無・遊休地/屋根の保有を確認する。`,
 		futureIssue:
-			"推測ですが、今後は電力価格変動、系統制約、設備投資判断、脱炭素対応、BCP対応が課題になる可能性があります。",
+			`【取れていない事実】${company}固有の中期論点が未確認。【取れば取れる】中期経営計画・直近プレスがあれば設備投資・脱炭素ロードマップを取得可能。【初回ヒアリングで取る】2-3年後の調達契約更新時期・設備更新計画・出口戦略の優先順位を確認する。`,
 		salesAngle:
-			"初回は、再エネ/蓄電池への関心、投資対象、保有設備、電力コスト、相談したい案件の有無を短く確認します。",
+			"事実不足のため、初回は『再エネ/蓄電池への関心軸』『投資対象（事業or投資案件）』『保有設備（屋根/遊休地）』『電力コスト負担』『相談したい案件の有無』の5軸を5-10分で確認する。",
 		fit:
-			"和上ホールディングスは、太陽光発電所仲介、系統用蓄電池、EPC/O&M、投資判断材料の整理で接点を作れます。",
+			"事実確認後、和上の太陽光発電所仲介・系統用蓄電池・EPC/O&M・投資判断材料整理のうちどれが適合するかを判定する。現段階では断定しない。",
 		customerMarket3c:
-			"推測ですが、顧客・市場は、再エネ活用、蓄電池導入、発電所売買、脱炭素対応、電力コスト対策を検討する法人または投資家層です。",
+			`【取れていない事実】${company}固有の顧客・市場接点が未確認。【取れば取れる】業種コード・取引先公開情報・売上規模があれば市場ポジションを取得可能。【初回ヒアリングで取る】主要販売先業種・電力使用量の業界水準との差・脱炭素関連の取引先要請を確認する。`,
 		competitor3c:
-			"推測ですが、競合は蓄電池開発会社、EPC、アグリゲーター、太陽光施工会社、投資案件紹介会社、金融機関系の提案です。",
+			`【取れていない事実】${company}固有の競合関係が未確認。【取れば取れる】既存提案先・取引先公開情報があれば競合軸を特定可能。【初回ヒアリングで取る】他社見積もり/提案の有無・比較軸（価格/施工実績/系統知見/許認可/運用体制）を確認する。`,
 		wajoRelation3c:
-			"和上ホールディングスは、太陽光・蓄電池案件の具体情報、施工/運用知見、発電所売買、投資判断の前提整理で価値を出せます。",
+			"和上は太陽光・蓄電池の現場知見（800MW実績）、発電所売買仲介、EPC/O&M、投資判断材料整理を一気通貫で提供。事実確認後、相手の課題に応じて具体接点（数字・現場知見・他社事例）を組む。",
 		source:
-			"名刺情報 + Notion Worker仮説生成。公開情報不足のため、推測を含む箇所は推測ですがと明記。",
+			"名刺情報のみ。Web/IR/TDB公開情報の取得待ち。初回ヒアリング後に充実させる。",
+		closingPoint:
+			`【取れていない事実】${company}固有の成約決め手（決裁構造・予算規模・競合状況・タイミング要因）が未確認。【取れば取れる】IR資料・組織図公開情報・直近プレスがあれば決裁者と投資判断時期を取得可能。【初回ヒアリングで取る】(1)意思決定者と承認プロセス（誰が最終GO/NOGO・予算上限）(2)検討時期（今・3ヶ月以内・年内・来期）(3)競合提案の有無と比較軸 (4)和上の800MW実績・売買仲介・EPC一気通貫のうちどの点が刺さるか を確認する。`,
 	};
 }
 
@@ -23720,6 +24103,7 @@ function normalizeResearch(input: Partial<Research>, card: CardInfo): Research {
 		competitor3c: input.competitor3c || fallback.competitor3c,
 		wajoRelation3c: input.wajoRelation3c || fallback.wajoRelation3c,
 		source: input.source || fallback.source,
+		closingPoint: input.closingPoint || fallback.closingPoint,
 	};
 }
 

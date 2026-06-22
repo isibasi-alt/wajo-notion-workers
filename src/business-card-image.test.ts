@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import {
 	buildAdvisorPropertiesForTest as advisor,
+	normalizeCardEngagementForTest as engagement,
 	normalizeCardRoutingForTest as routing,
 	parseBusinessCardOcrForTest as parse,
+	readBusinessCardRunOptionsForTest as runOptions,
 } from "./index";
 
 // 名刺画像インテイク(入口ルール2026-06-11)の純関数:
@@ -46,6 +48,36 @@ async function main() {
 	assert.equal(routing("後で"), "later");
 	assert.equal(routing(undefined), "company"); // 未指定は従来通り企業連携
 	assert.equal(routing(""), "company");
+
+	// ── 営業判断(熱量)正規化 ──
+	assert.equal(engagement("本気で追う"), "active");
+	assert.equal(engagement("がっつり組んで情報を取る"), "active");
+	assert.equal(engagement(undefined), "active"); // 未指定は従来通り本流調査
+	assert.equal(engagement("名刺だけ保存"), "save-only");
+	assert.equal(engagement("今回は流す"), "save-only");
+	assert.equal(engagement("追わない"), "save-only");
+
+	// ── 名刺処理Webhook/手動ツール用オプション正規化 ──
+	assert.deepEqual(runOptions({ engagementIntent: "名刺だけ保存" }), {
+		deepResearch: false,
+		autoCreateMeetingPrepReport: false,
+	});
+	assert.deepEqual(runOptions({ 営業判断: "今回は流す" }), {
+		deepResearch: false,
+		autoCreateMeetingPrepReport: false,
+	});
+	assert.deepEqual(runOptions({ engagementIntent: "本気で追う" }), {
+		deepResearch: true,
+		autoCreateMeetingPrepReport: true,
+	});
+	assert.deepEqual(runOptions({ engagementIntent: "名刺だけ保存", deepResearch: true }), {
+		deepResearch: false,
+		autoCreateMeetingPrepReport: false,
+	});
+	assert.deepEqual(runOptions({}), {
+		deepResearch: true,
+		autoCreateMeetingPrepReport: true,
+	});
 
 	// ── 社外顧問プロパティ組み立て(人=案件の種ドクトリン) ──
 	{

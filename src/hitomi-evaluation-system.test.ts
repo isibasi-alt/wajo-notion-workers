@@ -77,6 +77,13 @@ const retrievedPages: Record<string, Record<string, unknown>> = {
 		関連発言: relation(["speech-1"]),
 		関連ワニポメモリー: relation(["wanipo-private"]),
 	},
+	"activity-contribution": {
+		活動タイトル: title("営業貢献ログ集約"),
+		活動種別: select("ナレッジ作成"),
+		活動処理状態: select("完了"),
+		評価対象: checkbox(true),
+		関連営業貢献ログ: relation(["contribution-1"]),
+	},
 	"activity-support": {
 		活動タイトル: title("ワニポメモリー補助ログ"),
 		活動種別: select("その他"),
@@ -158,7 +165,7 @@ async function main() {
 	});
 	assert.match(monthlySource, /実績粗利額.*1500000/);
 	assert.match(monthlySource, /成約件数.*3/);
-	assert.match(monthlySource, /定量評価（実績）｜65点/);
+	assert.match(monthlySource, /定量評価（実績）｜50点/);
 	assert.doesNotMatch(monthlySource, /月次数字・月次報告/);
 	assert.doesNotMatch(monthlySource, /結果スコア/);
 	assert.doesNotMatch(monthlySource, /AI活用ポイント/);
@@ -167,19 +174,20 @@ async function main() {
 	const relatedSource = await buildSalesPerformanceRelatedSourceForTest(
 		notion as never,
 		{
-			関連活動ログ: relation(["activity-1"]),
+			関連活動ログ: relation(["activity-1", "activity-contribution"]),
 			関連発言ログ: relation(["speech-1"]),
 			関連貢献ログ: relation(["contribution-1"]),
 		},
 	);
-	assert.match(relatedSource, /定性評価（活動ログ）｜35点/);
+	assert.match(relatedSource, /勝ちパターン化（営業貢献ログ）｜25点/);
+	assert.match(relatedSource, /定性評価（行動ログ）｜25点/);
 	assert.match(relatedSource, /初回提案後の追客活動/);
+	assert.match(relatedSource, /蓄電池ナレッジ共有/);
 	assert.match(relatedSource, /関連発言/);
 	assert.match(relatedSource, /価格条件の説明/);
 	assert.match(relatedSource, /補助確認事項（採点対象外）/);
 	assert.match(relatedSource, /関連ワニポメモリー/);
 	assert.doesNotMatch(relatedSource, /旧直接ログ/);
-	assert.doesNotMatch(relatedSource, /蓄電池ナレッジ共有/);
 	assert.doesNotMatch(relatedSource, /wanipo-private/);
 
 	const manyActivityRelatedSource = await buildSalesPerformanceRelatedSourceForTest(
@@ -199,8 +207,9 @@ async function main() {
 		notion as never,
 		{ 関連活動ログ: relation(["activity-support"]) },
 	);
-	assert.match(supportRelatedSource, /定性評価（活動ログ）｜35点/);
-	assert.match(supportRelatedSource, /評価対象外/);
+	assert.match(supportRelatedSource, /勝ちパターン化（営業貢献ログ）｜25点/);
+	assert.match(supportRelatedSource, /定性評価（行動ログ）｜25点/);
+	assert.match(supportRelatedSource, /採点対象: false/);
 	assert.match(supportRelatedSource, /補助確認事項（採点対象外）/);
 	assert.match(supportRelatedSource, /ワニポメモリー補助ログ/);
 	assert.match(supportRelatedSource, /関連ワニポメモリー/);
@@ -210,8 +219,9 @@ async function main() {
 		notion as never,
 		{ 関連活動ログ: relation(["activity-ai-consultation"]) },
 	);
-	assert.match(aiConsultationSupportSource, /定性評価（活動ログ）｜35点/);
-	assert.match(aiConsultationSupportSource, /評価対象外/);
+	assert.match(aiConsultationSupportSource, /勝ちパターン化（営業貢献ログ）｜25点/);
+	assert.match(aiConsultationSupportSource, /定性評価（行動ログ）｜25点/);
+	assert.match(aiConsultationSupportSource, /採点対象: false/);
 	assert.match(aiConsultationSupportSource, /補助確認事項（採点対象外）/);
 	assert.match(aiConsultationSupportSource, /AI相談補助ログ/);
 	assert.doesNotMatch(aiConsultationSupportSource, /商談準備の壁打ち/);
@@ -220,8 +230,10 @@ async function main() {
 		notion as never,
 		{ 関連活動ログ: relation(["activity-generic"]) },
 	);
-	assert.match(genericActivitySource, /定性評価（活動ログ）｜35点/);
-	assert.match(genericActivitySource, /対象3ログ外/);
+	assert.match(genericActivitySource, /勝ちパターン化（営業貢献ログ）｜25点/);
+	assert.match(genericActivitySource, /定性評価（行動ログ）｜25点/);
+	assert.match(genericActivitySource, /営業貢献ログ未接続/);
+	assert.match(genericActivitySource, /発言ログ・顧客接点ログ未接続/);
 	assert.doesNotMatch(genericActivitySource, /汎用活動ログ|評価対象チェックだけ/);
 
 	const evaluationSource = buildSalesPerformanceEvaluationSourceForTest({
@@ -229,15 +241,17 @@ async function main() {
 		relatedSource,
 		pageText: "月次ページ本文に書かれた主観メモ。採点根拠に混ぜない。",
 	});
-	assert.match(evaluationSource, /定量評価（実績）｜65点/);
-	assert.match(evaluationSource, /定性評価（活動ログ）｜35点/);
+	assert.match(evaluationSource, /定量評価（実績）｜50点/);
+	assert.match(evaluationSource, /勝ちパターン化（営業貢献ログ）｜25点/);
+	assert.match(evaluationSource, /定性評価（行動ログ）｜25点/);
 	assert.doesNotMatch(evaluationSource, /月次ページ本文|主観メモ|補足本文/);
 
 	const noHubSource = await buildSalesPerformanceRelatedSourceForTest(
 		notion as never,
 		{ 関連発言ログ: relation(["speech-1"]) },
 	);
-	assert.match(noHubSource, /定性評価（活動ログ）｜35点/);
+	assert.match(noHubSource, /勝ちパターン化（営業貢献ログ）｜25点/);
+	assert.match(noHubSource, /定性評価（行動ログ）｜25点/);
 	assert.match(noHubSource, /活動ログ未接続/);
 	assert.match(noHubSource, /活動ログ未集約/);
 	assert.doesNotMatch(noHubSource, /価格条件の説明/);
@@ -250,7 +264,8 @@ async function main() {
 			関連成約: relation(["closing-1"]),
 		},
 	);
-	assert.match(legacyContributionOnlySource, /定性評価（活動ログ）｜35点/);
+	assert.match(legacyContributionOnlySource, /勝ちパターン化（営業貢献ログ）｜25点/);
+	assert.match(legacyContributionOnlySource, /定性評価（行動ログ）｜25点/);
 	assert.match(legacyContributionOnlySource, /活動ログ未接続/);
 	assert.match(legacyContributionOnlySource, /活動ログ未集約/);
 	assert.doesNotMatch(legacyContributionOnlySource, /蓄電池ナレッジ共有|deal-1|closing-1/);
@@ -259,8 +274,9 @@ async function main() {
 		monthlySource,
 		relatedSource,
 	].join("\n\n"));
-	assert.ok(dryRunPreview.some((line) => line.includes("定量評価（実績）｜65点")));
-	assert.ok(dryRunPreview.some((line) => line.includes("定性評価（活動ログ）｜35点")));
+	assert.ok(dryRunPreview.some((line) => line.includes("定量評価（実績）｜50点")));
+	assert.ok(dryRunPreview.some((line) => line.includes("勝ちパターン化（営業貢献ログ）｜25点")));
+	assert.ok(dryRunPreview.some((line) => line.includes("定性評価（行動ログ）｜25点")));
 	assert.ok(dryRunPreview.some((line) => line.includes("補助確認事項（採点対象外）")));
 	assert.ok(dryRunPreview.some((line) => line.includes("https://notion.so/activity-1")));
 	assert.ok(dryRunPreview.length <= 20);
@@ -337,11 +353,15 @@ async function main() {
 	);
 	assert.match(
 		String(reviewPatches.AI評価メモ.value),
-		/【定量評価（実績）65点】/,
+		/【定量評価（実績）50点】/,
 	);
 	assert.match(
 		String(reviewPatches.AI評価メモ.value),
-		/【定性評価（活動ログ）35点】/,
+		/【勝ちパターン化（営業貢献ログ）25点】/,
+	);
+	assert.match(
+		String(reviewPatches.AI評価メモ.value),
+		/【定性評価（行動ログ）25点】/,
 	);
 	assert.match(
 		String(reviewPatches.AI評価メモ.value),
@@ -462,7 +482,7 @@ async function main() {
 		String(longMemoReviewPatches.AI評価メモ.value),
 		/人見さんWorker一次評価案:/,
 	);
-	assert.match(String(longMemoReviewPatches.AI評価メモ.value), /定量評価（実績）65点/);
+	assert.match(String(longMemoReviewPatches.AI評価メモ.value), /定量評価（実績）50点/);
 	assert.match(String(longMemoReviewPatches.AI評価メモ.value), /今回のコメントを必ず残す/);
 	assert.match(
 		String(longMemoReviewPatches.上司確認事項.value),

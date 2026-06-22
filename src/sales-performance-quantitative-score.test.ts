@@ -29,13 +29,13 @@ function fullRateProperties() {
 }
 
 const full = computeSalesPerformanceQuantitativeScoreForTest(fullRateProperties());
-assert.equal(full.粗利, 25);
-assert.equal(full.成約, 12);
-assert.equal(full.仕入れ, 10);
-assert.equal(full.商談, 8);
-assert.equal(full.案件化, 6);
-assert.equal(full.専売, 4);
-assert.equal(full.合計, 65);
+assert.equal(full.粗利, 19);
+assert.equal(full.成約, 9);
+assert.equal(full.仕入れ, 8);
+assert.equal(full.商談, 6);
+assert.equal(full.案件化, 5);
+assert.equal(full.専売, 3);
+assert.equal(full.合計, 50);
 assert.equal(full.details.粗利.achievementRate, 1);
 assert.equal(full.details.粗利.rateSource, "月次粗利達成率（申請連動）");
 
@@ -58,7 +58,7 @@ assert.deepEqual(
 		専売: half.専売,
 		合計: half.合計,
 	},
-	{ 粗利: 13, 成約: 6, 仕入れ: 5, 商談: 4, 案件化: 3, 専売: 2, 合計: 33 },
+	{ 粗利: 10, 成約: 5, 仕入れ: 4, 商談: 3, 案件化: 3, 専売: 2, 合計: 27 },
 );
 assert.equal(
 	half.合計,
@@ -85,7 +85,7 @@ const over = computeSalesPerformanceQuantitativeScoreForTest({
 	"問い合わせ数": number(10),
 	"月次専売許可達成率（申請連動）": formulaNumber(3),
 });
-assert.equal(over.合計, 65);
+assert.equal(over.合計, 50);
 assert.equal(over.details.専売.clippedAchievementRate, 1);
 
 const missing = computeSalesPerformanceQuantitativeScoreForTest({});
@@ -105,7 +105,7 @@ const fallback = computeSalesPerformanceQuantitativeScoreForTest({
 	"案件化件数": number(3),
 	"問い合わせ数": number(6),
 });
-assert.equal(fallback.粗利, 13);
+assert.equal(fallback.粗利, 10);
 assert.equal(fallback.details.粗利.achievementRate, 0.5);
 assert.equal(fallback.details.粗利.rateSource, "実績粗利額（自動） / 粗利目標（申請DB）");
 assert.equal(fallback.案件化, 3);
@@ -122,9 +122,9 @@ const source = buildSalesPerformanceReviewSourceForTest({
 	"商談件数（自動）": rollupNumber(10),
 	"商談件数目標（申請DB）": rollupNumber(10),
 });
-assert.match(source, /定量評価（実績）｜65点/);
-assert.match(source, /合計: 65\/65点/);
-assert.match(source, /粗利: 25\/25点/);
-assert.match(source, /AIは定量65点を付け直さない/);
+assert.match(source, /定量評価（実績）｜50点/);
+assert.match(source, /合計: 50\/50点/);
+assert.match(source, /粗利: 19\/19点/);
+assert.match(source, /AIは定量50点を付け直さない/);
 
 console.log("sales-performance-quantitative-score: all assertions passed");
