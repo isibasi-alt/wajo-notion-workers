@@ -4436,6 +4436,8 @@ worker.webhook("processBusinessCardWebhook", {
 				await processBusinessCard(
 					{
 						pageId,
+						routing: runOptions.routing,
+						engagementIntent: runOptions.engagementIntent,
 						dryRun: false,
 						deepResearch: runOptions.deepResearch,
 						autoCreateMeetingPrepReport: runOptions.autoCreateMeetingPrepReport,
@@ -4450,6 +4452,8 @@ worker.webhook("processBusinessCardWebhook", {
 					{
 						pageId: card.id,
 						pageData: card,
+						routing: runOptions.routing,
+						engagementIntent: runOptions.engagementIntent,
 						dryRun: false,
 						deepResearch: runOptions.deepResearch,
 						autoCreateMeetingPrepReport: runOptions.autoCreateMeetingPrepReport,
@@ -5615,7 +5619,11 @@ async function processBusinessCard(
 			page_id: input.pageId,
 		}));
 	const card = readCard(page);
-	const shouldDeepResearch = Boolean(!input.dryRun && input.deepResearch !== false);
+	const routing = input.routing ?? "company";
+	const engagementIntent = input.engagementIntent ?? "active";
+	const shouldDeepResearch = Boolean(
+		!input.dryRun && input.deepResearch !== false && routing === "company" && engagementIntent === "active",
+	);
 	const shouldCreateMeetingPrep = Boolean(
 		shouldDeepResearch && input.autoCreateMeetingPrepReport,
 	);
@@ -5660,6 +5668,40 @@ async function processBusinessCard(
 		};
 	}
 
+	if (routing === "broker") {
+		const memo = buildHoldMemo({
+			stopReason: "名刺振り分けで「社外顧問・ブローカー」が選択されたため、企業高密度化の外部調査対象外。",
+			scope: "名刺情報(会社名/連絡先)の確認のみ。",
+			humanDecision: "ブローカー/社外顧問の別DB登録要否を営業側で決める。",
+			restartCondition: "本件を企業案件として扱う判断を明確化した場合のみ、再起動して企業連携を実行。",
+		});
+		await markCardNeedsReview(notion, card, memo);
+		return {
+			pageId: input.pageId,
+			action: "needs-review",
+			companyId: null,
+			companyName: null,
+			message: `routing=${routing} / engagement=${engagementIntent} のため企業連携を停止しました。`,
+		};
+	}
+
+	if (routing === "later") {
+		const memo = buildHoldMemo({
+			stopReason: "名刺振り分けが「あとで決める」に設定されたため、判定不能待ち。",
+			scope: "名刺情報と既存企業候補の一次照合は未実施。",
+			humanDecision: "営業担当が扱い対象企業を確定し、再実行で候補を確定する。",
+			restartCondition: "後で決まった企業名が確定し、再調査起動フラグを active に戻した時。",
+		});
+		await markCardNeedsReview(notion, card, memo);
+		return {
+			pageId: input.pageId,
+			action: "needs-review",
+			companyId: null,
+			companyName: null,
+			message: "routing=later のため要確認で停止しました。",
+		};
+	}
+
 	if (input.dryRun) {
 		const candidates = await findCompanyCandidates(notion, card);
 		const strong = candidates.filter((candidate) => candidate.score >= 80);
@@ -5683,7 +5725,12 @@ async function processBusinessCard(
 			await markCardNeedsReview(
 				notion,
 				card,
-				"会社名が読み取れないため、企業作成せず要確認にしました。",
+				buildHoldMemo({
+					stopReason: "会社名が抽出できず、正本確定不能。",
+					scope: "OCR結果（会社名/連絡先）を再確認。",
+					humanDecision: "名刺画像の再読取りまたは手入力で会社名を確定する。",
+					restartCondition: "会社名が確定した名刺データで再起動する。",
+				}),
 			);
 			return {
 				pageId: input.pageId,
@@ -5701,7 +5748,7 @@ async function processBusinessCard(
 				action: "duplicate-hold",
 				companyId: null,
 				companyName: null,
-				message: `強い候補が複数あります: ${strong.map((candidate) => candidate.name).join(", ")}`,
+				message: `routing=${routing} / engagement=${engagementIntent}。strong候補が複数あるため一旦停止: ${strong.map((candidate) => candidate.name).join(", ")}`,
 			};
 		}
 
@@ -5847,9 +5894,21 @@ function normalizeCardEngagement(value: string | undefined): "active" | "save-on
 export { normalizeCardEngagement as normalizeCardEngagementForTest };
 
 function readBusinessCardRunOptions(body: Record<string, unknown>): {
+	routing: "company" | "broker" | "later";
+	engagementIntent: "active" | "save-only";
 	deepResearch: boolean;
 	autoCreateMeetingPrepReport: boolean;
 } {
+	const routing = normalizeCardRouting(
+		firstString(
+			body.routing,
+			body.route,
+			body.分岐,
+			body.入力,
+			body.対象,
+			body.選択,
+		),
+	);
 	const engagement = normalizeCardEngagement(
 		firstString(
 			body.engagementIntent,
@@ -5861,6 +5920,8 @@ function readBusinessCardRunOptions(body: Record<string, unknown>): {
 	);
 	if (engagement === "save-only") {
 		return {
+			routing,
+			engagementIntent: engagement,
 			deepResearch: false,
 			autoCreateMeetingPrepReport: false,
 		};
@@ -5868,6 +5929,8 @@ function readBusinessCardRunOptions(body: Record<string, unknown>): {
 	const deepResearch =
 		typeof body.deepResearch === "boolean" ? body.deepResearch : engagement === "active";
 	return {
+		routing,
+		engagementIntent: engagement,
 		deepResearch,
 		autoCreateMeetingPrepReport: deepResearch,
 	};
@@ -6207,21 +6270,6 @@ async function processBusinessCardImage(
 
 	// 5. 振り分け(入口ルール: 人がその場で選んだ結果を尊重し、AIは確実な作業だけやる)
 	if (routing === "broker") {
-		if (engagement === "save-only") {
-			await safeUpdateExistingProperties(notion, page, {
-				名刺AI処理メモ: {
-					kind: "text",
-					value:
-						"撮影時に本人が🤝社外顧問・ブローカーを選択。営業判断=名刺だけ保存のため、社外顧問DB登録とAI深掘りは未実行。",
-				},
-			});
-			return {
-				pageId: page.id,
-				action: "broker-routed",
-				companyId: null,
-				message: `名刺を保存しました。営業判断=名刺だけ保存のため、社外顧問登録とAI深掘りは未実行です(${ocr.氏名 || ocr.会社名})。`,
-			};
-		}
 		// 人=案件の種: 社外顧問DBに「関係構築中」で自動登録し、案件DBの人物タブに出す(死蔵させない)
 		let advisorNote: string;
 		try {
@@ -6240,21 +6288,26 @@ async function processBusinessCardImage(
 		await safeUpdateExistingProperties(notion, page, {
 			名刺AI処理メモ: {
 				kind: "text",
-				value: `撮影時に本人が🤝社外顧問・ブローカーを選択。営業判断=本気で追う。${advisorNote}`,
+				value: `撮影時に本人が🤝社外顧問・ブローカーを選択。${advisorNote}`,
 			},
 		});
 		return {
 			pageId: page.id,
 			action: "broker-routed",
 			companyId: null,
-			message: `名刺を登録し、社外顧問DBへ振り分けました(${ocr.氏名 || ocr.会社名})。`,
+			message: `名刺を保存しました。対象外扱いで社外顧問候補を優先保存します。(${ocr.氏名 || ocr.会社名})。`,
 		};
 	}
 	if (routing === "later") {
 		await safeUpdateExistingProperties(notion, page, {
 			名刺AI処理メモ: {
 				kind: "text",
-				value: "撮影時に❓あとで決めるを選択。判定不能キューで振り分け待ち。",
+				value: buildHoldMemo({
+					stopReason: "撮影時に『あとで決める』を選択したため、判断保留で停止。",
+					scope: "名刺情報の保存のみ。",
+					humanDecision: "対象企業を確定させる。",
+					restartCondition: "routing を 'company' または 'broker' に変更して再実行。",
+				}),
 			},
 		});
 		return {
@@ -6271,6 +6324,8 @@ async function processBusinessCardImage(
 			pageId: page.id,
 			dryRun: false,
 			force: true,
+			routing,
+			engagementIntent: engagement,
 			deepResearch: engagement === "active",
 			autoCreateMeetingPrepReport: engagement === "active",
 		},
