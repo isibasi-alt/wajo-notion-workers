@@ -195,6 +195,11 @@ const WAJO_PLAYBOOK = [
 	"- 刺さる相手の例: 工場・倉庫で電気代が原価を圧迫する企業 / 遊休地・屋根を持つ企業 / 脱炭素を取引先から要請される企業 / 売電中の発電所を売買したい事業者。",
 	"- 営業の型: 相手の状況から課題仮説→和上の解決策を数字(電気代◯%減・回収□年・800MW実績)で接続→決裁者別(社長/財務/工場長)に言い換え→想定反論への切り返し。",
 ].join("\n");
+const COMPANY_RESEARCH_SOURCE_SEPARATOR = " / ";
+const COMPANY_RESEARCH_IN_FLIGHT_TTL_MINUTES = Number(
+	process.env.COMPANY_RESEARCH_IN_FLIGHT_TTL_MINUTES || "10",
+);
+const companyResearchInflight = new Map<string, number>();
 
 // ─── ライン1: 名刺→企業 深掘りリサーチ ─────────────────────────────────────
 function buildResearchQueries(input: {
@@ -219,12 +224,28 @@ function buildResearchQueries(input: {
 			prompt: `次の企業および代表・役員の公開SNS(X/LinkedIn/note/Facebook/YouTube)で、事業・経営に関する発信があれば要約して。アカウントURLも。私生活は除外。${c}。${common}`,
 		},
 		{
+			aspect: "officialSns",
+			prompt: `次の企業の公式SNS（公式サイト・公式X・公式Facebook・YouTube・note等）を確認し、アカウントURLと発信テーマを要約して。${c}。${common}`,
+		},
+		{
+			aspect: "linkedinProfiles",
+			prompt: `次の企業の会社ページ、代表者・役員のLinkedInページ、採用関連ページ（公開情報）を確認し、URLと要約を1〜2行で返して。${c}。${common}`,
+		},
+		{
 			aspect: "recentNews",
 			prompt: `次の企業の直近1-2年のニュース・プレスリリース・動向を日付つきで調べて。${c}。${common}`,
 		},
 		{
 			aspect: "renewableSignals",
 			prompt: `次の企業の、再生可能エネルギー(太陽光・蓄電池)との接点を調べて。工場/倉庫の有無、電力使用規模、遊休地・屋根、脱炭素方針、補助金交付歴など。${c}。${common}`,
+		},
+		{
+			aspect: "jobSignals",
+			prompt: `次の企業の採用情報、採用職種、採用件数、採用広報、再エネ関連の必要人材を公開求人や採用ページから要約して。${c}。`,
+		},
+		{
+			aspect: "reviews",
+			prompt: `次の企業の第三者口コミ（OpenWork/転職会議/Glassdoor系等）を確認し、外部評判の傾向（良い点・懸念点）を要約して。${c}。`,
 		},
 		{
 			aspect: "decisionMaker",
@@ -277,6 +298,8 @@ function fallbackDeepResearch(companyName: string): DeepResearch {
 		renewableSignals: "",
 		decisionMaker: "",
 		objections: "",
+		officialSources: "",
+		externalSources: "",
 		citations: [],
 		sourceType: "mixed",
 	};
@@ -321,11 +344,13 @@ function normalizeDeepResearch(
 		officialSns: pick(input.officialSns, ""),
 		linkedinProfiles: pick(input.linkedinProfiles, ""),
 		jobSignals: pick(input.jobSignals, ""),
-		reviews: pick(input.reviews, ""),
-		recentNews: pick(input.recentNews, ""),
-		renewableSignals: pick(input.renewableSignals, ""),
-		decisionMaker: pick(input.decisionMaker, ""),
-		objections: pick(input.objections, ""),
+	reviews: pick(input.reviews, ""),
+	recentNews: pick(input.recentNews, ""),
+	renewableSignals: pick(input.renewableSignals, ""),
+	decisionMaker: pick(input.decisionMaker, ""),
+	objections: pick(input.objections, ""),
+	officialSources: pick(input.officialSources, ""),
+	externalSources: pick(input.externalSources, ""),
 		citations: Array.isArray(input.citations)
 			? input.citations.filter((c): c is string => typeof c === "string")
 			: [],
@@ -412,7 +437,7 @@ async function researchCompanyDeep(input: {
 			},
 			{
 				role: "user",
-				content: `=== 収集事実 ===\n${factsBlock.slice(0, 12000)}\n\n会社名:${input.companyName}\n\n次のJSONキーのみで返す(値は日本語文字列): summary,currentIssue,futureIssue,salesAngle,fit,customerMarket3c,competitor3c,wajoRelation3c,source,closingPoint,representative,executives,capital,founded,revenue,employees,industry,listingStatus,websiteUrl,xUrl,linkedinUrl,corporateNumber,executiveSns,recentNews,renewableSignals,decisionMaker,objections\n\nclosingPoint は成約までの決め手を3段構造で明示する：『【取れていない事実】X が未確認。【取れば取れる】Y があれば X を取得可能。【初回ヒアリングで取る】(1)意思決定者と承認プロセス (2)検討時期 (3)競合提案と比較軸 (4)和上のどの点が刺さるか』。`,
+				content: `=== 収集事実 ===\n${factsBlock.slice(0, 12000)}\n\n会社名:${input.companyName}\n\n次のJSONキーのみで返す(値は日本語文字列): summary,currentIssue,futureIssue,salesAngle,fit,customerMarket3c,competitor3c,wajoRelation3c,source,closingPoint,representative,executives,capital,founded,revenue,employees,industry,listingStatus,websiteUrl,xUrl,linkedinUrl,linkedinProfiles,corporateNumber,executiveSns,officialSns,jobSignals,reviews,recentNews,renewableSignals,decisionMaker,objections,officialSources,externalSources,sourceType\n\nclosingPoint は成約までの決め手を3段構造で明示する：『【取れていない事実】X が未確認。【取れば取れる】Y があれば X を取得可能。【初回ヒアリングで取る】(1)意思決定者と承認プロセス (2)検討時期 (3)競合提案と比較軸 (4)和上のどの点が刺さるか』。`,
 			},
 		]);
 		const parsed = parseJsonLoose(synth.content);
@@ -2020,6 +2045,8 @@ type DeepResearch = Research & {
 	linkedinProfiles: string; // LinkedIn情報
 	jobSignals: string;       // 求人情報や従業員レビュー
 	reviews: string;          // 口コミ情報
+	officialSources: string;  // Tier1/Tier2: 公式/準公式寄りの出典
+	externalSources: string;  // Tier3/外部寄り情報の出典
 	sourceType: "official" | "external" | "mixed"; // 内部監査向け分割フラグ
 };
 
