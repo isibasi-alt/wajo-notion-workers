@@ -3214,6 +3214,14 @@ export const SALES_TALK_FINALIZE_RESPONSE_FORMAT = {
 
 type SafePatch =
 	| { kind: "text"; value: string }
+	| {
+		kind: "text-with-revision";
+		oldValue: string;
+		newValue: string;
+		reason: string;
+		checkedAt: string;
+		sourceUrl?: string;
+	}
 	| { kind: "select"; value: string }
 	| { kind: "number"; value: number }
 	| { kind: "date"; value: string }
@@ -9502,9 +9510,64 @@ function isTextPropertyBlank(property: unknown): boolean {
 	return text(property).trim().length === 0;
 }
 
+function appendMemoText(
+	patches: Record<string, SafePatch>,
+	properties: Record<string, unknown>,
+	propertyName: string,
+	append: string,
+): void {
+	const current = text(properties[propertyName]).trim();
+	patches[propertyName] = {
+		kind: "text",
+		value: current ? `${current}\n\n${append}` : append,
+	};
+}
+
+function shouldKeepWithRevision(current: string): boolean {
+	return (
+		isLikelyFabricatedText(current) ||
+		current.length <= 18 ||
+		/[未要]確認|【取れていない事実】|【取れば取れる】|【初回ヒアリングで取る】/.test(current)
+	);
+}
+
+function addPatchWithRevision(
+	patches: Record<string, SafePatch>,
+	properties: Record<string, unknown>,
+	propertyName: string,
+	incoming: string,
+	reason: string,
+	sourceUrl?: string,
+): void {
+	const current = text(properties[propertyName]).trim();
+	const next = incoming.trim();
+	if (!next) return;
+	if (!current) {
+		patches[propertyName] = { kind: "text", value: next };
+		return;
+	}
+	if (shouldKeepWithRevision(current)) {
+		patches[propertyName] = {
+			kind: "text-with-revision",
+			oldValue: current,
+			newValue: next,
+			reason,
+			checkedAt: todayDateJST(),
+			sourceUrl,
+		};
+		return;
+	}
+}
+
 function isLikelyFabricatedText(value: string): boolean {
 	if (!value) return false;
-	return /推測|仮説|憶測/.test(normalizeWhitespace(value));
+	return /推測|仮説|憶測|憶測/.test(normalizeWhitespace(value));
+}
+
+function normalizeSourcesText(values: Array<string | undefined>): string {
+	return uniqueStrings(values.filter(Boolean).map((value) => String(value).trim()).filter(Boolean)).join(
+		"\n",
+	);
 }
 
 function normalizeWhitespace(value: string): string {
