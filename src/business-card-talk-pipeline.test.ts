@@ -402,7 +402,12 @@ async function main() {
 	);
 	const saveOnlyResult = await withoutAiKeys(() =>
 		processBusinessCardForTest(
-			{ pageId: "card-1", dryRun: false, deepResearch: false },
+			{
+				pageId: "card-1",
+				dryRun: false,
+				routing: "company",
+				engagementIntent: "save-only",
+			},
 			saveOnlyCase.notion,
 		),
 	);
@@ -563,6 +568,8 @@ async function main() {
 		assert.match(aiMemo, /【ABテスト対象】/);
 		assert.match(aiMemo, /TDB\/COSMOSNetは通常フロー外/);
 		assert.equal("TDB調査年月日" in (companyUpdate!.properties ?? {}), false);
+		assert.equal("信頼度" in (companyUpdate!.properties ?? {}), false);
+		assert.equal("提案可否" in (companyUpdate!.properties ?? {}), false);
 	}
 
 	const abLog = buildCompanyResearchAbTestLogForTest();

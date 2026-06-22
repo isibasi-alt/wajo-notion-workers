@@ -236,15 +236,15 @@ function buildResearchQueries(input: {
 		},
 		{
 			aspect: "executiveSns",
-			prompt: `次の企業および代表・役員の公開SNS(X/LinkedIn/note/Facebook/YouTube)で、事業・経営に関する発信があれば要約して。アカウントURLも。私生活は除外。${c}。${common}`,
+			prompt: `次の企業の代表・役員本人と見なせる公開SNS(X/note/Facebook/YouTube等。LinkedInは除外)で、事業・経営に関する発信があれば要約して。本人性の根拠とアカウントURLも。私生活は除外。${c}。${common}`,
 		},
 		{
 			aspect: "officialSns",
-			prompt: `次の企業の公式SNS（公式サイト・公式X・公式Facebook・YouTube・note等）を確認し、アカウントURLと発信テーマを要約して。${c}。${common}`,
+			prompt: `次の企業の会社公式・採用・広報・サービス公式SNS（公式X・公式Facebook・YouTube・note等。LinkedInは除外）を確認し、アカウントURLと発信テーマを要約して。${c}。${common}`,
 		},
 		{
 			aspect: "linkedinProfiles",
-			prompt: `次の企業の会社ページ、代表者・役員のLinkedInページ、採用関連ページ（公開情報）を確認し、URLと要約を1〜2行で返して。${c}。${common}`,
+			prompt: `次の企業のLinkedIn会社ページ、代表者・役員・主要担当者のLinkedInプロフィールを確認し、URL、所属一致、本人性根拠のみを1〜2行で返して。採用ページや求人情報は含めない。${c}。${common}`,
 		},
 		{
 			aspect: "recentNews",
@@ -6353,32 +6353,26 @@ async function processBusinessCardImage(
 
 	// 5. 振り分け(入口ルール: 人がその場で選んだ結果を尊重し、AIは確実な作業だけやる)
 	if (routing === "broker") {
-		// 人=案件の種: 社外顧問DBに「関係構築中」で自動登録し、案件DBの人物タブに出す(死蔵させない)
-		let advisorNote: string;
-		try {
-			const advisor = await createAdvisorFromCard(
-				notion,
-				ocr,
-				input.assigneeUserId,
-				page.url ?? "",
-			);
-			advisorNote = advisor.created
-				? `社外顧問DBに自動登録(関係構築中・案件の種): ${advisor.page.url ?? advisor.page.id}`
-				: `同名の社外顧問が既に存在するため再登録せず: ${advisor.page.url ?? advisor.page.id}`;
-		} catch (error) {
-			advisorNote = `社外顧問DBへの自動登録に失敗(${String(error).slice(0, 120)})。手動で登録してください。`;
-		}
+		const memo = buildHoldMemo({
+			stopReason: "撮影時に本人が社外顧問・ブローカーを選択したため、企業マスター高密度化の対象外。",
+			scope: "名刺画像保存とOCR結果の反映まで。企業マスターDB連携と外部調査は未実行。",
+			humanDecision: "社外顧問DBや別プロジェクトで扱うかを大ちゃんが決める。",
+			restartCondition: "企業案件として扱う判断に変わった場合のみ、routing=company で再実行。",
+		});
 		await safeUpdateExistingProperties(notion, page, {
+			企業連携ステータス: { kind: "select", value: "対象外" },
+			Webhook引き継ぎステータス: { kind: "select", value: "要確認で停止" },
+			名刺AI処理状態: { kind: "select", value: "対象外" },
 			名刺AI処理メモ: {
 				kind: "text",
-				value: `撮影時に本人が🤝社外顧問・ブローカーを選択。${advisorNote}`,
+				value: memo,
 			},
 		});
 		return {
 			pageId: page.id,
 			action: "broker-routed",
 			companyId: null,
-			message: `名刺を保存しました。対象外扱いで社外顧問候補を優先保存します。(${ocr.氏名 || ocr.会社名})。`,
+			message: `名刺を保存し、企業マスター高密度化の対象外として停止しました(${ocr.氏名 || ocr.会社名})。`,
 		};
 	}
 	if (routing === "later") {
@@ -8907,8 +8901,10 @@ async function processCompanyResearch(
 
 	// 4. 構造化列（TDB由来は安全マージ、リサーチ由来は空欄のみ補完）
 	const patches: Record<string, SafePatch> = tdb ? tdbToPatches(tdb) : {};
-	patches["信頼度"] = { kind: "select", value: score.信頼度 };
-	patches["提案可否"] = { kind: "select", value: score.提案可否 };
+	if (tdb) {
+		patches["信頼度"] = { kind: "select", value: score.信頼度 };
+		patches["提案可否"] = { kind: "select", value: score.提案可否 };
+	}
 	patches["企業調査ステータス"] = { kind: "select", value: status };
 	// 実行の足あと: いつのリサーチかを列で見えるように打刻(鮮度判断・再実行判断に使う)
 	patches["リサーチ最終実行日"] = {
@@ -9843,7 +9839,7 @@ function buildCompanyResearchAuditMemo(input: {
 		`${today} AI A相当: ${officialFacts.length ? `${officialFacts.join("、")}を取得候補として分類。` : "公式ファクトは追加取得なし。"}`,
 		`${today} AI B相当: ${externalSignals.length ? `${externalSignals.join("、")}を外部シグナルとして分類。` : "外部シグナルは追加取得なし。"}`,
 		`${today} AI C相当: 公式事実、公式SNS、役員SNS、LinkedIn、口コミ、求人・従業員レビュー、要確認を分離。既存値は上書きせず、必要時のみ取り消し線付き履歴で追記。`,
-		`${today} 与信: TDB/COSMOSNetは通常フロー外。管理者ボタン専用のため自動取得なし。暫定与信=${input.score.信頼度}/${input.score.提案可否}。調査ステータス=${input.status}。`,
+		`${today} 与信: TDB/COSMOSNetは通常フロー外。管理者ボタン専用のため自動取得・暫定与信列の上書きなし。参考判定=${input.score.信頼度}/${input.score.提案可否}。調査ステータス=${input.status}。`,
 		buildCompanyResearchAbTestLog(),
 	].join("\n");
 }
