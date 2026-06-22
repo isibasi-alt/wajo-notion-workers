@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import {
+	buildCompanyResearchAbTestLogForTest,
 	fallbackDeepResearchForTest,
 	isDeepResearchCompleteForTest,
 	mergeCompanyResearchForTest,
 	mergeDeepResearchForTest,
+	parseBusinessCardOcrForTest,
 	processBusinessCardForTest,
+	processCompanyResearchForTest,
 } from "./index";
 
 const forbidden = /推測ですが|仮説ですが|憶測ですが/;
@@ -21,6 +24,14 @@ function richTextProp(value: string) {
 
 function selectProp(value: string) {
 	return { type: "select", select: { name: value } };
+}
+
+function urlProp(value: string | null = null) {
+	return { type: "url", url: value };
+}
+
+function dateProp(value: string | null = null) {
+	return { type: "date", date: value ? { start: value } : null };
 }
 
 function selectName(value: unknown): string {
@@ -61,6 +72,21 @@ function richTextFromPatch(property: unknown): string {
 				: "";
 		})
 		.join("");
+}
+
+function hasStrikethroughText(property: unknown): boolean {
+	if (!property || typeof property !== "object") return false;
+	const richText = (property as Record<string, unknown>).rich_text;
+	if (!Array.isArray(richText)) return false;
+	return richText.some((part) => {
+		if (!part || typeof part !== "object") return false;
+		const annotations = (part as Record<string, unknown>).annotations;
+		return Boolean(
+			annotations &&
+				typeof annotations === "object" &&
+				(annotations as Record<string, unknown>).strikethrough === true,
+		);
+	});
 }
 
 async function withoutAiKeys<T>(fn: () => Promise<T>): Promise<T> {
@@ -204,6 +230,74 @@ function makeNotionForNewCardCase(params: {
 		return { notion: wrapped, updates };
 	}
 
+function makeNotionForCompanyResearchCase() {
+	const company = {
+		id: "company-research-1",
+		properties: {
+			企業名: titleProp("株式会社リサーチ対象"),
+			住所: richTextProp("大阪府大阪市"),
+			ウェブサイトURL: urlProp(),
+			メールアドレス: { type: "email", email: "info@example.co.jp" },
+			電話番号: { type: "phone_number", phone_number: "06-1111-2222" },
+			信頼度: selectProp("中"),
+			提案可否: selectProp("タイミング待ち"),
+			企業調査ステータス: selectProp("未着手"),
+			リサーチ最終実行日: dateProp(),
+			代表者: richTextProp(""),
+			経営陣: richTextProp(""),
+			業種: richTextProp(""),
+			資本金: richTextProp(""),
+			設立年月: richTextProp(""),
+			売上規模: richTextProp(""),
+			従業員規模: richTextProp(""),
+			上場区分: richTextProp(""),
+			"法人番号（TDB）": richTextProp(""),
+			公式SNS情報: richTextProp(""),
+			役員SNS発信メモ: richTextProp(""),
+			"LinkedIn.": richTextProp(""),
+			口コミ情報: richTextProp(""),
+			求人情報や従業員レビュー: richTextProp(""),
+			直近ニュース: richTextProp(""),
+			再エネ接点シグナル: richTextProp(""),
+			想定決裁者: richTextProp(""),
+			想定反論・懸念: richTextProp(""),
+			根拠ソース: richTextProp(""),
+			出典ソース: richTextProp(""),
+			企業サマリー: richTextProp("推測ですが、どの会社にも当てはまる説明です。"),
+			現在課題仮説: richTextProp(""),
+			将来課題仮説: richTextProp(""),
+			営業切り口: richTextProp(""),
+			和上解決策適合: richTextProp(""),
+			"3C：顧客・市場分析": richTextProp(""),
+			"3C：競合分析": richTextProp(""),
+			"3C：自社との関係性": richTextProp(""),
+			成約へのポイント: richTextProp("仮説ですが、決裁者は未確認です。"),
+			企業AI受付メモ: richTextProp(""),
+		},
+	} as { id: string; properties: PageProperties };
+
+	const updates: Array<{ page_id: string; properties?: PageProperties }> = [];
+	const notion = {
+		pages: {
+			retrieve: async ({ page_id }: { page_id: string }) => {
+				if (page_id === company.id) return company;
+				throw new Error(`unexpected retrieve: ${page_id}`);
+			},
+			update: async ({ page_id, properties }: { page_id: string; properties?: PageProperties }) => {
+				updates.push({ page_id, properties });
+				return { id: page_id } as Record<string, unknown>;
+			},
+		},
+		blocks: {
+			children: {
+				append: async () => ({}),
+			},
+		},
+	} as never;
+
+	return { notion, updates, company };
+}
+
 async function main() {
 	const fallback = fallbackDeepResearchForTest("株式会社コアリスホールディングス");
 
@@ -237,6 +331,28 @@ async function main() {
 		"既存の成約へのポイントは営業現場で確認済み",
 		"既存の成約へのポイントをWorkerが上書きしない",
 	);
+
+	const signalResearch = mergeDeepResearchForTest(
+		{},
+		{
+			...fallback,
+			officialSns: "公式X: https://x.com/example",
+			executiveSns: "代表者X: 本人性は公式サイト役員名と一致",
+			linkedinProfiles: "会社LinkedIn: https://linkedin.com/company/example",
+			jobSignals: "施工管理職の求人を確認",
+			reviews: "第三者口コミは組織拡大期の傾向として扱う",
+			officialSources: "https://example.co.jp/company",
+			externalSources: "https://example.co.jp/jobs",
+			sourceType: "mixed",
+		},
+	);
+	assert.equal(signalResearch.officialSns, "公式X: https://x.com/example");
+	assert.equal(signalResearch.executiveSns, "代表者X: 本人性は公式サイト役員名と一致");
+	assert.equal(signalResearch.linkedinProfiles, "会社LinkedIn: https://linkedin.com/company/example");
+	assert.equal(signalResearch.jobSignals, "施工管理職の求人を確認");
+	assert.equal(signalResearch.reviews, "第三者口コミは組織拡大期の傾向として扱う");
+	assert.equal(signalResearch.officialSources, "https://example.co.jp/company");
+	assert.equal(signalResearch.externalSources, "https://example.co.jp/jobs");
 
 	const companyMerged = mergeCompanyResearchForTest(
 		{
@@ -312,6 +428,74 @@ async function main() {
 		/外部調査・3C・商談準備は未実行/,
 	);
 
+	const brokerCase = makeNotionForCardCase("");
+	const brokerResult = await withoutAiKeys(() =>
+		processBusinessCardForTest(
+			{
+				pageId: "card-1",
+				dryRun: false,
+				routing: "broker",
+				engagementIntent: "active",
+			},
+			brokerCase.notion,
+		),
+	);
+	assert.equal(brokerResult.action, "needs-review");
+	const brokerCardUpdate = brokerCase.updates.find(
+		(update) => update.page_id === "card-1" && update.properties?.["名刺AI処理メモ"],
+	);
+	assert.ok(brokerCardUpdate);
+	assert.match(
+		richTextFromPatch(brokerCardUpdate!.properties?.["名刺AI処理メモ"]),
+		/【停止理由】/,
+	);
+	assert.match(
+		richTextFromPatch(brokerCardUpdate!.properties?.["名刺AI処理メモ"]),
+		/社外顧問・ブローカー/,
+	);
+
+	const laterCase = makeNotionForCardCase("");
+	const laterResult = await withoutAiKeys(() =>
+		processBusinessCardForTest(
+			{
+				pageId: "card-1",
+				dryRun: false,
+				routing: "later",
+				engagementIntent: "active",
+			},
+			laterCase.notion,
+		),
+	);
+	assert.equal(laterResult.action, "needs-review");
+	const laterCardUpdate = laterCase.updates.find(
+		(update) => update.page_id === "card-1" && update.properties?.["名刺AI処理メモ"],
+	);
+	assert.ok(laterCardUpdate);
+	assert.match(
+		richTextFromPatch(laterCardUpdate!.properties?.["名刺AI処理メモ"]),
+		/【人が判断する一点】/,
+	);
+
+	const invalidPhoneCase = makeNotionForNewCardCase({
+		cardCompanyName: "実在確認待ち株式会社",
+		cardPhone: "123",
+		cardEmail: "valid@example.co.jp",
+	});
+	const invalidPhoneResult = await withoutAiKeys(() =>
+		processBusinessCardForTest(
+			{ pageId: "card-1", dryRun: false, routing: "company", engagementIntent: "active" },
+			invalidPhoneCase.notion,
+		),
+	);
+	assert.equal(invalidPhoneResult.action, "needs-review");
+	assert.match(invalidPhoneResult.message, /電話番号/);
+
+	assert.equal(
+		parseBusinessCardOcrForTest('{"氏名":"山田","会社名":"株式会社テスト","電話":"123","メール":""}'),
+		null,
+		"OCR電話番号が9桁未満なら入口で止める",
+	);
+
 	// DoD-1: 新規正常（既存候補なし）
 	{
 		const { notion, updates } = makeNotionForNewCardCase({
@@ -352,6 +536,40 @@ async function main() {
 				"新規企業が1件作成される",
 			);
 		}
+
+	{
+		const { notion, updates, company } = makeNotionForCompanyResearchCase();
+		const result = await withoutAiKeys(() =>
+			processCompanyResearchForTest({ companyPageId: company.id, dryRun: false }, notion),
+		);
+		assert.equal(result.companyId, company.id);
+		const companyUpdate = updates.find(
+			(update) => update.page_id === company.id && update.properties?.["企業AI受付メモ"],
+		);
+		assert.ok(companyUpdate);
+		const summaryPatch = companyUpdate!.properties?.["企業サマリー"];
+		assert.ok(summaryPatch);
+		assert.equal(hasStrikethroughText(summaryPatch), true);
+		assert.match(richTextFromPatch(summaryPatch), /【修正情報】/);
+		assert.match(richTextFromPatch(summaryPatch), /【修正理由】/);
+		const closingPatch = companyUpdate!.properties?.["成約へのポイント"];
+		assert.ok(closingPatch);
+		assert.equal(hasStrikethroughText(closingPatch), true);
+		const aiMemo = richTextFromPatch(companyUpdate!.properties?.["企業AI受付メモ"]);
+		assert.match(aiMemo, /AI A相当/);
+		assert.match(aiMemo, /AI B相当/);
+		assert.match(aiMemo, /AI C相当/);
+		assert.match(aiMemo, /【ABテスト対象】/);
+		assert.match(aiMemo, /TDB\/COSMOSNetは通常フロー外/);
+		assert.equal("TDB調査年月日" in (companyUpdate!.properties ?? {}), false);
+	}
+
+	const abLog = buildCompanyResearchAbTestLogForTest();
+	assert.match(abLog, /公式SNS/);
+	assert.match(abLog, /役員SNS/);
+	assert.match(abLog, /口コミ情報/);
+	assert.match(abLog, /求人・従業員レビュー/);
+	assert.match(abLog, /出典整理/);
 
 	console.log("OK business-card-talk-pipeline");
 }

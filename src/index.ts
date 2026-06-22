@@ -182,7 +182,9 @@ const GMAIL_INQUIRY_POLL_LIMIT = Math.min(
 	50,
 );
 
-const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY;
+function currentPerplexityApiKey(): string | undefined {
+	return process.env.PERPLEXITY_API_KEY;
+}
 // クオリティ優先(大ちゃん方針2026-06-11): 既定をsonar-proに(wajo-intel CLIと同格の深掘り品質)。
 // コスト注意: sonarの3〜15倍/トークン。深掘り7呼び出し全部に効く。安いYes/No判定は個別にsonar指定。
 // 本番環境変数 PERPLEXITY_MODEL が設定済みだとそちらが勝つ(デプロイ時に要確認)。
@@ -200,6 +202,19 @@ const COMPANY_RESEARCH_IN_FLIGHT_TTL_MINUTES = Number(
 	process.env.COMPANY_RESEARCH_IN_FLIGHT_TTL_MINUTES || "10",
 );
 const companyResearchInflight = new Map<string, number>();
+
+function isCompanyResearchInFlight(companyId: string, nowMs = Date.now()): boolean {
+	const startedAt = companyResearchInflight.get(companyId);
+	if (!startedAt) return false;
+	const ttlMs = Math.max(COMPANY_RESEARCH_IN_FLIGHT_TTL_MINUTES, 1) * 60 * 1000;
+	if (nowMs - startedAt > ttlMs) {
+		companyResearchInflight.delete(companyId);
+		return false;
+	}
+	return true;
+}
+
+export { isCompanyResearchInFlight as isCompanyResearchInFlightForTest };
 
 // ─── ライン1: 名刺→企業 深掘りリサーチ ─────────────────────────────────────
 function buildResearchQueries(input: {
@@ -371,12 +386,13 @@ async function perplexityChat(
 	messages: Array<{ role: string; content: string }>,
 	modelOverride?: string,
 ): Promise<{ content: string; citations: string[] }> {
-	if (!PERPLEXITY_API_KEY) throw new Error("PERPLEXITY_API_KEY が未設定です");
+	const apiKey = currentPerplexityApiKey();
+	if (!apiKey) throw new Error("PERPLEXITY_API_KEY が未設定です");
 	const response = await fetch("https://api.perplexity.ai/chat/completions", {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
-			Authorization: `Bearer ${PERPLEXITY_API_KEY}`,
+			Authorization: `Bearer ${apiKey}`,
 		},
 		body: JSON.stringify({ model: modelOverride || PERPLEXITY_MODEL, messages }),
 	});
@@ -408,7 +424,7 @@ async function researchCompanyDeep(input: {
 	domain: string;
 	address: string;
 }): Promise<DeepResearch> {
-	if (!PERPLEXITY_API_KEY) return fallbackDeepResearch(input.companyName);
+	if (!currentPerplexityApiKey()) return fallbackDeepResearch(input.companyName);
 	try {
 		const queries = buildResearchQueries(input);
 		// 観点別に並列で事実収集（合計時間は最遅1本）
@@ -523,11 +539,18 @@ function mergeDeepResearch(
 		linkedinUrl: keep(existing.linkedinUrl, research.linkedinUrl),
 		corporateNumber: keep(existing.corporateNumber, research.corporateNumber),
 		executiveSns: keep(existing.executiveSns, research.executiveSns),
+		officialSns: keep(existing.officialSns, research.officialSns),
+		linkedinProfiles: keep(existing.linkedinProfiles, research.linkedinProfiles),
+		jobSignals: keep(existing.jobSignals, research.jobSignals),
+		reviews: keep(existing.reviews, research.reviews),
 		recentNews: keep(existing.recentNews, research.recentNews),
 		renewableSignals: keep(existing.renewableSignals, research.renewableSignals),
 		decisionMaker: keep(existing.decisionMaker, research.decisionMaker),
 		objections: keep(existing.objections, research.objections),
+		officialSources: keep(existing.officialSources, research.officialSources),
+		externalSources: keep(existing.externalSources, research.externalSources),
 		citations: research.citations,
+		sourceType: research.sourceType,
 	};
 }
 
@@ -1046,7 +1069,7 @@ export { validateResearchTarget as validateResearchTargetForTest };
 async function assessTargetPlausibility(
 	companyName: string,
 ): Promise<{ realistic: boolean; reason: string }> {
-	if (!PERPLEXITY_API_KEY) return { realistic: true, reason: "" };
+	if (!currentPerplexityApiKey()) return { realistic: true, reason: "" };
 	try {
 		// このガードはYes/No判定だけ=安いsonarで十分(sonar-pro既定化の対象外・検品レビュー反映)
 		const r = await perplexityChat(
@@ -5658,13 +5681,29 @@ async function processBusinessCard(
 		};
 	}
 
-	if (!shouldProcess(card)) {
+	const integrityIssue = businessCardIntegrityIssue(card);
+	if (integrityIssue || !shouldProcess(card)) {
+		const stopReason =
+			integrityIssue ||
+			"会社名、メール、電話、名刺画像のいずれも不足しているため処理できません。";
+		if (!input.dryRun) {
+			await markCardNeedsReview(
+				notion,
+				card,
+				buildHoldMemo({
+					stopReason,
+					scope: "名刺プロパティ（会社名/氏名/メール/電話/名刺画像）の入口Integrityを確認。",
+					humanDecision: "大ちゃんが名刺画像または手入力値を見て、正本企業として扱うかを決める。",
+					restartCondition: "会社名と連絡先の不足または不正値を修正し、routing=company で再実行。",
+				}),
+			);
+		}
 		return {
 			pageId: input.pageId,
-			action: "skipped",
+			action: input.dryRun ? "dry-run" : "needs-review",
 			companyId: null,
 			companyName: null,
-			message: "会社名、メール、電話、名刺画像のいずれも不足しているため処理対象外です。",
+			message: `名刺Integrity判定で停止: ${stopReason}`,
 		};
 	}
 
@@ -5844,6 +5883,49 @@ type BusinessCardOcr = {
 	メモ: string;
 };
 
+function buildHoldMemo(input: {
+	stopReason: string;
+	scope: string;
+	humanDecision: string;
+	restartCondition: string;
+}): string {
+	return [
+		`【停止理由】${input.stopReason}`,
+		`【AIが確認した範囲】${input.scope}`,
+		`【人が判断する一点】${input.humanDecision}`,
+		`【再開条件】${input.restartCondition}`,
+	].join("\n");
+}
+
+function isLikelyDummyCompanyName(value: string): boolean {
+	const normalized = normalizeLookupText(value);
+	if (!normalized) return true;
+	return /^(会社名|未設定|不明|なし|null|none|test|dummy|sample|テスト|ダミー|サンプル|見本)$/.test(
+		normalized,
+	) || /^(テスト会社|ダミー会社|架空会社|会社名未設定|株式会社テスト|株式会社ダミー)$/.test(
+		normalized,
+	);
+}
+
+function isBusinessCardPhoneLengthValid(value: string): boolean {
+	const phoneDigits = digits(value);
+	return !phoneDigits || (phoneDigits.length >= 9 && phoneDigits.length <= 11);
+}
+
+function businessCardIntegrityIssue(card: CardInfo): string | null {
+	if (!card.companyName.trim()) return "会社名が空欄のため正本企業を確定できません。";
+	if (isLikelyDummyCompanyName(card.companyName)) {
+		return "会社名がテスト値または明らかなダミー値のため停止しました。";
+	}
+	if (!isBusinessCardPhoneLengthValid(card.phone)) {
+		return "電話番号が存在しますが、ハイフン除去後の桁数が9桁未満または11桁超です。";
+	}
+	if (!card.name && !card.email && !card.phone) {
+		return "氏名、メール、電話がすべて無く、名刺情報として人手確認が必要です。";
+	}
+	return null;
+}
+
 // OCR応答のJSON検証(純関数・壊れた出力に強く)。全項目空は失敗扱い=創作した空殻を通さない。
 function parseBusinessCardOcr(raw: string): BusinessCardOcr | null {
 	const m = String(raw ?? "").match(/\{[\s\S]*\}/);
@@ -5862,6 +5944,7 @@ function parseBusinessCardOcr(raw: string): BusinessCardOcr | null {
 			メモ: s("メモ"),
 		};
 		if (!ocr.氏名 && !ocr.会社名 && !ocr.メール && !ocr.電話) return null;
+		if (ocr.電話 && !isBusinessCardPhoneLengthValid(ocr.電話)) return null;
 		return ocr;
 	} catch {
 		return null;
@@ -8734,7 +8817,20 @@ async function processCompanyResearch(
 		page_id: input.companyPageId,
 	});
 	const company = readCompany(companyPage);
+	let acquiredResearchLock = false;
+	if (!input.dryRun) {
+		if (isCompanyResearchInFlight(company.page.id)) {
+			return {
+				companyId: company.page.id,
+				action: "in-flight",
+				message: `同一企業の深掘り調査が実行中です(${COMPANY_RESEARCH_IN_FLIGHT_TTL_MINUTES}分以内に開始)。二重実行を止めました。`,
+			};
+		}
+		companyResearchInflight.set(company.page.id, Date.now());
+		acquiredResearchLock = true;
+	}
 
+	try {
 	// 0. 整合性ガード（深掘り前）: 矛盾/非現実的な相手はPerplexityを呼ばず要確認で停止
 	const guard = validateResearchTarget(company.name);
 	const plausibility = guard.ok
@@ -8755,7 +8851,12 @@ async function processCompanyResearch(
 			企業調査ステータス: { kind: "select", value: "要確認" },
 			企業AI受付メモ: {
 				kind: "text",
-				value: `整合性チェック: ${reason} 深掘り調査をスキップしました。`,
+				value: buildHoldMemo({
+					stopReason: reason,
+					scope: "企業名のリサーチ対象妥当性を深掘り前に確認。",
+					humanDecision: "この企業を営業対象として調査してよいかを大ちゃんが決める。",
+					restartCondition: "正本企業名または調査対象を修正し、企業調査を再実行。",
+				}),
 			},
 		});
 		return {
@@ -8765,8 +8866,8 @@ async function processCompanyResearch(
 		};
 	}
 
-	// 1. TDB与信（暫定: 未接続でnull。プラン1Bで接続）
-	const tdb = await fetchTdbProfile(company);
+	// 1. TDB/COSMOSNetは通常フロー外。与信取得は管理者ボタン専用に分離する。
+	let tdb: TdbProfile | null = null;
 	const score = scoreCompany(tdb);
 
 	// 2. Perplexity多段深掘り
@@ -8824,33 +8925,83 @@ async function processCompanyResearch(
 	addStructuredFactPatch(patches, properties, "設立年月", merged.founded);
 	addStructuredFactPatch(patches, properties, "売上規模", merged.revenue);
 	addStructuredFactPatch(patches, properties, "従業員規模", merged.employees);
+	addStructuredFactPatch(patches, properties, "上場区分", merged.listingStatus);
+	addStructuredFactPatch(patches, properties, "法人番号（TDB）", merged.corporateNumber);
+	addPatchIfBlank(patches, properties, "ウェブサイトURL", merged.websiteUrl);
+	addPatchIfBlank(patches, properties, "公式SNS情報", merged.officialSns);
 	addPatchIfBlank(patches, properties, "役員SNS発信メモ", merged.executiveSns);
+	addPatchIfBlank(
+		patches,
+		properties,
+		"LinkedIn.",
+		normalizeSourcesText([merged.linkedinProfiles, merged.linkedinUrl]),
+	);
+	addPatchIfBlank(patches, properties, "口コミ情報", merged.reviews);
+	addPatchIfBlank(patches, properties, "求人情報や従業員レビュー", merged.jobSignals);
 	addPatchIfBlank(patches, properties, "直近ニュース", merged.recentNews);
 	addPatchIfBlank(patches, properties, "再エネ接点シグナル", merged.renewableSignals);
 	addPatchIfBlank(patches, properties, "想定決裁者", merged.decisionMaker);
 	addPatchIfBlank(patches, properties, "想定反論・懸念", merged.objections);
-	addPatchIfBlank(patches, properties, "出典ソース", merged.citations.join("\n"));
-	// 既存9テキスト列
-	addPatchIfBlank(patches, properties, "企業サマリー", merged.summary);
-	addPatchIfBlank(patches, properties, "現在課題仮説", merged.currentIssue);
-	addPatchIfBlank(patches, properties, "将来課題仮説", merged.futureIssue);
-	addPatchIfBlank(patches, properties, "営業切り口", merged.salesAngle);
-	addPatchIfBlank(patches, properties, "和上解決策適合", merged.fit);
+	const officialSourceText = normalizeSourcesText([merged.officialSources, merged.source]);
+	const externalSourceText = normalizeSourcesText([
+		merged.externalSources,
+		merged.citations.join("\n"),
+	]);
+	const primarySourceUrl = firstSourceUrl(officialSourceText, externalSourceText);
+	addPatchIfBlank(patches, properties, "根拠ソース", officialSourceText);
+	addPatchIfBlank(patches, properties, "出典ソース", externalSourceText);
+	// 既存テキスト列は空欄補完を基本にし、汚れ値/古い保留文だけ取り消し線付き履歴で修復する。
+	addResearchPatchWithRevision(
+		patches,
+		properties,
+		"企業サマリー",
+		research.summary || merged.summary,
+		primarySourceUrl,
+	);
+	addResearchPatchWithRevision(
+		patches,
+		properties,
+		"現在課題仮説",
+		research.currentIssue || merged.currentIssue,
+		primarySourceUrl,
+	);
+	addResearchPatchWithRevision(
+		patches,
+		properties,
+		"将来課題仮説",
+		research.futureIssue || merged.futureIssue,
+		primarySourceUrl,
+	);
+	addResearchPatchWithRevision(
+		patches,
+		properties,
+		"営業切り口",
+		research.salesAngle || merged.salesAngle,
+		primarySourceUrl,
+	);
+	addResearchPatchWithRevision(
+		patches,
+		properties,
+		"和上解決策適合",
+		research.fit || merged.fit,
+		primarySourceUrl,
+	);
 	addPatchIfBlank(patches, properties, "3C：顧客・市場分析", merged.customerMarket3c);
 	addPatchIfBlank(patches, properties, "3C：競合分析", merged.competitor3c);
 	addPatchIfBlank(patches, properties, "3C：自社との関係性", merged.wajoRelation3c);
-	addPatchIfBlank(patches, properties, "根拠ソース", merged.source);
-	const currentClosingPoint = text(properties["成約へのポイント"]);
-	const shouldRewriteClosingPoint =
-		!currentClosingPoint || isLikelyFabricatedText(currentClosingPoint);
-	if (shouldRewriteClosingPoint) {
-		patches["成約へのポイント"] = {
-			kind: "text",
-			value: research.closingPoint || merged.closingPoint,
-		};
-	} else {
-		addPatchIfBlank(patches, properties, "成約へのポイント", merged.closingPoint);
-	}
+	addResearchPatchWithRevision(
+		patches,
+		properties,
+		"成約へのポイント",
+		research.closingPoint || merged.closingPoint,
+		primarySourceUrl,
+	);
+	appendMemoText(
+		patches,
+		properties,
+		"企業AI受付メモ",
+		buildCompanyResearchAuditMemo({ research: merged, score, status }),
+	);
 	await safeUpdateExistingProperties(notion, companyPage, patches);
 
 	// 5. 本文ドシエ
@@ -8864,6 +9015,9 @@ async function processCompanyResearch(
 			? `深掘りリサーチ完了。与信: ${score.信頼度}/${score.提案可否}。`
 			: `深掘りは反映したが一部不足のため要確認。与信: ${score.信頼度}/${score.提案可否}。`,
 	};
+	} finally {
+		if (acquiredResearchLock) companyResearchInflight.delete(company.page.id);
+	}
 }
 
 // ── B与信「与信を取る(本命のみ)」── 課金を伴うTDB確報与信の取得。
@@ -9614,10 +9768,87 @@ function addPatchWithRevision(
 	}
 }
 
+function addResearchPatchWithRevision(
+	patches: Record<string, SafePatch>,
+	properties: Record<string, unknown>,
+	propertyName: string,
+	incoming: string,
+	sourceUrl?: string,
+): void {
+	const current = text(properties[propertyName]).trim();
+	if (!current) {
+		addPatchIfBlank(patches, properties, propertyName, incoming);
+		return;
+	}
+	addPatchWithRevision(
+		patches,
+		properties,
+		propertyName,
+		incoming,
+		"企業マスター高密度化で、既存値の汚れ値または古い保留文を検出したため。",
+		sourceUrl,
+	);
+}
+
 function isLikelyFabricatedText(value: string): boolean {
 	if (!value) return false;
 	return /推測|仮説|憶測|憶測/.test(normalizeWhitespace(value));
 }
+
+function firstSourceUrl(...values: string[]): string | undefined {
+	for (const value of values) {
+		const match = value.match(/https?:\/\/[^\s）)】]+/);
+		if (match?.[0]) return match[0];
+	}
+	return undefined;
+}
+
+function buildCompanyResearchAbTestLog(): string {
+	return [
+		"【ABテスト対象】公式事実取得 / 公式SNS / 役員SNS / 口コミ情報 / 求人・従業員レビュー / 出典整理",
+		"【方式A】Perplexity経由で候補を取得し、要約粒度で反映する。",
+		"【方式B】公式サイト・公的DB・各媒体を直接確認し、固定投稿や最新5件まで分けて反映する。",
+		"【採用方式】初期運用は方式Aの要約方式。重要企業・本命企業は方式Bを検証継続。",
+		"【理由】通常フローの読了負担と二重リサーチを抑えつつ、出典URLと要確認理由を残せるため。",
+		"【次回調整】誤同定率、取得率、営業が読む密度を見て、公式SNS・役員SNS・求人の粒度を調整する。",
+	].join("\n");
+}
+
+function buildCompanyResearchAuditMemo(input: {
+	research: DeepResearch;
+	score: CreditScore;
+	status: string;
+}): string {
+	const today = todayDateJST();
+	const officialFacts = [
+		input.research.representative && "代表者",
+		input.research.executives && "経営陣",
+		input.research.industry && "業種",
+		input.research.capital && "資本金",
+		input.research.founded && "設立",
+		input.research.revenue && "売上",
+		input.research.employees && "従業員",
+		input.research.corporateNumber && "法人番号",
+	].filter(Boolean);
+	const externalSignals = [
+		input.research.officialSns && "公式SNS",
+		input.research.executiveSns && "役員SNS",
+		input.research.linkedinProfiles && "LinkedIn",
+		input.research.reviews && "口コミ",
+		input.research.jobSignals && "求人",
+		input.research.recentNews && "直近ニュース",
+		input.research.renewableSignals && "再エネ接点",
+	].filter(Boolean);
+	return [
+		`${today} AI A相当: ${officialFacts.length ? `${officialFacts.join("、")}を取得候補として分類。` : "公式ファクトは追加取得なし。"}`,
+		`${today} AI B相当: ${externalSignals.length ? `${externalSignals.join("、")}を外部シグナルとして分類。` : "外部シグナルは追加取得なし。"}`,
+		`${today} AI C相当: 公式事実、公式SNS、役員SNS、LinkedIn、口コミ、求人・従業員レビュー、要確認を分離。既存値は上書きせず、必要時のみ取り消し線付き履歴で追記。`,
+		`${today} 与信: TDB/COSMOSNetは通常フロー外。管理者ボタン専用のため自動取得なし。暫定与信=${input.score.信頼度}/${input.score.提案可否}。調査ステータス=${input.status}。`,
+		buildCompanyResearchAbTestLog(),
+	].join("\n");
+}
+
+export { buildCompanyResearchAbTestLog as buildCompanyResearchAbTestLogForTest };
 
 function normalizeSourcesText(values: Array<string | undefined>): string {
 	return uniqueStrings(values.filter(Boolean).map((value) => String(value).trim()).filter(Boolean)).join(
@@ -24123,19 +24354,25 @@ async function markCardDuplicateHold(
 	card: CardInfo,
 	candidates: Candidate[],
 ): Promise<void> {
+	const candidateSummary = candidates
+		.slice(0, 3)
+		.map((candidate) => `${candidate.name}(${candidate.reasons.join("/")})`)
+		.join(", ");
+	const memo = buildHoldMemo({
+		stopReason: `強い候補が複数あるため停止: ${candidateSummary}`,
+		scope: "既存企業候補の会社名、重複チェックキー、メールドメイン、電話番号を照合。",
+		humanDecision: "どの企業を企業マスターDBの正本として扱うかを大ちゃんが決める。",
+		restartCondition: "正本企業を1社に確定し、関連企業を手動指定または重複整理後に再実行。",
+	});
 	await notion.pages.update({
 		page_id: card.page.id,
 		properties: {
 			企業連携ステータス: select("重複疑い"),
 			Webhook引き継ぎステータス: select("要確認で停止"),
 			名刺AI処理状態: select("重複疑い"),
-			企業連携メモ: richText(
-				`強い候補が複数あるため停止: ${candidates
-					.slice(0, 3)
-					.map((candidate) => `${candidate.name}(${candidate.reasons.join("/")})`)
-					.join(", ")}`,
-			),
-			設計上の弱点: richText("強い候補が複数あるため、人間確認が必要。"),
+			企業連携メモ: richText(memo),
+			名刺AI処理メモ: richText(memo),
+			設計上の弱点: richText(memo),
 		},
 	});
 }
@@ -24152,6 +24389,7 @@ async function markCardNeedsReview(
 			Webhook引き継ぎステータス: select("要確認で停止"),
 			名刺AI処理状態: select("要確認"),
 			企業連携メモ: richText(message),
+			名刺AI処理メモ: richText(message),
 			設計上の弱点: richText(message),
 		},
 	});
@@ -24366,6 +24604,10 @@ function propertyValueForExistingType(
 		if (type === "people") return { people: [] };
 		if (type === "relation") return { relation: [] };
 		if (type === "url") return { url: null };
+		return undefined;
+	}
+	if (patch.kind === "text-with-revision") {
+		if (type === "rich_text") return { rich_text: richTextRevisionItems(patch) };
 		return undefined;
 	}
 	if (patch.kind === "text") {
@@ -24927,6 +25169,41 @@ function richTextItems(value: string): Array<Record<string, unknown>> {
 	}
 	if (chunks.length === 0) chunks.push("");
 	return chunks.map((content) => ({ type: "text", text: { content } }));
+}
+
+function annotatedRichTextItems(
+	value: string,
+	annotations?: Record<string, unknown>,
+): Array<Record<string, unknown>> {
+	const chunks: string[] = [];
+	const chunkSize = 1800;
+	for (let index = 0; index < value.length; index += chunkSize) {
+		chunks.push(value.slice(index, index + chunkSize));
+	}
+	if (chunks.length === 0) chunks.push("");
+	return chunks.map((content) => ({
+		type: "text",
+		text: { content },
+		...(annotations ? { annotations } : {}),
+	}));
+}
+
+function richTextRevisionItems(
+	patch: Extract<SafePatch, { kind: "text-with-revision" }>,
+): Array<Record<string, unknown>> {
+	return [
+		...annotatedRichTextItems(patch.oldValue, {
+			bold: false,
+			italic: false,
+			strikethrough: true,
+			underline: false,
+			code: false,
+			color: "default",
+		}),
+		...annotatedRichTextItems(
+			`\n【修正情報】${patch.newValue}\n【修正理由】${patch.reason}\n【確認日】${patch.checkedAt}${patch.sourceUrl ? `\n【出典】${patch.sourceUrl}` : ""}`,
+		),
+	];
 }
 
 function select(name: string): Record<string, unknown> {
@@ -25937,6 +26214,7 @@ export { processInquiryEmailIntake as processInquiryEmailIntakeForTest };
 export { processInquiryProjectCreation as processInquiryProjectCreationForTest };
 export { processProjectDealStart as processProjectDealStartForTest };
 export { processBusinessCard as processBusinessCardForTest };
+export { processCompanyResearch as processCompanyResearchForTest };
 export { processInquiryCompanyLink as processInquiryCompanyLinkForTest };
 export {
 	processProjectEquipmentDetailRequest as processProjectEquipmentDetailRequestForTest,
