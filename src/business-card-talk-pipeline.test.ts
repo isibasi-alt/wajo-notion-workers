@@ -636,7 +636,7 @@ async function main() {
 		assert.ok(closingPatch);
 		assert.equal(hasStrikethroughText(closingPatch), true);
 		const aiMemo = richTextFromPatch(companyUpdate!.properties?.["企業AI受付メモ"]);
-		assert.match(aiMemo, /翔太/);
+		assert.match(aiMemo, /商太/);
 		assert.match(aiMemo, /二重リサーチなし/);
 		assert.match(aiMemo, /AI A相当/);
 		assert.match(aiMemo, /AI B相当/);
