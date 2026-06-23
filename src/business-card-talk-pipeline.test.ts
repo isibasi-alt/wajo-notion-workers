@@ -230,7 +230,7 @@ function makeNotionForNewCardCase(params: {
 		return { notion: wrapped, updates };
 	}
 
-function makeNotionForCompanyResearchCase() {
+function makeNotionForCompanyResearchCase(overrides: PageProperties = {}) {
 	const company = {
 		id: "company-research-1",
 		properties: {
@@ -273,6 +273,7 @@ function makeNotionForCompanyResearchCase() {
 			"3C：自社との関係性": richTextProp(""),
 			成約へのポイント: richTextProp("仮説ですが、決裁者は未確認です。"),
 			企業AI受付メモ: richTextProp(""),
+			...overrides,
 		},
 	} as { id: string; properties: PageProperties };
 
@@ -570,6 +571,92 @@ async function main() {
 		assert.equal("TDB調査年月日" in (companyUpdate!.properties ?? {}), false);
 		assert.equal("信頼度" in (companyUpdate!.properties ?? {}), false);
 		assert.equal("提案可否" in (companyUpdate!.properties ?? {}), false);
+	}
+
+	{
+		const threeTierExisting =
+			"【取れていない事実】既存の現在課題が未確認。【取れば取れる】公式サイトURLがあれば取得可能。【初回ヒアリングで取る】電力コストを確認する。";
+		const { notion, updates, company } = makeNotionForCompanyResearchCase({
+			現在課題仮説: richTextProp(threeTierExisting),
+		});
+		await withoutAiKeys(() =>
+			processCompanyResearchForTest({ companyPageId: company.id, dryRun: false }, notion),
+		);
+		const companyUpdate = updates.find(
+			(update) => update.page_id === company.id && update.properties?.["企業AI受付メモ"],
+		);
+		assert.ok(companyUpdate);
+		assert.equal(
+			Object.prototype.hasOwnProperty.call(
+				companyUpdate!.properties ?? {},
+				"現在課題仮説",
+			),
+			false,
+			"既存値3段構造 + 新値3段構造なら取り消し線修復を作らない",
+		);
+	}
+
+	{
+		const { notion, updates, company } = makeNotionForCompanyResearchCase({
+			現在課題仮説: richTextProp("推測ですが、現在課題は電気代かもしれません。"),
+		});
+		await withoutAiKeys(() =>
+			processCompanyResearchForTest({ companyPageId: company.id, dryRun: false }, notion),
+		);
+		const companyUpdate = updates.find(
+			(update) => update.page_id === company.id && update.properties?.["企業AI受付メモ"],
+		);
+		assert.ok(companyUpdate);
+		const issuePatch = companyUpdate!.properties?.["現在課題仮説"];
+		assert.ok(issuePatch);
+		assert.equal(
+			hasStrikethroughText(issuePatch),
+			true,
+			"汚れ値 + 新値3段構造なら取り消し線修復を作る",
+		);
+	}
+
+	{
+		const sameResearch = fallbackDeepResearchForTest("株式会社リサーチ対象").currentIssue;
+		const { notion, updates, company } = makeNotionForCompanyResearchCase({
+			現在課題仮説: richTextProp(sameResearch),
+		});
+		await withoutAiKeys(() =>
+			processCompanyResearchForTest({ companyPageId: company.id, dryRun: false }, notion),
+		);
+		const companyUpdate = updates.find(
+			(update) => update.page_id === company.id && update.properties?.["企業AI受付メモ"],
+		);
+		assert.ok(companyUpdate);
+		assert.equal(
+			Object.prototype.hasOwnProperty.call(
+				companyUpdate!.properties ?? {},
+				"現在課題仮説",
+			),
+			false,
+			"既存値と新値が正規化後一致するならパッチを作らない",
+		);
+	}
+
+	{
+		const { notion, updates, company } = makeNotionForCompanyResearchCase({
+			現在課題仮説: richTextProp(""),
+		});
+		await withoutAiKeys(() =>
+			processCompanyResearchForTest({ companyPageId: company.id, dryRun: false }, notion),
+		);
+		const companyUpdate = updates.find(
+			(update) => update.page_id === company.id && update.properties?.["企業AI受付メモ"],
+		);
+		assert.ok(companyUpdate);
+		const issuePatch = companyUpdate!.properties?.["現在課題仮説"];
+		assert.ok(issuePatch);
+		assert.match(
+			richTextFromPatch(issuePatch),
+			/【取れていない事実】/,
+			"既存値が空なら従来どおり補完する",
+		);
+		assert.equal(hasStrikethroughText(issuePatch), false);
 	}
 
 	const abLog = buildCompanyResearchAbTestLogForTest();

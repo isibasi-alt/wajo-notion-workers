@@ -70,7 +70,7 @@ const notion = {
 const sampleReview = {
 	conclusion: "結論テキスト",
 	resultExplanation:
-		"定量の説明\n【勝ちパターン化（営業貢献ログ）25点】ここに混ざったらコード側で切る",
+		"定量の説明\n【定性評価（ナレッジ）35点のうちナレッジ15点】ここに混ざったらコード側で切る",
 	actionGuidance: "捏造された定性評価コメント",
 	contributionView: "捏造された貢献の見え方",
 	evidence: ["成約件数: 1"],
@@ -130,14 +130,30 @@ async function main() {
 	});
 	assert.doesNotMatch(
 		zeroPrompts.systemPrompt,
-		/勝ちパターン化は活動ログDBに集約された営業貢献ログだけを見る/,
+		/ナレッジ（定性15点）は活動ログDBに集約された営業貢献ログだけを見る/,
 	);
 	assert.doesNotMatch(
 		zeroPrompts.systemPrompt,
-		/定性評価25点は行動ログから見る/,
+		/評価は定量65＋定性35で見る/,
 	);
-	assert.match(zeroPrompts.systemPrompt, /勝ちパターン化・定性評価を行わない/);
+	assert.match(zeroPrompts.systemPrompt, /定性評価を行わない/);
 	assert.match(zeroPrompts.systemPrompt, /データ不足のため評価不可/);
+	// 配点が65/35で明記されていること（旧50点系が消えていること）
+	assert.match(
+		zeroPrompts.systemPrompt,
+		/配点は定量65（粗利30\/案件化率10\/成約率10\/ノルマ申請計画妥当性15）＋定性35/,
+	);
+	assert.doesNotMatch(zeroPrompts.systemPrompt, /定量評価（実績）50点はWorkerがコード計算済み/);
+	// memo/本人コメントの数値を採点ソースにしない明文
+	assert.match(
+		zeroPrompts.systemPrompt,
+		/本人コメント・memo・ワニポメモリーに書かれた数値（110%等）を採点ソースにしない/,
+	);
+	// 保留軸を0点化しない明文
+	assert.match(
+		zeroPrompts.systemPrompt,
+		/保留軸（採点対象外）は採点軸の分子・分母の両方から除外する。0点として扱わない/,
+	);
 
 	// 0件時は本人コメント/次月改善ポイント系の生成指示行も除去される
 	assert.doesNotMatch(zeroPrompts.systemPrompt, /次月改善ポイントは3件以内で具体化する/);
@@ -159,7 +175,7 @@ async function main() {
 	// 件数明示行
 	assert.match(
 		zeroPrompts.userPrompt,
-		/50\/25\/25対象ログ件数: 勝ちパターン化=営業貢献ログ 0件 \/ 定性=顧客接点ログ 0件・発言ログ 0件/,
+		/定性35対象ログ件数: ナレッジ=営業貢献ログ 0件 \/ 行動ログ=顧客接点ログ 0件・発言ログ 0件/,
 	);
 
 	// テスト/監査素通り（auditOrTest=true）でも0件なら同じく定性生成禁止になる
@@ -172,10 +188,10 @@ async function main() {
 		auditOrTest: true,
 		qualitativeLogCounts: zeroCounts,
 	});
-	assert.match(auditZeroPrompts.systemPrompt, /勝ちパターン化・定性評価を行わない/);
+	assert.match(auditZeroPrompts.systemPrompt, /定性評価を行わない/);
 	assert.doesNotMatch(
 		auditZeroPrompts.systemPrompt,
-		/勝ちパターン化は活動ログDBに集約された営業貢献ログだけを見る/,
+		/ナレッジ（定性15点）は活動ログDBに集約された営業貢献ログだけを見る/,
 	);
 
 	// --- 3. 定性1件以上 → 従来の二軸プロンプト ---
@@ -195,7 +211,7 @@ async function main() {
 	});
 	assert.match(
 		normalPrompts.systemPrompt,
-		/評価は三軸で見る。定量評価（実績）50点はWorker計算済み、勝ちパターン化25点は営業貢献ログ、定性評価25点は行動ログから見る/,
+		/評価は定量65＋定性35で見る。定量65点はWorker計算済み、定性35点のうちナレッジ15点は営業貢献ログ、残り（会議発言6\/日報6\/1on1 4\/ツール活用4）は行動ログから見る/,
 	);
 	assert.match(
 		normalPrompts.systemPrompt,
@@ -203,9 +219,9 @@ async function main() {
 	);
 	assert.match(
 		normalPrompts.systemPrompt,
-		/定性評価は活動ログDBに集約された顧客接点ログ、発言ログだけを見る/,
+		/行動ログ定性は活動ログDBに集約された顧客接点ログ、発言ログだけを見る/,
 	);
-	assert.doesNotMatch(normalPrompts.systemPrompt, /勝ちパターン化・定性評価を行わない/);
+	assert.doesNotMatch(normalPrompts.systemPrompt, /定性評価を行わない/);
 	// 1件以上なら本人コメント/次月改善ポイントの生成指示行は従来どおり残る
 	assert.match(normalPrompts.systemPrompt, /次月改善ポイントは3件以内で具体化する/);
 	assert.match(
@@ -219,7 +235,7 @@ async function main() {
 	);
 	assert.match(
 		normalPrompts.userPrompt,
-		/50\/25\/25対象ログ件数: 勝ちパターン化=営業貢献ログ 0件 \/ 定性=顧客接点ログ 0件・発言ログ 1件/,
+		/定性35対象ログ件数: ナレッジ=営業貢献ログ 0件 \/ 行動ログ=顧客接点ログ 0件・発言ログ 1件/,
 	);
 
 	// --- 4. コード側ガード: 0件ならLLMが何を返しても固定文に差し替える ---
@@ -233,7 +249,7 @@ async function main() {
 	);
 	assert.match(
 		guarded.actionGuidance,
-		/勝ちパターン化・定性評価: 対象期間の営業貢献ログ・顧客接点ログ・発言ログが未入力のため評価できません（データ不足）/,
+		/定性評価（ナレッジ・行動ログ）: 対象期間の営業貢献ログ・顧客接点ログ・発言ログが未入力のため評価できません（データ不足）/,
 	);
 	assert.match(guarded.contributionView, /営業貢献ログが未入力のため評価できません/);
 	// 拡張分: 本人コメント（成長ポイント）も固定文に差し替え
@@ -241,7 +257,7 @@ async function main() {
 		guarded.personComment,
 		SALES_PERFORMANCE_QUALITATIVE_MISSING_PERSON_COMMENT_FOR_TEST,
 	);
-	assert.match(guarded.personComment, /勝ちパターン化\/定性コメントなし（データ不足）/);
+	assert.match(guarded.personComment, /定性（ナレッジ\/行動ログ）コメントなし（データ不足）/);
 	// 拡張分: 次月改善ポイント（次月テーマ）はデータ整備を促す1項目のみ
 	assert.deepEqual(guarded.nextMonthImprovements, [
 		SALES_PERFORMANCE_QUALITATIVE_MISSING_IMPROVEMENT_FOR_TEST,
@@ -274,7 +290,7 @@ async function main() {
 	assert.equal(guarded.resultExplanation, "定量の説明");
 	assert.deepEqual(guarded.evidence, ["成約件数: 1"]);
 
-	// --- 5. コード側ガード: 発言/接点ログだけある場合、勝ちパターン化だけ固定文にする ---
+	// --- 5. コード側ガード: 発言/接点ログだけある場合、ナレッジ（営業貢献ログ）だけ固定文にする ---
 	const contributionMissing = applySalesPerformanceQualitativeGuardForTest(
 		sampleReview,
 		someCounts,
@@ -287,7 +303,7 @@ async function main() {
 	);
 	assert.match(
 		contributionMissing.managerConfirmationItems.join("\n"),
-		/勝ちパターン化25点の評価根拠を確認/,
+		/定性評価のナレッジ15点の評価根拠を確認/,
 	);
 
 	// --- 6. コード側ガード: 営業貢献ログもある場合はセクション正規化だけ行う ---

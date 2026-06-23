@@ -9729,10 +9729,13 @@ function appendMemoText(
 }
 
 function shouldKeepWithRevision(current: string): boolean {
+	const needsReview = /[未要]確認|【取れていない事実】|【取れば取れる】|【初回ヒアリングで取る】/.test(
+		current,
+	);
 	return (
 		isLikelyFabricatedText(current) ||
-		current.length <= 18 ||
-		/[未要]確認|【取れていない事実】|【取れば取れる】|【初回ヒアリングで取る】/.test(current)
+		(current.length <= 18 && needsReview) ||
+		needsReview
 	);
 }
 
@@ -9747,6 +9750,9 @@ function addPatchWithRevision(
 	const current = text(properties[propertyName]).trim();
 	const next = incoming.trim();
 	if (!next) return;
+	if (normalizeWhitespace(next) === normalizeWhitespace(current)) return;
+	const isThreeTier = (value: string): boolean => /【取れていない事実】/.test(value);
+	if (current && isThreeTier(current) && isThreeTier(next)) return;
 	if (!current) {
 		patches[propertyName] = { kind: "text", value: next };
 		return;
@@ -9788,7 +9794,7 @@ function addResearchPatchWithRevision(
 
 function isLikelyFabricatedText(value: string): boolean {
 	if (!value) return false;
-	return /推測|仮説|憶測|憶測/.test(normalizeWhitespace(value));
+	return /推測|仮説|憶測/.test(normalizeWhitespace(value));
 }
 
 function firstSourceUrl(...values: string[]): string | undefined {
@@ -12441,27 +12447,33 @@ function buildSalesPerformanceReviewSource(
 	].filter(Boolean);
 		return [
 			dates.join("\n"),
-			`【定量評価（実績）｜50点】\nAIは定量50点を付け直さない。以下はWorker計算済みの点数・内訳・達成率・生値。\n${buildSalesPerformanceQuantitativeScoreLines(quantitativeScore).join("\n")}`,
+			`【定量評価（実績）｜65点（粗利30/案件化率10/成約率10/ノルマ申請計画妥当性15）】\nAIは定量点を付け直さない。以下はWorker計算済みの点数・内訳・達成率・生値。保留軸は採点対象外（分子・分母から除外）。総合は採点軸の獲得÷満点×100。\n${buildSalesPerformanceQuantitativeScoreLines(quantitativeScore).join("\n")}`,
 			textLines.join("\n\n"),
 		]
 		.filter(Boolean)
 		.join("\n\n");
 }
 
+// 2026-06-23 確定配点（定量65）。旧50点系（粗利19/成約9/仕入れ8/商談6/案件化5/専売3）は取り下げ済。
+// 定量65 = 粗利30 / 案件化率10 / 成約率10 / ノルマ申請計画妥当性15。
+// 残り35点（会議発言6/日報6/1on1 4/ツール活用4/ナレッジ15）は定性=AI・活動ログ側で見るため
+// このWorker計算（定量）には含めない。
 type SalesPerformanceQuantitativeScoreKey =
 	| "粗利"
-	| "成約"
-	| "仕入れ"
-	| "商談"
-	| "案件化"
-	| "専売";
+	| "案件化率"
+	| "成約率"
+	| "ノルマ申請計画妥当性";
 
+// 保留＝採点軸の分子・分母の両方から除外。0点化しない（5月の「表示86 vs 素計算0」バグの元）。
 type SalesPerformanceQuantitativeScoreDetail = {
 	label: SalesPerformanceQuantitativeScoreKey;
 	weight: number;
-	score: number;
+	// held=true のとき採点対象外（分子・分母から除外）。score は null。
+	held: boolean;
+	heldReason: string;
+	score: number | null;
 	achievementRate: number | null;
-	clippedAchievementRate: number;
+	clippedAchievementRate: number | null;
 	rateSource: string;
 	actual: number | null;
 	target: number | null;
@@ -12470,11 +12482,14 @@ type SalesPerformanceQuantitativeScoreDetail = {
 	detail: string;
 };
 
-type SalesPerformanceQuantitativeScore = Record<
-	SalesPerformanceQuantitativeScoreKey,
-	number
-> & {
-	合計: number;
+type SalesPerformanceQuantitativeScore = {
+	// 採点軸（保留でない軸）の獲得合計
+	earned: number;
+	// 採点軸（保留でない軸）の満点合計
+	maxOfScored: number;
+	// 総合 = round(earned / maxOfScored * 100)。採点軸が全て保留なら null。
+	overall: number | null;
+	heldKeys: SalesPerformanceQuantitativeScoreKey[];
 	details: Record<
 		SalesPerformanceQuantitativeScoreKey,
 		SalesPerformanceQuantitativeScoreDetail
@@ -12489,12 +12504,15 @@ type SalesPerformanceQuantitativeItem = {
 	targetAliases: string[];
 	actualLabel: string;
 	targetLabel: string;
+	// この軸を常に保留にする（実機DBに分母/採点源が無い等）。理由を併記。
+	alwaysHold?: string;
 };
 
 const SALES_PERFORMANCE_QUANTITATIVE_ITEMS: SalesPerformanceQuantitativeItem[] = [
 	{
+		// 粗利30: ロールアップ源（成約報告 8d5a506b・商談管理）が空なら保留（0点にしない）。
 		key: "粗利",
-		weight: 19,
+		weight: 30,
 		rateAliases: [
 			"月次粗利達成率（申請連動）",
 			"粗利達成率（自動）",
@@ -12507,8 +12525,22 @@ const SALES_PERFORMANCE_QUANTITATIVE_ITEMS: SalesPerformanceQuantitativeItem[] =
 		targetLabel: "粗利目標",
 	},
 	{
-		key: "成約",
-		weight: 9,
+		// 案件化率10: 分母「問い合わせ数」は実機DBに無い→常に保留。
+		// プロパティを作らない・本人memoの数値を分母にしない。
+		key: "案件化率",
+		weight: 10,
+		rateAliases: [],
+		actualAliases: ["案件化件数"],
+		targetAliases: [],
+		actualLabel: "案件化件数",
+		targetLabel: "問い合わせ数",
+		alwaysHold:
+			"分母「問い合わせ数」の月次集計列が実機DBに無いため常に保留（採点対象外）。プロパティ増設・memo数値の代用はしない。TODO（要Notion実機確認）: 月次の問い合わせ数ロールアップが整備されたら配線する。",
+	},
+	{
+		// 成約率10: ロールアップ源（成約報告 8d5a506b・商談管理）が空なら保留（0点にしない）。
+		key: "成約率",
+		weight: 10,
 		rateAliases: ["月次成約達成率（申請連動）", "成約達成率（自動）", "成約達成率"],
 		actualAliases: ["成約件数（自動）", "成約件数"],
 		targetAliases: ["成約件数目標（申請DB）", "成約目標", "目標成約件数"],
@@ -12516,76 +12548,48 @@ const SALES_PERFORMANCE_QUANTITATIVE_ITEMS: SalesPerformanceQuantitativeItem[] =
 		targetLabel: "成約件数目標",
 	},
 	{
-		key: "仕入れ",
-		weight: 8,
-		rateAliases: [
-			"月次仕入れ件数達成率（申請連動）",
-			"仕入れ達成率（自動）",
-			"仕入れ達成率",
-		],
-		actualAliases: ["仕入れ件数"],
-		targetAliases: ["仕入れ件数目標（申請DB）", "仕入れ目標", "目標仕入れ件数"],
-		actualLabel: "仕入れ件数",
-		targetLabel: "仕入れ件数目標",
-	},
-	{
-		key: "商談",
-		weight: 6,
-		rateAliases: ["月次商談達成率（申請連動）", "商談達成率（自動）", "商談達成率"],
-		actualAliases: ["商談件数（自動）", "商談件数"],
-		targetAliases: ["商談件数目標（申請DB）", "商談目標", "目標商談件数"],
-		actualLabel: "商談件数",
-		targetLabel: "商談件数目標",
-	},
-	{
-		key: "案件化",
-		weight: 5,
+		// ノルマ申請計画妥当性15: 妥当性を測る数値列が実機DBに未確認。
+		// 推測で配線せず保留＋TODO（捏造禁止）。本人コメント/memoの数値は採点ソースにしない。
+		key: "ノルマ申請計画妥当性",
+		weight: 15,
 		rateAliases: [],
-		actualAliases: ["案件化件数"],
-		targetAliases: ["問い合わせ数（自動）", "問い合わせ数", "問い合わせ件数"],
-		actualLabel: "案件化件数",
-		targetLabel: "問い合わせ数",
-	},
-	{
-		key: "専売",
-		weight: 3,
-		rateAliases: [
-			"月次専売許可達成率（申請連動）",
-			"専売許可達成率（自動）",
-			"専売許可達成率",
-		],
-		actualAliases: ["専売許可件数"],
-		targetAliases: ["専売許可件数目標（申請DB）", "専売許可目標", "目標専売許可件数"],
-		actualLabel: "専売許可件数",
-		targetLabel: "専売許可件数目標",
+		actualAliases: [],
+		targetAliases: [],
+		actualLabel: "ノルマ申請計画妥当性",
+		targetLabel: "計画妥当性スコア",
+		alwaysHold:
+			"計画妥当性を数値化する採点列が実機DBに未確認のため保留（採点対象外）。TODO（要Notion実機確認）: ノルマ申請DB側の妥当性指標を確認し、確定後に配線する。コメントやmemoに書かれた数値は採点ソースにしない。",
 	},
 ];
 
 function computeSalesPerformanceQuantitativeScore(
 	properties: Record<string, unknown>,
 ): SalesPerformanceQuantitativeScore {
-	const base: SalesPerformanceQuantitativeScore = {
-		粗利: 0,
-		成約: 0,
-		仕入れ: 0,
-		商談: 0,
-		案件化: 0,
-		専売: 0,
-		合計: 0,
-		details: {} as Record<
-			SalesPerformanceQuantitativeScoreKey,
-			SalesPerformanceQuantitativeScoreDetail
-		>,
-	};
+	const details = {} as Record<
+		SalesPerformanceQuantitativeScoreKey,
+		SalesPerformanceQuantitativeScoreDetail
+	>;
+	let earned = 0;
+	let maxOfScored = 0;
+	const heldKeys: SalesPerformanceQuantitativeScoreKey[] = [];
 
 	for (const item of SALES_PERFORMANCE_QUANTITATIVE_ITEMS) {
 		const detail = computeSalesPerformanceQuantitativeItem(properties, item);
-		base[item.key] = detail.score;
-		base.details[item.key] = detail;
-		base.合計 += detail.score;
+		details[item.key] = detail;
+		if (detail.held || detail.score === null) {
+			// 保留軸は分子・分母の両方から除外する（0点化しない）。
+			heldKeys.push(item.key);
+			continue;
+		}
+		earned += detail.score;
+		maxOfScored += detail.weight;
 	}
 
-	return base;
+	// 総合 = (採点軸の獲得合計 ÷ 採点軸の満点合計) × 100、四捨五入。採点軸が全て保留なら null。
+	const overall =
+		maxOfScored > 0 ? Math.round((earned / maxOfScored) * 100) : null;
+
+	return { earned, maxOfScored, overall, heldKeys, details };
 }
 
 function computeSalesPerformanceQuantitativeItem(
@@ -12597,21 +12601,33 @@ function computeSalesPerformanceQuantitativeItem(
 		typeof rate.achievementRate === "number" && Number.isFinite(rate.achievementRate)
 			? rate.achievementRate
 			: null;
-	const clippedAchievementRate =
-		achievementRate === null ? 0 : Math.min(Math.max(achievementRate, 0), 1);
-	// 各項目を個別に四捨五入して整数点にする。合計は丸め済み項目点の和。
+
+	// この軸を常に保留にする設定（分母が実機DBに無い／採点列未確認など）。
+	if (item.alwaysHold) {
+		return buildHeldSalesPerformanceQuantitativeDetail(item, rate, item.alwaysHold);
+	}
+
+	// 達成率が取れない＝採点ソース（ロールアップ等）が空 → 保留（採点対象外・分母除外）。
+	// 旧実装はここで clippedAchievementRate=0 → score 0 にしていたが、欠損を0点化しない。
+	if (achievementRate === null) {
+		const sourceCandidates = [
+			...(item.rateAliases.length > 0 ? [item.rateAliases.join(" / ")] : []),
+			`${item.actualLabel}/${item.targetLabel}`,
+		].join(" または ");
+		return buildHeldSalesPerformanceQuantitativeDetail(
+			item,
+			rate,
+			`採点ソースが空のため保留（採点対象外）: ${sourceCandidates} を取得できません`,
+		);
+	}
+
+	const clippedAchievementRate = Math.min(Math.max(achievementRate, 0), 1);
 	const score = Math.round(clippedAchievementRate * item.weight);
-	const sourceCandidates = [
-		...(item.rateAliases.length > 0 ? [item.rateAliases.join(" / ")] : []),
-		`${item.actualLabel}/${item.targetLabel}`,
-	].join(" または ");
-	const detail =
-		achievementRate === null
-			? missingSalesPerformanceQuantitativeDetail(item, sourceCandidates, rate)
-			: `取得: ${rate.rateSource}`;
 	return {
 		label: item.key,
 		weight: item.weight,
+		held: false,
+		heldReason: "",
 		score,
 		achievementRate,
 		clippedAchievementRate,
@@ -12620,19 +12636,30 @@ function computeSalesPerformanceQuantitativeItem(
 		target: rate.target,
 		actualLabel: item.actualLabel,
 		targetLabel: item.targetLabel,
-		detail,
+		detail: `取得: ${rate.rateSource}`,
 	};
 }
 
-function missingSalesPerformanceQuantitativeDetail(
+function buildHeldSalesPerformanceQuantitativeDetail(
 	item: SalesPerformanceQuantitativeItem,
-	sourceCandidates: string,
-	rate: { actual: number | null; target: number | null },
-): string {
-	if (item.key === "案件化" && rate.target === null) {
-		return "分母未確定: 問い合わせ数の月次集計列が未確定のため、案件化達成率は0点扱い";
-	}
-	return `未取得: ${sourceCandidates} を取得できません`;
+	rate: { rateSource: string; actual: number | null; target: number | null },
+	heldReason: string,
+): SalesPerformanceQuantitativeScoreDetail {
+	return {
+		label: item.key,
+		weight: item.weight,
+		held: true,
+		heldReason,
+		score: null,
+		achievementRate: null,
+		clippedAchievementRate: null,
+		rateSource: rate.rateSource,
+		actual: rate.actual,
+		target: rate.target,
+		actualLabel: item.actualLabel,
+		targetLabel: item.targetLabel,
+		detail: `保留: ${heldReason}`,
+	};
 }
 
 function readSalesPerformanceAchievementRate(
@@ -12687,8 +12714,16 @@ function numberValueAnyWithSource(
 function buildSalesPerformanceQuantitativeScoreLines(
 	score: SalesPerformanceQuantitativeScore,
 ): string[] {
+	const heldSuffix =
+		score.heldKeys.length > 0
+			? `（保留：${score.heldKeys.join("・")}）`
+			: "（保留：なし）";
+	const totalLine =
+		score.overall === null
+			? `総合: 採点不可（採点軸が全て保留）${heldSuffix}`
+			: `総合: ${score.overall}点（採点軸の獲得 ${score.earned} ÷ 採点軸の満点 ${score.maxOfScored} ×100）${heldSuffix}`;
 	return [
-		`合計: ${score.合計}/50点`,
+		totalLine,
 		...SALES_PERFORMANCE_QUANTITATIVE_ITEMS.map((item) =>
 			buildSalesPerformanceQuantitativeScoreLine(score.details[item.key]),
 		),
@@ -12699,6 +12734,9 @@ function buildSalesPerformanceQuantitativeScoreLine(
 	detail: SalesPerformanceQuantitativeScoreDetail,
 ): string {
 	const source = detail.rateSource || detail.detail;
+	if (detail.held || detail.score === null) {
+		return `${detail.label}: 保留/${detail.weight}点満点（採点対象外・分母除外。理由: ${detail.heldReason || detail.detail} / ${detail.actualLabel}: ${formatQuantitativeNumber(detail.actual)} / ${detail.targetLabel}: ${formatQuantitativeNumber(detail.target)}）`;
+	}
 	return `${detail.label}: ${detail.score}/${detail.weight}点（達成率: ${formatQuantitativeRate(detail.achievementRate)} / クリップ後: ${formatQuantitativeRate(detail.clippedAchievementRate)} / ${detail.actualLabel}: ${formatQuantitativeNumber(detail.actual)} / ${detail.targetLabel}: ${formatQuantitativeNumber(detail.target)} / 参照: ${source}）`;
 }
 
@@ -12726,15 +12764,15 @@ function buildSalesPerformanceEvaluationSource(input: {
 
 function buildSalesPerformanceDryRunPreview(source: string): string[] {
 	const importantLinePattern =
-		/^(合計|粗利|成約|仕入れ|商談|案件化|専売): .+\/\d+点/;
+		/^(総合|粗利|案件化率|成約率|ノルマ申請計画妥当性): .+(\/\d+点|点|保留)/;
 	return source
 		.split(/\n+/)
 		.map((line) => line.trim())
 		.filter(Boolean)
 		.filter((line) =>
-				line.includes("定量評価（実績）｜50点") ||
-				line.includes("勝ちパターン化（営業貢献ログ）｜25点") ||
-				line.includes("定性評価（行動ログ）｜25点") ||
+				line.includes("定量評価（実績）｜65点") ||
+				line.includes("定性評価（ナレッジ）｜35点") ||
+				line.includes("定性評価（行動ログ）｜35点") ||
 			line.includes("補助確認事項（採点対象外）") ||
 			line.includes("採点対象: false") ||
 			line.includes("活動ログ未接続") ||
@@ -12826,21 +12864,21 @@ async function buildSalesPerformanceRelatedSourceWithStats(
 				`活動ログ件数超過: 関連活動ログ${activityIds.length}件中8件のみを評価材料として読みました。残り${activityIds.length - 8}件は人間確認または集約ルール見直しが必要です。`,
 			);
 		}
-		sections.push(`【勝ちパターン化（営業貢献ログ）｜25点】\n営業貢献ログだけを、会社に残した勝ち筋・再現性・共有価値の根拠として読む。\n${winPatternLines.length > 0 ? winPatternLines.join("\n---\n") : "営業貢献ログ未接続: 勝ちパターン化25点の根拠はまだありません。"}`);
-		sections.push(`【定性評価（行動ログ）｜25点】\n発言ログ・顧客接点ログを、日々の行動と商談プロセスの根拠として読む。AI活用度は本文ではなく回数/ポイントがある場合だけ小さく確認する。\n${qualitativeLines.length > 0 ? qualitativeLines.join("\n---\n") : "発言ログ・顧客接点ログ未接続: 定性評価25点の根拠はまだありません。"}`);
+		sections.push(`【定性評価（ナレッジ）｜35点のうちナレッジ15点】\n営業貢献ログだけを、会社に残した勝ち筋・再現性・共有価値（ナレッジ）の根拠として読む。\n${winPatternLines.length > 0 ? winPatternLines.join("\n---\n") : "営業貢献ログ未接続: ナレッジ15点の根拠はまだありません。"}`);
+		sections.push(`【定性評価（行動ログ）｜35点のうち会議発言6/日報6/1on1 4/ツール活用4点】\n発言ログ・顧客接点ログを、日々の行動と商談プロセスの根拠として読む。ツール活用度は本文ではなく回数/ポイントがある場合だけ小さく確認する。\n${qualitativeLines.length > 0 ? qualitativeLines.join("\n---\n") : "発言ログ・顧客接点ログ未接続: 行動ログ点の根拠はまだありません。"}`);
 		if (supportLines.length > 0) {
 			sections.push(
 				`【補助確認事項（採点対象外）】\nAI活用ログ、人見さんメモ、ワニポメモリーは採点根拠にせず、面談前の確認材料としてだけ扱う。\n${supportLines.join("\n---\n")}`,
 			);
 		}
 	} else {
-		sections.push("【勝ちパターン化（営業貢献ログ）｜25点】\n活動ログ未接続: 営業マンパフォーマンスDBに関連活動ログがありません。");
-		sections.push("【定性評価（行動ログ）｜25点】\n活動ログ未接続: 営業マンパフォーマンスDBに関連活動ログがありません。");
+		sections.push("【定性評価（ナレッジ）｜35点のうちナレッジ15点】\n活動ログ未接続: 営業マンパフォーマンスDBに関連活動ログがありません。");
+		sections.push("【定性評価（行動ログ）｜35点のうち会議発言6/日報6/1on1 4/ツール活用4点】\n活動ログ未接続: 営業マンパフォーマンスDBに関連活動ログがありません。");
 	}
 	const legacyDirectCount = legacyDirectMap.reduce((sum, [, ids]) => sum + ids.length, 0);
 	if (legacyDirectCount > 0) {
 		sections.push(
-			"【データ不足・警告】\n活動ログ未集約: 直接ログはありますが、50/25/25評価には使いません。活動ログDBへ集約してから評価材料にしてください。",
+			"【データ不足・警告】\n活動ログ未集約: 直接ログはありますが、65/35評価には使いません。活動ログDBへ集約してから評価材料にしてください。",
 		);
 	}
 	return {
@@ -13121,13 +13159,13 @@ function buildSalesPerformanceReviewMemo(
 		"【結論】",
 		review.conclusion,
 		"",
-		"【定量評価（実績）50点】",
+		"【定量評価（実績）65点（粗利30/案件化率10/成約率10/ノルマ申請計画妥当性15）】",
 		review.resultExplanation,
 		"",
-		"【勝ちパターン化（営業貢献ログ）25点】",
+		"【定性評価（ナレッジ）35点のうちナレッジ15点】",
 		review.contributionView,
 		"",
-		"【定性評価（行動ログ）25点】",
+		"【定性評価（行動ログ）35点のうち会議発言6/日報6/1on1 4/ツール活用4点】",
 		review.actionGuidance,
 		"",
 		"【補助確認事項（採点対象外）】",
@@ -13171,11 +13209,11 @@ function buildSalesPerformanceConfirmationMemo(
 }
 
 const SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT =
-	"勝ちパターン化・定性評価: 対象期間の営業貢献ログ・顧客接点ログ・発言ログが未入力のため評価できません（データ不足）";
+	"定性評価（ナレッジ・行動ログ）: 対象期間の営業貢献ログ・顧客接点ログ・発言ログが未入力のため評価できません（データ不足）";
 const SALES_PERFORMANCE_CONTRIBUTION_MISSING_TEXT =
-	"勝ちパターン化: 対象期間の営業貢献ログが未入力のため評価できません（データ不足）";
+	"定性評価（ナレッジ）: 対象期間の営業貢献ログが未入力のため評価できません（データ不足）";
 const SALES_PERFORMANCE_QUALITATIVE_MISSING_PERSON_COMMENT =
-	"対象期間の営業貢献ログ・顧客接点ログ・発言ログが未入力のため勝ちパターン化/定性コメントなし（データ不足）";
+	"対象期間の営業貢献ログ・顧客接点ログ・発言ログが未入力のため定性（ナレッジ/行動ログ）コメントなし（データ不足）";
 const SALES_PERFORMANCE_QUALITATIVE_MISSING_IMPROVEMENT =
 	"活動ログの入力から始めてください（現状データ不足のため改善点を特定できません）";
 const SALES_PERFORMANCE_QUALITATIVE_MISSING_MANAGER_ITEM =
@@ -13195,7 +13233,7 @@ function applySalesPerformanceQualitativeGuard(
 			contributionView: SALES_PERFORMANCE_CONTRIBUTION_MISSING_TEXT,
 			managerConfirmationItems: appendUniqueShortItem(
 				normalized.managerConfirmationItems,
-				"営業貢献ログが未入力のため、勝ちパターン化25点の評価根拠を確認してください",
+				"営業貢献ログが未入力のため、定性評価のナレッジ15点の評価根拠を確認してください",
 			),
 		};
 	}
@@ -13220,17 +13258,20 @@ function normalizeSalesPerformanceReviewSections(
 ): SalesPerformanceReviewAIResponse {
 	return {
 		...review,
+		// resultExplanation=定量。定性（ナレッジ/行動ログ）以降が混ざったら切る。"【勝ちパターン化"は旧見出しの保険。
 		resultExplanation: stripSalesPerformanceEmbeddedSections(
 			review.resultExplanation,
 			["【勝ちパターン化", "【定性評価", "【補助確認事項", "【本人に返す", "【上司確認"],
 		),
+		// contributionView=定性ナレッジ。定量と「行動ログ」定性が混ざったら切る（自分の見出しは切らない）。
 		contributionView: stripSalesPerformanceEmbeddedSections(
 			review.contributionView,
-			["【定量評価", "【定性評価", "【補助確認事項", "【本人に返す", "【上司確認"],
+			["【定量評価", "【定性評価（行動ログ", "【補助確認事項", "【本人に返す", "【上司確認"],
 		),
+		// actionGuidance=定性行動ログ。定量と「ナレッジ」定性が混ざったら切る（自分の見出しは切らない）。"【勝ちパターン化"は旧見出しの保険。
 		actionGuidance: stripSalesPerformanceEmbeddedSections(
 			review.actionGuidance,
-			["【定量評価", "【勝ちパターン化", "【補助確認事項", "【本人に返す", "【上司確認"],
+			["【定量評価", "【定性評価（ナレッジ", "【勝ちパターン化", "【補助確認事項", "【本人に返す", "【上司確認"],
 		),
 	};
 }
@@ -13272,28 +13313,31 @@ function buildSalesPerformanceReviewPrompts(
 		"- 総合スコアを新規採点しない",
 		"- 評価ランクを新規確定しない",
 		"- 評価ステータスを確定にしない",
-		"- 定量評価（実績）50点はWorkerがコード計算済み。提示された定量内訳をそのまま使い、AIが点を付け直さない",
+		"- 配点は定量65（粗利30/案件化率10/成約率10/ノルマ申請計画妥当性15）＋定性35（会議発言6/日報6/1on1 4/ツール活用4/ナレッジ15）",
+		"- 定量65点はWorkerがコード計算済み。提示された定量内訳をそのまま使い、AIが点を付け直さない",
+		"- 保留軸（採点対象外）は採点軸の分子・分母の両方から除外する。0点として扱わない",
 		"- 給与、報酬、昇格、処遇判断をしない",
 		"- テスト/監査除外データを本番評価根拠にしない",
 		"- 人格評価をしない",
 		"- 不明なことは要確認と明示する",
 		"- 入力の評価材料に存在しないログ・活動・発言・数値を引用や推測で創作しない",
+		"- 本人コメント・memo・ワニポメモリーに書かれた数値（110%等）を採点ソースにしない",
 		"- 材料が無い項目は「データ不足のため評価不可」と書く",
 		"",
 		"出力方針:",
 		...(qualitativeUnavailable
 			? [
-					"- 勝ちパターン化対象ログ（営業貢献ログ）と定性評価対象ログ（顧客接点ログ・発言ログ）は0件。勝ちパターン化・定性評価を行わない",
-					"- actionGuidance と contributionView には勝ちパターン化・定性評価文を書かず「データ不足のため評価不可」とだけ書く",
+					"- 定性のナレッジ対象ログ（営業貢献ログ）と行動ログ対象ログ（顧客接点ログ・発言ログ）は0件。定性評価を行わない",
+					"- actionGuidance と contributionView には定性評価文を書かず「データ不足のため評価不可」とだけ書く",
 					"- 定量評価は提示されたWorker計算済み内訳を根拠にコメントだけ書く。点数や配点を変更しない",
 				]
 			: [
-					"- 評価は三軸で見る。定量評価（実績）50点はWorker計算済み、勝ちパターン化25点は営業貢献ログ、定性評価25点は行動ログから見る",
+					"- 評価は定量65＋定性35で見る。定量65点はWorker計算済み、定性35点のうちナレッジ15点は営業貢献ログ、残り（会議発言6/日報6/1on1 4/ツール活用4）は行動ログから見る",
 					"- 定量評価は提示されたWorker計算済み内訳を根拠にコメントだけ書く。点数や配点を変更しない",
-					"- 勝ちパターン化は活動ログDBに集約された営業貢献ログだけを見る",
-					"- 定性評価は活動ログDBに集約された顧客接点ログ、発言ログだけを見る",
-					"- AI活用度は本文ではなく回数/ポイントがある場合だけ小さく確認し、AI相談本文を採点根拠にしない",
-					"- 行動評価と貢献評価は、確認論点としてマネージャー面談に落とす",
+					"- ナレッジ（定性15点）は活動ログDBに集約された営業貢献ログだけを見る",
+					"- 行動ログ定性は活動ログDBに集約された顧客接点ログ、発言ログだけを見る",
+					"- ツール活用度は本文ではなく回数/ポイントがある場合だけ小さく確認し、AI相談本文を採点根拠にしない",
+					"- 行動評価とナレッジ評価は、確認論点としてマネージャー面談に落とす",
 				]),
 		"- AI相談本文、人見さんメモ、ワニポメモリー、本人コメント、マネージャーメモは主たる採点根拠にしない",
 		"- 月次ページ本文、自由記述、本人コメント、マネージャーメモは採点根拠にしない",
@@ -13317,7 +13361,7 @@ function buildSalesPerformanceReviewPrompts(
 		`監査区分: ${input.auditStatus || "未設定"}`,
 		`監査/テスト扱い: ${input.auditOrTest ? "はい" : "いいえ"}`,
 		input.missing.length > 0 ? `不足情報: ${input.missing.join(" / ")}` : "不足情報: なし",
-		`50/25/25対象ログ件数: 勝ちパターン化=営業貢献ログ ${counts.contributionLogs}件 / 定性=顧客接点ログ ${counts.customerContactLogs}件・発言ログ ${counts.speechLogs}件`,
+		`定性35対象ログ件数: ナレッジ=営業貢献ログ ${counts.contributionLogs}件 / 行動ログ=顧客接点ログ ${counts.customerContactLogs}件・発言ログ ${counts.speechLogs}件`,
 		"",
 		"=== 評価材料 ===",
 		input.source.slice(0, 16000),
