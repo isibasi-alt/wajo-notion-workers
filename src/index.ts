@@ -4371,7 +4371,7 @@ worker.webhook("processBusinessCardImageWebhook", {
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			verifyWebhookSecret(event.headers, event.body);
-			const body = event.body as Record<string, unknown>;
+			const body = coerceWebhookBodyRecord(event.body);
 			const imageBase64 = firstString(
 				body.imageBase64,
 				body.image,
@@ -4448,7 +4448,7 @@ worker.webhook("processBusinessCardWebhook", {
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			verifyWebhookSecret(event.headers, event.body);
-			const body = event.body as Record<string, unknown>;
+			const body = coerceWebhookBodyRecord(event.body);
 			const runOptions = readBusinessCardRunOptions(body);
 			const pageId = readBusinessCardWebhookPageId(body);
 			const limit =
@@ -4495,7 +4495,7 @@ worker.webhook("processBusinessCardLinkWebhook", {
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			verifyWebhookSecret(event.headers, event.body);
-			const body = event.body as Record<string, unknown>;
+			const body = coerceWebhookBodyRecord(event.body);
 			const pageId = readBusinessCardWebhookPageId(body);
 			if (!pageId) {
 				throw new Error("pageId / page_id / entity.id のいずれからも名刺ページIDを特定できませんでした。");
@@ -4520,7 +4520,7 @@ worker.webhook("processBusinessCardResearchWebhook", {
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			verifyWebhookSecret(event.headers, event.body);
-			const body = event.body as Record<string, unknown>;
+			const body = coerceWebhookBodyRecord(event.body);
 			const pageId = readBusinessCardWebhookPageId(body);
 			if (!pageId) {
 				throw new Error("pageId / page_id / entity.id のいずれからも名刺ページIDを特定できませんでした。");
@@ -5986,29 +5986,30 @@ function normalizeCardEngagement(value: string | undefined): "active" | "save-on
 }
 export { normalizeCardEngagement as normalizeCardEngagementForTest };
 
-function readBusinessCardRunOptions(body: Record<string, unknown>): {
+function readBusinessCardRunOptions(body: unknown): {
 	routing: "company" | "broker" | "later";
 	engagementIntent: "active" | "save-only";
 	deepResearch: boolean;
 	autoCreateMeetingPrepReport: boolean;
 } {
+	const record = coerceWebhookBodyRecord(body);
 	const routing = normalizeCardRouting(
 		firstString(
-			body.routing,
-			body.route,
-			body.分岐,
-			body.入力,
-			body.対象,
-			body.選択,
+			record.routing,
+			record.route,
+			record.分岐,
+			record.入力,
+			record.対象,
+			record.選択,
 		),
 	);
 	const engagement = normalizeCardEngagement(
 		firstString(
-			body.engagementIntent,
-			body.relationshipIntent,
-			body.followIntent,
-			body["営業判断"],
-			body["熱量"],
+			record.engagementIntent,
+			record.relationshipIntent,
+			record.followIntent,
+			record["営業判断"],
+			record["熱量"],
 		),
 	);
 	if (engagement === "save-only") {
@@ -6020,7 +6021,7 @@ function readBusinessCardRunOptions(body: Record<string, unknown>): {
 		};
 	}
 	const deepResearch =
-		typeof body.deepResearch === "boolean" ? body.deepResearch : engagement === "active";
+		typeof record.deepResearch === "boolean" ? record.deepResearch : engagement === "active";
 	return {
 		routing,
 		engagementIntent: engagement,
@@ -6029,8 +6030,8 @@ function readBusinessCardRunOptions(body: Record<string, unknown>): {
 	};
 }
 
-function readBusinessCardWebhookPageId(body: Record<string, unknown>): string | undefined {
-	return extractWebhookPageId(body);
+function readBusinessCardWebhookPageId(body: unknown): string | undefined {
+	return extractWebhookPageId(coerceWebhookBodyRecord(body));
 }
 export { readBusinessCardRunOptions as readBusinessCardRunOptionsForTest };
 
@@ -25019,6 +25020,23 @@ function normalizeLookupText(value: string): string {
 	return value.replace(/[\s　・･\-ー＿_.,，。()（）【】\[\]]/g, "").toLowerCase();
 }
 
+function coerceWebhookBodyRecord(body: unknown): Record<string, unknown> {
+	if (body && typeof body === "object" && !Array.isArray(body)) {
+		return body as Record<string, unknown>;
+	}
+	if (typeof body === "string") {
+		try {
+			const parsed = JSON.parse(body);
+			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+				return parsed as Record<string, unknown>;
+			}
+		} catch {
+			return {};
+		}
+	}
+	return {};
+}
+
 function extractWebhookPageId(body: Record<string, unknown>): string | undefined {
 	return firstString(
 		body.companyPageId,
@@ -25357,16 +25375,15 @@ function verifyWebhookSecret(
 ): void {
 	const expected = process.env.WAJO_WORKER_WEBHOOK_SECRET;
 	if (!expected) return;
+	const bodyRecord = coerceWebhookBodyRecord(body);
 	const actual =
 		headers["x-wajo-worker-secret"] ||
 		headers["X-WAJO-WORKER-SECRET"] ||
-		(body && typeof body === "object"
-			? firstString(
-					(body as Record<string, unknown>).secret,
-					(body as Record<string, unknown>).wajoWorkerSecret,
-					(body as Record<string, unknown>).wajo_worker_secret,
-				)
-			: undefined);
+		firstString(
+			bodyRecord.secret,
+			bodyRecord.wajoWorkerSecret,
+			bodyRecord.wajo_worker_secret,
+		);
 	if (actual !== expected) {
 		throw new WebhookVerificationError("Invalid WAJO worker webhook secret");
 	}

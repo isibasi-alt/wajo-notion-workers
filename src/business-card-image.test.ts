@@ -107,6 +107,24 @@ async function main() {
 		deepResearch: false,
 		autoCreateMeetingPrepReport: false,
 	});
+	assert.deepEqual(runOptions(JSON.stringify({ routing: "broker", engagementIntent: "active" })), {
+		routing: "broker",
+		engagementIntent: "active",
+		deepResearch: true,
+		autoCreateMeetingPrepReport: true,
+	});
+	assert.deepEqual(runOptions(JSON.stringify({ routing: "later", engagementIntent: "active" })), {
+		routing: "later",
+		engagementIntent: "active",
+		deepResearch: true,
+		autoCreateMeetingPrepReport: true,
+	});
+	assert.deepEqual(runOptions(JSON.stringify({ routing: "company", engagementIntent: "save-only" })), {
+		routing: "company",
+		engagementIntent: "save-only",
+		deepResearch: false,
+		autoCreateMeetingPrepReport: false,
+	});
 	assert.deepEqual(runOptions({}), {
 		routing: "company",
 		engagementIntent: "active",
