@@ -365,20 +365,20 @@ async function main() {
 		aiAElements.some(
 			(element) =>
 				element.kind === "official_fact" &&
-				element.agent === "ai-a-official-facts" &&
+				element.agent === "official-research-kun" &&
 				element.targetProperty === "企業サマリー",
 		),
-		"AI Aは公式ファクト要素を作る",
+		"公式調査くんは公式ファクト要素を作る",
 	);
 	assert.ok(
 		aiBElements.some(
 			(element) =>
 				element.kind === "external_signal" &&
-				element.agent === "ai-b-external-signals" &&
+				element.agent === "sales-material-kun" &&
 				element.targetProperty === "求人情報や従業員レビュー" &&
 				element.derivedTargetProperty === "現在課題仮説",
 		),
-		"AI Bは求人を外部シグナルとして現在課題仮説へ派生させる",
+		"営業材料くんは求人を外部シグナルとして現在課題仮説へ派生させる",
 	);
 	assert.equal(agentElements.officialFacts.length, aiAElements.length);
 	assert.equal(agentElements.externalSignals.length, aiBElements.length);
@@ -638,9 +638,9 @@ async function main() {
 		const aiMemo = richTextFromPatch(companyUpdate!.properties?.["企業AI受付メモ"]);
 		assert.match(aiMemo, /商太/);
 		assert.match(aiMemo, /二重リサーチなし/);
-		assert.match(aiMemo, /AI A相当/);
-		assert.match(aiMemo, /AI B相当/);
-		assert.match(aiMemo, /AI C相当/);
+		assert.match(aiMemo, /公式調査くん（公式調査くん相当）/);
+		assert.match(aiMemo, /営業材料くん（営業材料くん相当）/);
+		assert.match(aiMemo, /反映くん（反映くん相当）/);
 		assert.match(aiMemo, /【ABテスト対象】/);
 		assert.match(aiMemo, /TDB\/COSMOSNetは通常フロー外/);
 		assert.equal("TDB調査年月日" in (companyUpdate!.properties ?? {}), false);

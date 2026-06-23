@@ -2075,9 +2075,9 @@ type DeepResearch = Research & {
 
 type CompanyResearchAgentRole =
 	| "shota-external-research"
-	| "ai-a-official-facts"
-	| "ai-b-external-signals"
-	| "ai-c-reflection";
+	| "official-research-kun"
+	| "sales-material-kun"
+	| "reflection-kun";
 
 type CompanyResearchEvidenceElement = {
 	agent: CompanyResearchAgentRole;
@@ -9879,7 +9879,7 @@ function buildAiAOfficialFactElements(
 	return rows
 		.filter(([, value]) => Boolean(value?.trim()))
 		.map(([field, value, targetProperty, confidence]) => ({
-			agent: "ai-a-official-facts" as const,
+			agent: "official-research-kun" as const,
 			kind: "official_fact" as const,
 			field,
 			value,
@@ -9916,7 +9916,7 @@ function buildAiBExternalSignalElements(
 	return rows
 		.filter(([, value]) => Boolean(value?.trim()))
 		.map(([field, value, targetProperty, derivedTargetProperty, confidence]) => ({
-			agent: "ai-b-external-signals" as const,
+			agent: "sales-material-kun" as const,
 			kind: "external_signal" as const,
 			field,
 			value,
@@ -9943,10 +9943,10 @@ function buildCompanyResearchAuditMemo(input: {
 		externalSignals.map((element) => element.targetProperty),
 	);
 	return [
-		`${today} 商太: researchCompanyDeepで外部調査を1回だけ実行し、AI A/Bへ素材を分配。二重リサーチなし。`,
-		`${today} AI A相当: ${officialFactNames.length ? `${officialFactNames.join("、")}を公式ファクトとして分類。` : "公式ファクトは追加取得なし。"}`,
-		`${today} AI B相当: ${externalSignalNames.length ? `${externalSignalNames.join("、")}を外部シグナルとして分類。` : "外部シグナルは追加取得なし。"}`,
-		`${today} AI C相当: 公式事実、公式SNS、役員SNS、LinkedIn、口コミ、求人・従業員レビュー、要確認を分離。既存値は上書きせず、必要時のみ取り消し線付き履歴で追記。`,
+		`${today} 商太: researchCompanyDeepで外部調査を1回だけ実行し、公式調査くん/営業材料くんへ素材を分配。二重リサーチなし。`,
+		`${today} 公式調査くん（公式調査くん相当）: ${officialFactNames.length ? `${officialFactNames.join("、")}を公式ファクトとして分類。` : "公式ファクトは追加取得なし。"}`,
+		`${today} 営業材料くん（営業材料くん相当）: ${externalSignalNames.length ? `${externalSignalNames.join("、")}を外部シグナルとして分類。` : "外部シグナルは追加取得なし。"}`,
+		`${today} 反映くん（反映くん相当）: 公式事実、公式SNS、役員SNS、LinkedIn、口コミ、求人・従業員レビュー、要確認を分離。既存値は上書きせず、必要時のみ取り消し線付き履歴で追記。`,
 		`${today} 与信: TDB/COSMOSNetは通常フロー外。管理者ボタン専用のため自動取得・暫定与信列の上書きなし。参考判定=${input.score.信頼度}/${input.score.提案可否}。調査ステータス=${input.status}。`,
 		buildCompanyResearchAbTestLog(),
 	].join("\n");
@@ -27709,7 +27709,7 @@ async function generateClosingFeedback(
 
 	if (!response.ok) {
 		const errorText = await response.text();
-		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
+		throw new Error(`Open公式調査くんPI error ${response.status}: ${errorText.slice(0, 200)}`);
 	}
 
 	const json = (await response.json()) as {
@@ -27825,7 +27825,7 @@ async function processProjectWallHit(
 - マネージャーへの質問を具体的かつ実務的に書く
 - 情報が不足している場合は「情報不足のため確認が必要」と明記する`;
 
-	// 3. OpenAI API 呼び出し
+	// 3. Open公式調査くんPI 呼び出し
 	const response = await fetch("https://api.openai.com/v1/chat/completions", {
 		method: "POST",
 		headers: {
@@ -27844,7 +27844,7 @@ async function processProjectWallHit(
 
 	if (!response.ok) {
 		const errorText = await response.text();
-		throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 200)}`);
+		throw new Error(`Open公式調査くんPI error ${response.status}: ${errorText.slice(0, 200)}`);
 	}
 
 	const json = (await response.json()) as {
