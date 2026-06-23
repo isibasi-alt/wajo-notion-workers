@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import {
+	buildAiAOfficialFactElementsForTest,
+	buildAiBExternalSignalElementsForTest,
 	buildCompanyResearchAbTestLogForTest,
+	buildCompanyResearchAgentElementsForTest,
 	fallbackDeepResearchForTest,
 	isDeepResearchCompleteForTest,
 	mergeCompanyResearchForTest,
@@ -355,6 +358,30 @@ async function main() {
 	assert.equal(signalResearch.reviews, "第三者口コミは組織拡大期の傾向として扱う");
 	assert.equal(signalResearch.officialSources, "https://example.co.jp/company");
 	assert.equal(signalResearch.externalSources, "https://example.co.jp/jobs");
+	const aiAElements = buildAiAOfficialFactElementsForTest(signalResearch);
+	const aiBElements = buildAiBExternalSignalElementsForTest(signalResearch);
+	const agentElements = buildCompanyResearchAgentElementsForTest(signalResearch);
+	assert.ok(
+		aiAElements.some(
+			(element) =>
+				element.kind === "official_fact" &&
+				element.agent === "ai-a-official-facts" &&
+				element.targetProperty === "企業サマリー",
+		),
+		"AI Aは公式ファクト要素を作る",
+	);
+	assert.ok(
+		aiBElements.some(
+			(element) =>
+				element.kind === "external_signal" &&
+				element.agent === "ai-b-external-signals" &&
+				element.targetProperty === "求人情報や従業員レビュー" &&
+				element.derivedTargetProperty === "現在課題仮説",
+		),
+		"AI Bは求人を外部シグナルとして現在課題仮説へ派生させる",
+	);
+	assert.equal(agentElements.officialFacts.length, aiAElements.length);
+	assert.equal(agentElements.externalSignals.length, aiBElements.length);
 
 	const brokerOptions = readBusinessCardRunOptionsForTest({
 		routing: "broker",
@@ -609,6 +636,8 @@ async function main() {
 		assert.ok(closingPatch);
 		assert.equal(hasStrikethroughText(closingPatch), true);
 		const aiMemo = richTextFromPatch(companyUpdate!.properties?.["企業AI受付メモ"]);
+		assert.match(aiMemo, /翔太/);
+		assert.match(aiMemo, /二重リサーチなし/);
 		assert.match(aiMemo, /AI A相当/);
 		assert.match(aiMemo, /AI B相当/);
 		assert.match(aiMemo, /AI C相当/);

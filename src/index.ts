@@ -2073,6 +2073,23 @@ type DeepResearch = Research & {
 	sourceType: "official" | "external" | "mixed"; // 内部監査向け分割フラグ
 };
 
+type CompanyResearchAgentRole =
+	| "shota-external-research"
+	| "ai-a-official-facts"
+	| "ai-b-external-signals"
+	| "ai-c-reflection";
+
+type CompanyResearchEvidenceElement = {
+	agent: CompanyResearchAgentRole;
+	kind: "official_fact" | "external_signal";
+	field: string;
+	value: string;
+	targetProperty: string;
+	derivedTargetProperty?: string;
+	sourceUrl: string;
+	confidence: "high" | "medium" | "low";
+};
+
 type TdbProfile = {
 	企業評点: number | null;   // TDB評点（概ね0-100、高いほど良い）
 	倒産確率Pct: number | null; // 倒産確率(%)
@@ -9827,41 +9844,120 @@ function buildCompanyResearchAbTestLog(): string {
 	].join("\n");
 }
 
+function buildCompanyResearchAgentElements(
+	research: DeepResearch,
+): {
+	officialFacts: CompanyResearchEvidenceElement[];
+	externalSignals: CompanyResearchEvidenceElement[];
+} {
+	return {
+		officialFacts: buildAiAOfficialFactElements(research),
+		externalSignals: buildAiBExternalSignalElements(research),
+	};
+}
+
+function buildAiAOfficialFactElements(
+	research: DeepResearch,
+): CompanyResearchEvidenceElement[] {
+	const sourceUrl = firstSourceUrl(
+		normalizeSourcesText([research.officialSources, research.source]),
+		normalizeSourcesText([research.externalSources, research.citations.join("\n")]),
+	);
+	const rows: Array<[string, string, string, "high" | "medium" | "low"]> = [
+		["representative", research.representative, "代表者", "high"],
+		["executives", research.executives, "経営陣", "medium"],
+		["industry", research.industry, "業種", "high"],
+		["capital", research.capital, "資本金", "high"],
+		["founded", research.founded, "設立年月", "high"],
+		["revenue", research.revenue, "売上規模", "medium"],
+		["employees", research.employees, "従業員規模", "medium"],
+		["listing_status", research.listingStatus, "上場区分", "high"],
+		["website_url", research.websiteUrl, "ウェブサイトURL", "high"],
+		["corporate_number", research.corporateNumber, "法人番号（TDB）", "high"],
+		["summary", research.summary, "企業サマリー", "medium"],
+	];
+	return rows
+		.filter(([, value]) => Boolean(value?.trim()))
+		.map(([field, value, targetProperty, confidence]) => ({
+			agent: "ai-a-official-facts" as const,
+			kind: "official_fact" as const,
+			field,
+			value,
+			targetProperty,
+			sourceUrl: sourceUrl ?? "",
+			confidence,
+		}));
+}
+
+function buildAiBExternalSignalElements(
+	research: DeepResearch,
+): CompanyResearchEvidenceElement[] {
+	const sourceUrl = firstSourceUrl(
+		normalizeSourcesText([research.externalSources, research.citations.join("\n")]),
+		normalizeSourcesText([research.officialSources, research.source]),
+	);
+	const rows: Array<[
+		string,
+		string,
+		string,
+		string | undefined,
+		"high" | "medium" | "low",
+	]> = [
+		["official_sns", research.officialSns, "公式SNS情報", "営業切り口", "medium"],
+		["executive_sns", research.executiveSns, "役員SNS発信メモ", "営業切り口", "medium"],
+		["linkedin", normalizeSourcesText([research.linkedinProfiles, research.linkedinUrl]), "LinkedIn.", "役員SNS発信メモ", "medium"],
+		["reviews", research.reviews, "口コミ情報", "想定反論・懸念", "low"],
+		["hiring_trend", research.jobSignals, "求人情報や従業員レビュー", "現在課題仮説", "medium"],
+		["recent_news", research.recentNews, "直近ニュース", "営業切り口", "medium"],
+		["renewable_signal", research.renewableSignals, "再エネ接点シグナル", "営業切り口", "medium"],
+		["decision_maker", research.decisionMaker, "想定決裁者", undefined, "low"],
+		["objections", research.objections, "想定反論・懸念", undefined, "low"],
+	];
+	return rows
+		.filter(([, value]) => Boolean(value?.trim()))
+		.map(([field, value, targetProperty, derivedTargetProperty, confidence]) => ({
+			agent: "ai-b-external-signals" as const,
+			kind: "external_signal" as const,
+			field,
+			value,
+			targetProperty,
+			derivedTargetProperty,
+			sourceUrl: sourceUrl ?? "",
+			confidence,
+		}));
+}
+
 function buildCompanyResearchAuditMemo(input: {
 	research: DeepResearch;
 	score: CreditScore;
 	status: string;
 }): string {
 	const today = todayDateJST();
-	const officialFacts = [
-		input.research.representative && "代表者",
-		input.research.executives && "経営陣",
-		input.research.industry && "業種",
-		input.research.capital && "資本金",
-		input.research.founded && "設立",
-		input.research.revenue && "売上",
-		input.research.employees && "従業員",
-		input.research.corporateNumber && "法人番号",
-	].filter(Boolean);
-	const externalSignals = [
-		input.research.officialSns && "公式SNS",
-		input.research.executiveSns && "役員SNS",
-		input.research.linkedinProfiles && "LinkedIn",
-		input.research.reviews && "口コミ",
-		input.research.jobSignals && "求人",
-		input.research.recentNews && "直近ニュース",
-		input.research.renewableSignals && "再エネ接点",
-	].filter(Boolean);
+	const { officialFacts, externalSignals } = buildCompanyResearchAgentElements(
+		input.research,
+	);
+	const officialFactNames = uniqueStrings(
+		officialFacts.map((element) => element.targetProperty),
+	);
+	const externalSignalNames = uniqueStrings(
+		externalSignals.map((element) => element.targetProperty),
+	);
 	return [
-		`${today} AI A相当: ${officialFacts.length ? `${officialFacts.join("、")}を取得候補として分類。` : "公式ファクトは追加取得なし。"}`,
-		`${today} AI B相当: ${externalSignals.length ? `${externalSignals.join("、")}を外部シグナルとして分類。` : "外部シグナルは追加取得なし。"}`,
+		`${today} 翔太: researchCompanyDeepで外部調査を1回だけ実行し、AI A/Bへ素材を分配。二重リサーチなし。`,
+		`${today} AI A相当: ${officialFactNames.length ? `${officialFactNames.join("、")}を公式ファクトとして分類。` : "公式ファクトは追加取得なし。"}`,
+		`${today} AI B相当: ${externalSignalNames.length ? `${externalSignalNames.join("、")}を外部シグナルとして分類。` : "外部シグナルは追加取得なし。"}`,
 		`${today} AI C相当: 公式事実、公式SNS、役員SNS、LinkedIn、口コミ、求人・従業員レビュー、要確認を分離。既存値は上書きせず、必要時のみ取り消し線付き履歴で追記。`,
 		`${today} 与信: TDB/COSMOSNetは通常フロー外。管理者ボタン専用のため自動取得・暫定与信列の上書きなし。参考判定=${input.score.信頼度}/${input.score.提案可否}。調査ステータス=${input.status}。`,
 		buildCompanyResearchAbTestLog(),
 	].join("\n");
 }
 
-export { buildCompanyResearchAbTestLog as buildCompanyResearchAbTestLogForTest };
+export {
+	buildAiAOfficialFactElements as buildAiAOfficialFactElementsForTest,
+	buildAiBExternalSignalElements as buildAiBExternalSignalElementsForTest,
+	buildCompanyResearchAbTestLog as buildCompanyResearchAbTestLogForTest,
+	buildCompanyResearchAgentElements as buildCompanyResearchAgentElementsForTest,
+};
 
 function normalizeSourcesText(values: Array<string | undefined>): string {
 	return uniqueStrings(values.filter(Boolean).map((value) => String(value).trim()).filter(Boolean)).join(
