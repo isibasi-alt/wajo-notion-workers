@@ -5954,7 +5954,12 @@ export { parseBusinessCardOcr as parseBusinessCardOcrForTest };
 
 // 振り分け(入口で営業が選ぶ)の正規化(純関数)。絵文字つきラベルでも判定できるようにする。
 function normalizeCardRouting(value: string | undefined): "company" | "broker" | "later" {
-	const v = String(value ?? "");
+	const raw = String(value ?? "").trim();
+	const normalized = raw.toLowerCase();
+	if (normalized === "company") return "company";
+	if (normalized === "broker") return "broker";
+	if (normalized === "later") return "later";
+	const v = raw;
 	if (v.includes("社外顧問") || v.includes("ブローカー") || v.includes("🤝")) return "broker";
 	if (v.includes("あとで") || v.includes("後で") || v.includes("❓")) return "later";
 	return "company"; // 未指定/「企業」は従来通り企業連携へ
@@ -5962,7 +5967,12 @@ function normalizeCardRouting(value: string | undefined): "company" | "broker" |
 export { normalizeCardRouting as normalizeCardRoutingForTest };
 
 function normalizeCardEngagement(value: string | undefined): "active" | "save-only" {
-	const v = String(value ?? "");
+	const raw = String(value ?? "").trim();
+	const normalized = raw.toLowerCase();
+	const compact = normalized.replace(/[\s_]+/g, "-");
+	if (normalized === "active") return "active";
+	if (compact === "save-only" || normalized === "saveonly") return "save-only";
+	const v = raw;
 	if (
 		v.includes("名刺だけ") ||
 		v.includes("保存") ||

@@ -8,6 +8,7 @@ import {
 	parseBusinessCardOcrForTest,
 	processBusinessCardForTest,
 	processCompanyResearchForTest,
+	readBusinessCardRunOptionsForTest,
 } from "./index";
 
 const forbidden = /推測ですが|仮説ですが|憶測ですが/;
@@ -355,6 +356,45 @@ async function main() {
 	assert.equal(signalResearch.officialSources, "https://example.co.jp/company");
 	assert.equal(signalResearch.externalSources, "https://example.co.jp/jobs");
 
+	const brokerOptions = readBusinessCardRunOptionsForTest({
+		routing: "broker",
+		engagementIntent: "active",
+	});
+	assert.equal(brokerOptions.routing, "broker");
+	assert.equal(brokerOptions.engagementIntent, "active");
+	assert.equal(brokerOptions.deepResearch, true);
+
+	const laterOptions = readBusinessCardRunOptionsForTest({
+		routing: "later",
+		engagementIntent: "active",
+	});
+	assert.equal(laterOptions.routing, "later");
+	assert.equal(laterOptions.engagementIntent, "active");
+	assert.equal(laterOptions.deepResearch, true);
+
+	const saveOnlyOptions = readBusinessCardRunOptionsForTest({
+		routing: "company",
+		engagementIntent: "save-only",
+	});
+	assert.equal(saveOnlyOptions.routing, "company");
+	assert.equal(saveOnlyOptions.engagementIntent, "save-only");
+	assert.equal(saveOnlyOptions.deepResearch, false);
+	assert.equal(saveOnlyOptions.autoCreateMeetingPrepReport, false);
+
+	const saveOnlyUnderscoreOptions = readBusinessCardRunOptionsForTest({
+		routing: "company",
+		engagementIntent: "save_only",
+	});
+	assert.equal(saveOnlyUnderscoreOptions.engagementIntent, "save-only");
+	assert.equal(saveOnlyUnderscoreOptions.deepResearch, false);
+
+	const saveOnlyCompactOptions = readBusinessCardRunOptionsForTest({
+		routing: "company",
+		engagementIntent: "saveonly",
+	});
+	assert.equal(saveOnlyCompactOptions.engagementIntent, "save-only");
+	assert.equal(saveOnlyCompactOptions.deepResearch, false);
+
 	const companyMerged = mergeCompanyResearchForTest(
 		{
 			summary: "",
@@ -406,8 +446,10 @@ async function main() {
 			{
 				pageId: "card-1",
 				dryRun: false,
-				routing: "company",
-				engagementIntent: "save-only",
+				routing: saveOnlyOptions.routing,
+				engagementIntent: saveOnlyOptions.engagementIntent,
+				deepResearch: saveOnlyOptions.deepResearch,
+				autoCreateMeetingPrepReport: saveOnlyOptions.autoCreateMeetingPrepReport,
 			},
 			saveOnlyCase.notion,
 		),
@@ -441,8 +483,10 @@ async function main() {
 			{
 				pageId: "card-1",
 				dryRun: false,
-				routing: "broker",
-				engagementIntent: "active",
+				routing: brokerOptions.routing,
+				engagementIntent: brokerOptions.engagementIntent,
+				deepResearch: brokerOptions.deepResearch,
+				autoCreateMeetingPrepReport: brokerOptions.autoCreateMeetingPrepReport,
 			},
 			brokerCase.notion,
 		),
@@ -467,8 +511,10 @@ async function main() {
 			{
 				pageId: "card-1",
 				dryRun: false,
-				routing: "later",
-				engagementIntent: "active",
+				routing: laterOptions.routing,
+				engagementIntent: laterOptions.engagementIntent,
+				deepResearch: laterOptions.deepResearch,
+				autoCreateMeetingPrepReport: laterOptions.autoCreateMeetingPrepReport,
 			},
 			laterCase.notion,
 		),

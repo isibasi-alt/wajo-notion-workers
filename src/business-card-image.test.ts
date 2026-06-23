@@ -44,8 +44,11 @@ async function main() {
 	assert.equal(routing("企業"), "company");
 	assert.equal(routing("🤝 社外顧問・ブローカー"), "broker");
 	assert.equal(routing("ブローカー"), "broker");
+	assert.equal(routing("broker"), "broker");
 	assert.equal(routing("❓ あとで決める"), "later");
 	assert.equal(routing("後で"), "later");
+	assert.equal(routing("later"), "later");
+	assert.equal(routing("company"), "company");
 	assert.equal(routing(undefined), "company"); // 未指定は従来通り企業連携
 	assert.equal(routing(""), "company");
 
@@ -56,25 +59,57 @@ async function main() {
 	assert.equal(engagement("名刺だけ保存"), "save-only");
 	assert.equal(engagement("今回は流す"), "save-only");
 	assert.equal(engagement("追わない"), "save-only");
+	assert.equal(engagement("active"), "active");
+	assert.equal(engagement("save-only"), "save-only");
+	assert.equal(engagement("save_only"), "save-only");
+	assert.equal(engagement("saveonly"), "save-only");
 
 	// ── 名刺処理Webhook/手動ツール用オプション正規化 ──
 	assert.deepEqual(runOptions({ engagementIntent: "名刺だけ保存" }), {
+		routing: "company",
+		engagementIntent: "save-only",
 		deepResearch: false,
 		autoCreateMeetingPrepReport: false,
 	});
 	assert.deepEqual(runOptions({ 営業判断: "今回は流す" }), {
+		routing: "company",
+		engagementIntent: "save-only",
 		deepResearch: false,
 		autoCreateMeetingPrepReport: false,
 	});
 	assert.deepEqual(runOptions({ engagementIntent: "本気で追う" }), {
+		routing: "company",
+		engagementIntent: "active",
 		deepResearch: true,
 		autoCreateMeetingPrepReport: true,
 	});
 	assert.deepEqual(runOptions({ engagementIntent: "名刺だけ保存", deepResearch: true }), {
+		routing: "company",
+		engagementIntent: "save-only",
+		deepResearch: false,
+		autoCreateMeetingPrepReport: false,
+	});
+	assert.deepEqual(runOptions({ routing: "broker", engagementIntent: "active" }), {
+		routing: "broker",
+		engagementIntent: "active",
+		deepResearch: true,
+		autoCreateMeetingPrepReport: true,
+	});
+	assert.deepEqual(runOptions({ routing: "later", engagementIntent: "active" }), {
+		routing: "later",
+		engagementIntent: "active",
+		deepResearch: true,
+		autoCreateMeetingPrepReport: true,
+	});
+	assert.deepEqual(runOptions({ routing: "company", engagementIntent: "save-only" }), {
+		routing: "company",
+		engagementIntent: "save-only",
 		deepResearch: false,
 		autoCreateMeetingPrepReport: false,
 	});
 	assert.deepEqual(runOptions({}), {
+		routing: "company",
+		engagementIntent: "active",
 		deepResearch: true,
 		autoCreateMeetingPrepReport: true,
 	});
