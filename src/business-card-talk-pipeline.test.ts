@@ -609,7 +609,7 @@ async function main() {
 			);
 			assert.match(
 				finalWebhookMemo,
-				/Notion Workerが新規企業作成と名刺連携まで実行。.*外部調査・3C・商談準備は未実行。/,
+				/Notion Workerが新規企業作成と名刺連携まで実行。.*外部調査・企業マスター高密度化は未実行。/,
 			);
 			assert.ok(
 				newCardResult.companyId === "new-company-1",

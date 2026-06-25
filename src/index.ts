@@ -12,6 +12,7 @@ import {
 	type LandTreasureEvaluation,
 	type LandTreasureSubstationCandidate,
 } from "./land-treasure-engine.js";
+import { runHitomiEvalChain } from "./hitomi-eval-chain";
 
 const worker = new Worker();
 export default worker;
@@ -4948,6 +4949,25 @@ worker.webhook("attachMonthlyEvalPdfWebhook", {
 	},
 });
 
+worker.webhook("processHitomiEvalChainWebhook", {
+	title: "WAJO 人見さん月次評価 6体自動連鎖Webhook",
+	description:
+		"月次評価レコードのページIDを受け取り、A→B→C→D→C再→D再→E→F の6体エージェントを自動連鎖で実行し各結果をページへ追記します。最終確定はグループ長。",
+	execute: async (events, { notion }) => {
+		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const evalPageId = extractMonthlyEvalPageIdFromWebhook(body);
+			if (!evalPageId) {
+				throw new Error(
+					"evalPageId / monthlyEvalPageId / pageId / entity.id のいずれからも月次評価ページIDを特定できませんでした。",
+				);
+			}
+			await runHitomiEvalChain(notion as never, evalPageId);
+		}
+	},
+});
+
 worker.webhook("processDailyReportReceiptSyncWebhook", {
 	title: "WAJO WANiPO日報受付票同期Webhook",
 	description:
@@ -5818,7 +5838,7 @@ async function processBusinessCard(
 					: null;
 				const linkMemo = shouldDeepResearch
 					? `既存企業に紐づけ済: ${company.reasons.join(" / ")}`
-					: `既存企業に紐づけ済: ${company.reasons.join(" / ")} / 営業判断=名刺だけ保存。外部調査・3C・商談準備は未実行。`;
+					: `既存企業に紐づけ済: ${company.reasons.join(" / ")} / 営業判断=名刺だけ保存。外部調査・企業マスター高密度化は未実行。`;
 				await linkCardToCompany(
 					notion,
 					card,
@@ -5828,7 +5848,7 @@ async function processBusinessCard(
 					meetingPrepSummary,
 					shouldDeepResearch
 						? undefined
-						: "Notion Workerが既存企業への紐づけまで実行。営業判断=名刺だけ保存のため、外部調査・3C・商談準備は未実行。",
+						: "Notion Workerが既存企業への紐づけまで実行。営業判断=名刺だけ保存のため、外部調査・企業マスター高密度化は未実行。",
 				);
 				return {
 					pageId: input.pageId,
@@ -5839,7 +5859,7 @@ async function processBusinessCard(
 						? meetingPrepSummary
 							? `既存企業へ紐づけ、必要項目を補完しました。${meetingPrepSummary}`
 							: "既存企業へ紐づけ、必要項目を補完しました。"
-						: "既存企業へ紐づけました。営業判断=名刺だけ保存のため、外部調査・3C・商談準備は未実行です。",
+						: "既存企業へ紐づけました。営業判断=名刺だけ保存のため、外部調査・企業マスター高密度化は未実行です。",
 				};
 			}
 
@@ -5860,11 +5880,11 @@ async function processBusinessCard(
 				"新規企業作成",
 				shouldDeepResearch
 					? companyMemo
-					: `${companyMemo} 営業判断=名刺だけ保存。外部調査・3C・商談準備は未実行。`,
+					: `${companyMemo} 営業判断=名刺だけ保存。外部調査・企業マスター高密度化は未実行。`,
 				meetingPrepSummary,
 				shouldDeepResearch
 					? undefined
-					: "Notion Workerが新規企業作成と名刺連携まで実行。営業判断=名刺だけ保存のため、外部調査・3C・商談準備は未実行。",
+					: "Notion Workerが新規企業作成と名刺連携まで実行。営業判断=名刺だけ保存のため、外部調査・企業マスター高密度化は未実行。",
 			);
 			return {
 				pageId: input.pageId,
@@ -5875,7 +5895,7 @@ async function processBusinessCard(
 					? meetingPrepSummary
 						? `新規企業を作成し、企業情報と3Cを返却しました。${meetingPrepSummary}`
 						: "新規企業を作成し、企業情報と3Cを返却しました。"
-					: "新規企業を作成し、名刺と連携しました。営業判断=名刺だけ保存のため、外部調査・3C・商談準備は未実行です。",
+					: "新規企業を作成し、名刺と連携しました。営業判断=名刺だけ保存のため、外部調査・企業マスター高密度化は未実行です。",
 			};
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
