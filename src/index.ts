@@ -6153,6 +6153,16 @@ type BusinessCardOcr = {
 	メモ: string;
 };
 
+type BrokerPrimaryRouting = "broker" | "later" | "company";
+
+type BrokerPrimaryAssessment = {
+	score: number | null;
+	routing: BrokerPrimaryRouting;
+	scoreReasons: string[];
+	stopReasons: string[];
+	nextAction: "進行可" | "軽確認" | "要追加調査" | "要管理者確認" | "要法務確認" | "保留";
+};
+
 function buildHoldMemo(input: {
 	stopReason: string;
 	scope: string;
@@ -6508,6 +6518,7 @@ function buildAdvisorProperties(
 		cardPageUrl ? `名刺URL: ${cardPageUrl}` : "",
 		cardPageId ? `名刺ページID: ${cardPageId}` : "",
 	].filter(Boolean);
+	const assessment = calculateBrokerPrimaryAssessment(ocr);
 	const properties: Record<string, unknown> = {
 		顧問名: title(ocr.氏名 || ocr.会社名 || "名刺(氏名読み取り不可)"),
 		ステータス: select("関係構築中"),
@@ -6515,13 +6526,14 @@ function buildAdvisorProperties(
 		関係深度: select("不明"),
 		初回接点日: { date: { start: today } },
 		紹介実績メモ: richText(memoLines.join("\n")),
-		ブローカー一次判定結果: select("broker"),
+		ブローカー一次判定結果: select(assessment.routing),
 		候補本人一致度: select("中"),
 		リスク兆候: select("要確認"),
-		次アクション: select("要追加調査"),
-		判定根拠メモ: richText(buildExternalAdvisorAssessmentMemo(ocr, cardPageId)),
+		次アクション: select(assessment.nextAction),
+		判定根拠メモ: richText(buildExternalAdvisorAssessmentMemo(ocr, assessment, cardPageId)),
 		注意点: richText("個人に対する反社判定は未実施。公開情報上のリスク兆候と本人一致度は、必要時に別途スクリーニングする。"),
 	};
+	if (assessment.score !== null) properties["ブローカー一次判定スコア"] = { number: assessment.score };
 	if (cardPageId) properties["関連名刺"] = relation(cardPageId);
 	if (ocr.電話) properties["電話番号"] = { phone_number: ocr.電話 };
 	if (ocr.メール) properties["連絡先メール"] = { email: ocr.メール };
@@ -6534,16 +6546,103 @@ function buildAdvisorProperties(
 }
 export { buildAdvisorProperties as buildAdvisorPropertiesForTest };
 
+function calculateBrokerPrimaryAssessment(ocr: BusinessCardOcr): BrokerPrimaryAssessment {
+	const roleText = [ocr.部署, ocr.役職].filter(Boolean).join(" ");
+	const memoText = ocr.メモ || "";
+	const companyText = ocr.会社名 || "";
+	const email = (ocr.メール || "").toLowerCase();
+	const joined = [roleText, memoText].filter(Boolean).join(" ").toLowerCase();
+	const companyJoined = [companyText, roleText, memoText].filter(Boolean).join(" ").toLowerCase();
+	const scoreReasons: string[] = [];
+	const companyReasons: string[] = [];
+	const stopReasons: string[] = [];
+	let score = 0;
+
+	const add = (points: number, reason: string) => {
+		score += points;
+		scoreReasons.push(`${points > 0 ? "+" : ""}${points}: ${reason}`);
+	};
+	const subtract = (points: number, reason: string) => {
+		score -= points;
+		companyReasons.push(`${points}: ${reason}`);
+		scoreReasons.push(`${points}: ${reason}`);
+	};
+
+	if (/社外顧問|(?<!社外)顧問|アドバイザー|advisor|コンサル|consultant|紹介|仲介|ブローカー|broker|エージェント|agent/i.test(joined)) {
+		add(20, "肩書またはメモに顧問・紹介・仲介系の表現あり");
+	}
+	if (/プロデューサー|producer|パートナー|partner/i.test(joined)) {
+		add(10, "肩書またはメモにプロデューサー・パートナー系の弱い仲介兆候あり");
+	}
+	if (/つなぐ|繋ぐ|紹介する|紹介でき|案件を持|案件持込|案件持ち込み|知り合い|人脈|引き合わせ/i.test(memoText)) {
+		add(15, "初回メモに紹介・接続・人脈提供が主目的と見える表現あり");
+	}
+	if (/第三者|他社|別会社|買い手|売り手|投資家|地主|紹介先|候補先/i.test(memoText)) {
+		add(15, "初回メモに第三者案件・第三者企業の話が中心と見える表現あり");
+	}
+	if (/顧問契約|紹介契約|業務委託|外部パートナー|パートナー契約/i.test(memoText)) {
+		add(10, "初回メモに顧問契約・紹介契約・外部パートナー系の表現あり");
+	}
+	if (/決裁者ではない|発注権限なし|紹介だけ|つなぐだけ/i.test(memoText)) {
+		add(10, "初回メモに本人が発注・導入決裁者ではない兆候あり");
+	}
+
+	if (/代表取締役|代表|社長|取締役|役員|事業責任者|部門長|部長|工場長|責任者/i.test(roleText)) {
+		subtract(-20, "肩書に自社判断者の兆候あり");
+	}
+	if (/自社.*(電気代|設備|土地|発電所|蓄電池|ppa|屋根|工場|倉庫)|弊社.*(電気代|設備|土地|発電所|蓄電池|ppa|屋根|工場|倉庫)/i.test(memoText)) {
+		subtract(-25, "初回メモが自社課題の相談に見える");
+	}
+	if (companyText && email && !/(gmail|yahoo|icloud|outlook|hotmail|docomo|ezweb|softbank|au\.com)/i.test(email)) {
+		subtract(-10, "会社名と会社メールらしき連絡先がある");
+	}
+
+	if (!ocr.氏名) stopReasons.push("氏名が未確認");
+	if (!companyText) stopReasons.push("所属候補が未確認");
+	if (email && /(gmail|yahoo|icloud|outlook|hotmail|docomo|ezweb|softbank|au\.com)/i.test(email)) {
+		stopReasons.push("個人メールのため所属確認が弱い");
+	}
+	if (scoreReasons.length === 0) {
+		stopReasons.push("撮影時選択以外のbroker/company判定根拠が未確認");
+	}
+	if (score > 0 && score < 60) {
+		stopReasons.push("broker兆候はあるが60点未満のためbroker確定不可");
+	}
+	if (score > 0 && companyReasons.length > 0) {
+		stopReasons.push("broker兆候とcompany兆候が混在");
+	}
+
+	if (scoreReasons.length === 0) {
+		return {
+			score: null,
+			routing: "later",
+			scoreReasons: [],
+			stopReasons,
+			nextAction: "要追加調査",
+		};
+	}
+
+	const routing: BrokerPrimaryRouting =
+		stopReasons.length > 0 ? "later" : score >= 60 ? "broker" : score <= 39 ? "company" : "later";
+	const nextAction = routing === "broker" ? "軽確認" : "要追加調査";
+	return { score, routing, scoreReasons, stopReasons, nextAction };
+}
+
 function buildExternalAdvisorAssessmentMemo(
 	ocr: BusinessCardOcr,
+	assessment: BrokerPrimaryAssessment,
 	cardPageId?: string,
 ): string {
 	return [
 		"【登録理由】名刺起点で社外顧問・ブローカーとして扱うため、社外顧問DBへ登録。",
-		"【一次判定】撮影時選択による broker 仮登録。60点判定ロジックは未実行。スコアは後続の一次判定で入力する。",
+		assessment.score === null
+			? "【一次判定】未採点。撮影時選択以外の採点根拠が不足しているため、スコアは入力しない。"
+			: `【一次判定】名刺情報・初回メモに基づく一次スコア: ${assessment.score}点 / routing=${assessment.routing}`,
+		assessment.scoreReasons.length ? `【加点・減点根拠】${assessment.scoreReasons.join(" / ")}` : "",
+		assessment.stopReasons.length ? `【停止理由】${assessment.stopReasons.join(" / ")}` : "【停止理由】該当なし",
 		"【本人一致度】名刺本人を登録候補として扱う。外部ネガティブ情報との本人一致確認は未実施。",
 		"【リスク兆候】反社判定は行わない。公開情報上のリスク兆候は未確認のため、必要に応じて追加調査。",
-		"【次アクション】要追加調査。営業上の扱い、紹介可能領域、本人/所属確認を人が確認する。",
+		`【次アクション】${assessment.nextAction}。営業上の扱い、紹介可能領域、本人/所属確認を人が確認する。`,
 		cardPageId ? `【元名刺】${cardPageId}` : "",
 		ocr.会社名 ? `【所属候補】${ocr.会社名}` : "",
 		ocr.役職 || ocr.部署 ? `【役職】${[ocr.部署, ocr.役職].filter(Boolean).join(" ")}` : "",

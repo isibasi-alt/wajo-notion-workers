@@ -171,12 +171,12 @@ async function main() {
 			{
 				氏名: "仲介 次郎",
 				会社名: "ブローカー商事",
-				役職: "代表",
+				役職: "社外顧問",
 				部署: "",
 				電話: "090-0000-0000",
 				メール: "jiro@example.com",
 				住所: "",
-				メモ: "",
+				メモ: "第三者案件を紹介する。投資家の知り合いがあり、紹介契約でつなぐだけ。発注権限なし。",
 			},
 			"user-123",
 			"https://notion.so/card-page",
@@ -186,8 +186,9 @@ async function main() {
 		assert.ok(json.includes("仲介 次郎"));
 		assert.ok(json.includes("関係構築中")); // 死蔵させない=働きかけ対象として登録
 		assert.ok(json.includes("要確認")); // 信頼度は人が判断するまで断定しない
-		assert.equal("ブローカー一次判定スコア" in props, false); // 初期登録では採点済みに見せない
-		assert.ok(json.includes("60点判定ロジックは未実行"));
+		assert.deepEqual(props["ブローカー一次判定スコア"], { number: 60 });
+		assert.ok(json.includes("routing=broker"));
+		assert.ok(json.includes("紹介契約"));
 		assert.ok(json.includes("ブローカー商事")); // 所属はメモに残る
 		assert.ok(json.includes("090-0000-0000"));
 		assert.ok(json.includes("user-123"));

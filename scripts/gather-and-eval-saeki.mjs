@@ -48,7 +48,7 @@ const dealRows=await q("7838db8a-907a-4c61-b062-109f8278b2c9","担当営業ユ�
 const deals=dealRows.map(x=>`・${txt(x["商談名"])}［${sel(x["商談結果"])}／営業スコア${num(x["営業スコア"])??"-"}］概要:${txt(x["商談概要"])}／改善:${txt(x["改善ポイント"])}／FB:${txt(x["営業フィードバック"])}`).join("\n");
 const mtgs=(await q("c22e58f6-42c9-4a2f-b24d-e65e889d59e9","担当営業ユーザー","ミーティング日","ミーティング名")).map(x=>`・${txt(x["ミーティング名"])}：決定=${txt(x["決定事項"])}／良かった点=${txt(x["良かった点"])}`).join("\n")||"（なし）";
 const ones=(await q("6ad99df1-8ae7-47bd-a59b-236a6f0df521","対象営業ユーザー","面談日","面談名")).map(x=>`・${txt(x["面談名"])}：本人申告=${txt(x["本人の申告メモ"])}／上司所見=${txt(x["上司所見"])}／次アクション=${txt(x["次アクション"])}`).join("\n")||"（なし）";
-const contribRows=await q("f88056da-3052-418e-8cf4-e9b4197cd7ba","対象営業ユーザー","日付","貢献タイトル");
+const contribRows=(await q("f88056da-3052-418e-8cf4-e9b4197cd7ba","対象営業ユーザー","日付","貢献タイトル")).filter(x=>sel(x["承認ステータス"])==="承認"); // 未承認(申請中)は功績に数えない
 const contribs=contribRows.map(x=>`・${txt(x["貢献タイトル"])}［${sel(x["種別"])}／インパクト${sel(x["貢献インパクト"])}］${txt(x["コメント"])}`).join("\n")||"（なし）";
 const dailies=(await q("8f7489a5-47fe-4e0a-833b-ee21ab033ad5","担当営業ユーザー","日付","タイトル")).map(x=>`・[${sel(x["テンション"])}] 要約:${txt(x["AI今日の要約"])}／心残し:${txt(x["今日一番心に残り、今後に残したいこと"])}／つまずき:${txt(x["今日予定通りに行かなかったこと"])}`).join("\n")||"（なし）";
 const speeches=(await q("86f5693c-db36-4356-aec1-210495f6032a","発言者","発言日時","発言タイトル")).map(x=>`・[${sel(x["発言カテゴリ"])}] ${txt(x["発言内容"])}`).join("\n")||"（なし）";
@@ -65,7 +65,7 @@ async function call(system,user,model){
 }
 
 // ── C：採点（配点を数式で明示＝再現可能ログ）──
-const cSys=`あなたは和上の月次評価の採点AI（C）です。定量65％・定性35％。各軸の配点と計算過程を必ず数式で明示し再現可能にせよ（例：粗利＝達成率86%×配点35点≒30点）。総合・定量・定性・仮ランク(S/A/D/B/C)を出す。根拠なき物語を作らず数字と事実だけ。空欄軸は実力0でなく保留。件数は与えられた値を使い勝手に増減しない。`;
+const cSys=`あなたは和上の月次評価の採点AI（C）です。定量65％・定性35％。各軸の配点と計算過程を必ず数式で明示し再現可能にせよ（例：粗利＝達成率86%×配点35点≒30点）。総合・定量・定性・仮ランクを出す。【配点の出典】配点ウェイトは確定ルーブリック未整備のため"暫定の仮置き"である旨を必ず明記せよ（黙って確定値にしない）。【ランク確定保留】除外した異常値・未確定データがある場合、ランクは確定させず暫定幅(例:B〜A・確定保留)で示せ。根拠なき物語を作らず数字と事実だけ。空欄軸は実力0でなく保留。件数は与えられた値を勝手に増減しない。`;
 const cUsr=`対象：${NAME}／2026年6月／${profile.役職}・${profile.評価タイプ}・${profile.エリア}
 【定量（月次成績・自動集計）】${quant}（${annualPace}）
 【データ品質メモ】${dataQuality}
@@ -79,7 +79,9 @@ const fSys=readFileSync("scripts/F-prompt-candidate.md","utf8")+`
 【量の規律＝統合レポートは判断を速くする場所】案件名の列挙は寄与の大きい2件までを本文で扱い、残りは「他○件（状況）」と件数で圧縮する。価格提示/補助金/与信等の生の背景描写は最小限にし、評価に変換した表現（判断の質・営業行動の癖）で書く。商談${Q.商談}件は取りこぼさず件数を整合させる。
 【深掘り＝見本バー】第8欄に「あの場でより良かった一言」を必ず1つ、特定の商談場面に紐づけて入れる。強みと弱みは同根（一つの癖の表裏）として言語化する。
 【データ品質】第6欄に、与えられたデータ品質メモ（異常値・自動採点未計算）を必ず明記する。
-【強み】案件化達成率が高い場合は第2欄の強みに含める。`;
+【強み】案件化達成率が高い場合は第2欄の強みに含める。
+【ランク確定保留】除外した異常値・未確定データがある間は仮ランクを確定値として断定せず「暫定(B〜A・確定保留)」と明記し、確定はデータ修正後にグループ長が行う旨を書く。
+【配点】配点ウェイトは暫定の仮置きであり確定ルーブリックではない旨を最終コメントに一言添える。`;
 const fUsr=`対象社員名：${NAME}／対象月：2026年6月（${profile.役職}・${profile.評価タイプ}・${profile.エリア}）
 
 # 対象者プロフィール（スタッフマスター）
@@ -113,32 +115,23 @@ ${speeches}
 上の材料だけを根拠に、固定10枠の月次評価 判断シートを各欄「変数→1〜3文の解釈」で。案件背景は要約・変換し、深掘り（あの場でより良かった一言）は第8欄に。商談${Q.商談}件は件数整合を守る。`;
 const F=await call(fUsr?fSys:fSys,fUsr);
 
-// ── 人見さん：第三者の解説役（Opus・採点は変えない）──
-const hSys=`あなたは和上ホールディングスの評価AI「人見（ひとみ）」。経験豊かで人を見る目があり、温かくも鋭い人物です。下に、評価エンジンが作り上げた月次評価の判断シート（10枠）と内部の採点根拠があります。
-あなたの役割は、その月報を第三者的に俯瞰し、グループ長が最終判断する前に読む「解説」を添えること。
-- 新しい採点・順位付けはしない（点・ランクを動かさない）。
-- 機械的な再整理ではなく、人間の目で「この月報をどう読むか」「数字の裏で実際に何が起きているか」「グループ長が見落としそうな点」を解説する。
-- 最後に、評価される本人（営業担当）への短い一言を添える（突き放さず、しかし甘やかさず、次へ向かわせる）。
-- 占い・教科書通り・一般論・AI口調・点数に合わせた後付けは禁止。データと事実に紐づいた血の通った言葉で。
-- 全体で5〜8文。出力は見出し「## 人見さんの所見」で始め、グループ長への解説→本人への一言の順。`;
-const hUsr=`対象：${NAME}／2026年6月\n\n# 月次評価 判断シート（A〜Fが作成）\n${F}\n\n# 内部の採点根拠（C）\n${C}\n\nこの月報を読み、人見として第三者的な解説を付けてください。`;
-const Hitomi=await call(hSys,hUsr,"claude-opus-4-8");
+// 人見さん等のキャラ演出は廃止（盛り排除）。判断シートのみ。
 
 // ── Notionページ化（判断シート＋人見さんの所見）──
 function rich(s){return [{type:"text",text:{content:s.replace(/\*\*/g,"").slice(0,1900)}}];}
-const blk=[{object:"block",type:"callout",callout:{rich_text:[{type:"text",text:{content:`検証用ダミー（${NAME}）。整合データ＋2DB反映／カンベイ＆Perplexity修正反映／人見さん解説付き。`}}],icon:{emoji:"🧪"},color:"blue_background"}}];
-const full=F+"\n\n---\n\n"+Hitomi;
+const blk=[{object:"block",type:"callout",callout:{rich_text:[{type:"text",text:{content:`検証用ダミー（${NAME}）。整合データ＋2DB反映／カンベイ指摘修正(承認済み貢献のみ・ランク確定保留・配点は暫定仮置き)。`}}],icon:{emoji:"🧪"},color:"blue_background"}}];
+const full=F;
 for(const raw of full.split("\n")){const l=raw.trimEnd();if(!l.trim())continue;
   if(l==="---")blk.push({object:"block",type:"divider",divider:{}});
   else if(l.startsWith("## "))blk.push({object:"block",type:"heading_2",heading_2:{rich_text:rich(l.slice(3))}});
   else if(l.startsWith("### "))blk.push({object:"block",type:"heading_3",heading_3:{rich_text:rich(l.slice(4))}});
   else if(/^[-*]\s/.test(l))blk.push({object:"block",type:"bulleted_list_item",bulleted_list_item:{rich_text:rich(l.replace(/^[-*]\s/,""))}});
   else blk.push({object:"block",type:"paragraph",paragraph:{rich_text:rich(l)}});}
-const page=await notion.pages.create({parent:{page_id:"3824d017-81e7-81ab-b189-ea7b593d7e7a"},icon:{emoji:"🧭"},properties:{title:[{type:"text",text:{content:`【人見さん解説版】月次評価 判断シート｜${NAME}｜2026年6月`}}]},children:blk.slice(0,98)});
+const page=await notion.pages.create({parent:{page_id:"3824d017-81e7-81ab-b189-ea7b593d7e7a"},icon:{emoji:"🧭"},properties:{title:[{type:"text",text:{content:`月次評価 判断シート｜${NAME}｜2026年6月`}}]},children:blk.slice(0,98)});
 
 console.log("==== 件数整合 ====");
 console.log(`商談${dealCount}件 / 営業貢献${contribCount}件 / rollup貢献ログ件数${Q.貢献数} / 案件化${Q.案件化}(達成率${pct(Q.案件化率)}) / 自動総合スコア${Q.自動総合}`);
 console.log("\n==== C（配点ログ）====\n"+C+"\n");
 console.log("==== F（判断シート）====\n"+F+"\n");
-console.log("==== 人見さんの所見（Opus）====\n"+Hitomi+"\n");
+
 console.log("ページ: "+page.url);

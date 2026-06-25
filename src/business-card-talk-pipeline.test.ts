@@ -589,13 +589,14 @@ async function main() {
 	const advisorCreate = advisorRegistrationCase.creates[0]!;
 	assert.deepEqual(advisorCreate.parent, { data_source_id: "de575c80-5e25-41a5-a27d-b1b3d84a0cbd" });
 	assert.deepEqual(advisorCreate.properties["関連名刺"], { relation: [{ id: "card-1" }] });
-	assert.equal("ブローカー一次判定スコア" in advisorCreate.properties, false);
-	assert.equal(selectName(advisorCreate.properties["ブローカー一次判定結果"]), "broker");
+	assert.deepEqual(advisorCreate.properties["ブローカー一次判定スコア"], { number: 20 });
+	assert.equal(selectName(advisorCreate.properties["ブローカー一次判定結果"]), "later");
 	assert.equal(selectName(advisorCreate.properties["候補本人一致度"]), "中");
 	assert.equal(selectName(advisorCreate.properties["リスク兆候"]), "要確認");
 	assert.equal(selectName(advisorCreate.properties["次アクション"]), "要追加調査");
 	assert.match(selectName(advisorCreate.properties["判定根拠メモ"]), /反社判定は行わない/);
-	assert.match(selectName(advisorCreate.properties["判定根拠メモ"]), /60点判定ロジックは未実行/);
+	assert.match(selectName(advisorCreate.properties["判定根拠メモ"]), /20点/);
+	assert.match(selectName(advisorCreate.properties["判定根拠メモ"]), /60点未満/);
 	const cardAdvisorUpdate = advisorRegistrationCase.updates.find(
 		(update) => update.page_id === "card-1" && update.properties?.["関連社外顧問"],
 	);
