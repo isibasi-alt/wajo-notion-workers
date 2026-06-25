@@ -5870,10 +5870,12 @@ async function processBusinessCard(
 
 	if (routing === "broker") {
 		const memo = buildBrokerRegistrationHoldMemo(card, engagementIntent);
-		await markCardNeedsReview(notion, card, memo);
+		if (!input.dryRun) {
+			await markCardNeedsReview(notion, card, memo);
+		}
 		return {
 			pageId: input.pageId,
-			action: "needs-review",
+			action: input.dryRun ? "dry-run" : "needs-review",
 			companyId: null,
 			companyName: null,
 			message: `routing=${routing} / engagement=${engagementIntent} のため企業連携を停止し、ブローカー登録ライン待ちにしました。`,
@@ -5887,10 +5889,12 @@ async function processBusinessCard(
 			humanDecision: "営業担当が扱い対象企業を確定し、再実行で候補を確定する。",
 			restartCondition: "後で決まった企業名が確定し、再調査起動フラグを active に戻した時。",
 		});
-		await markCardNeedsReview(notion, card, memo);
+		if (!input.dryRun) {
+			await markCardNeedsReview(notion, card, memo);
+		}
 		return {
 			pageId: input.pageId,
-			action: "needs-review",
+			action: input.dryRun ? "dry-run" : "needs-review",
 			companyId: null,
 			companyName: null,
 			message: "routing=later のため要確認で停止しました。",

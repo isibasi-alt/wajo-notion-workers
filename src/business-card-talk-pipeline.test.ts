@@ -527,9 +527,33 @@ async function main() {
 		richTextFromPatch(brokerCardUpdate!.properties?.["名刺AI処理メモ"]),
 		/【停止理由】/,
 	);
-	assert.match(
-		richTextFromPatch(brokerCardUpdate!.properties?.["名刺AI処理メモ"]),
-		/社外顧問・ブローカー/,
+	const brokerMemo = richTextFromPatch(brokerCardUpdate!.properties?.["名刺AI処理メモ"]);
+	assert.match(brokerMemo, /社外顧問・ブローカー/);
+	assert.match(brokerMemo, /【ブローカー登録ライン】/);
+	assert.match(brokerMemo, /60点基準はブローカー一次判定ロジックで別途判定/);
+	assert.match(brokerMemo, /情報不足.*broker加点に使わず/);
+	assert.match(brokerMemo, /このWorkerでは自動登録しない/);
+	assert.match(brokerMemo, /反社判定は行わない/);
+
+	const brokerDryRunCase = makeNotionForCardCase("");
+	const brokerDryRunResult = await withoutAiKeys(() =>
+		processBusinessCardForTest(
+			{
+				pageId: "card-1",
+				dryRun: true,
+				routing: brokerOptions.routing,
+				engagementIntent: brokerOptions.engagementIntent,
+				deepResearch: brokerOptions.deepResearch,
+				autoCreateMeetingPrepReport: brokerOptions.autoCreateMeetingPrepReport,
+			},
+			brokerDryRunCase.notion,
+		),
+	);
+	assert.equal(brokerDryRunResult.action, "dry-run");
+	assert.equal(
+		brokerDryRunCase.updates.length,
+		0,
+		"brokerのdryRunではNotionへ要確認メモを書き込まない",
 	);
 
 	const laterCase = makeNotionForCardCase("");
@@ -554,6 +578,27 @@ async function main() {
 	assert.match(
 		richTextFromPatch(laterCardUpdate!.properties?.["名刺AI処理メモ"]),
 		/【人が判断する一点】/,
+	);
+
+	const laterDryRunCase = makeNotionForCardCase("");
+	const laterDryRunResult = await withoutAiKeys(() =>
+		processBusinessCardForTest(
+			{
+				pageId: "card-1",
+				dryRun: true,
+				routing: laterOptions.routing,
+				engagementIntent: laterOptions.engagementIntent,
+				deepResearch: laterOptions.deepResearch,
+				autoCreateMeetingPrepReport: laterOptions.autoCreateMeetingPrepReport,
+			},
+			laterDryRunCase.notion,
+		),
+	);
+	assert.equal(laterDryRunResult.action, "dry-run");
+	assert.equal(
+		laterDryRunCase.updates.length,
+		0,
+		"laterのdryRunではNotionへ要確認メモを書き込まない",
 	);
 
 	const invalidPhoneCase = makeNotionForNewCardCase({
