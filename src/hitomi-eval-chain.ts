@@ -164,10 +164,10 @@ async function runAgent(
 export async function runHitomiEvalChain(notion: NotionLike, pageId: string): Promise<void> {
 	console.log(`[hitomi-chain] start: ${pageId}`);
 
-	// TODO(data-layer): A の前に、対象者×対象月の元ソースDB
-	//   （営業パフォーマンス/ノルマ申請/活動・発言・顧客接点・営業貢献・社内ナレッジ・日報/ミーティング）
-	//   を Worker が query してページ本文へ材料を流し込む工程を入れる。
-	//   現状は「ページに材料がある」前提（手動テストと同じ）。
+	// data-layer：A の前段は index.ts の gatherHitomiSourceData（webhookハンドラ内）で実行済み。
+	//   収集範囲（検証済み実プロパティのみ）＝【定量】営業パフォーマンス(月次成績:実績粗利/粗利目標/達成率/関連成約件数)
+	//   ＋【活動】活動ログ(関連営業パフォーマンス逆引きの件数)。
+	//   未配線（次段で各DBの人×月実フィルタ確認後に配線）＝ノルマ申請・日報・会議発言・1on1・ツール・ナレッジ。
 
 	await runAgent(notion, pageId, {
 		heading: "データ点検君（A）の結果",

@@ -4950,6 +4950,128 @@ worker.webhook("attachMonthlyEvalPdfWebhook", {
 	},
 });
 
+// ── 人見さん月次評価：データ層（A の前段。元ソースDBから「人×月」の材料を収集しページへ追記）──
+// 2026-06-25。データ点検君（A）はページ本文を読むので、ここで実データを入れておけば
+// 「A が空ページを読むだけ」を解消できる。
+// ★捏造しないため、プロパティ名は実コードで検証済みのものだけ使う：
+//   ・営業パフォーマンス(月次成績)＝対象営業ユーザー×開始日(当月)×期間種別=月次
+//     （findSalesPerformanceForActivity / createMonthlyPerformanceRecord と同一の実プロパティ）
+//   ・当月の活動＝活動ログDBの「関連営業パフォーマンス」relation を月次成績ページIDで逆引き
+//     （linkActivityLogsToSalesPerformance と同一の実relation。件数のみ＝他プロパティは推測しない）
+//   ・ノルマ申請/日報/会議発言/1on1/ツール/ナレッジは「人×月」の実フィルタが未確認のため
+//     本データ層では収集しない（推測で書かない）。次段で各DBの実プロパティ確認後に配線する。
+async function gatherHitomiSourceData(
+	notion: NotionClient,
+	evalPageId: string,
+	now: Date,
+): Promise<void> {
+	const evalPage = (await notion.pages.retrieve({ page_id: evalPageId })) as Page;
+	const props = evalPage.properties ?? {};
+	const salesPersonIds = personIdsFromProperty(props["対象営業ユーザー"]);
+	const salesPersonName =
+		personLabelsFromProperty(props["対象営業ユーザー"]).join("、") || "(対象者未設定)";
+	const { monthStart, nextMonthStart, monthLabel } = monthWindowJST(now);
+
+	const lines: string[] = [
+		`対象者: ${salesPersonName}`,
+		`対象月: ${monthLabel}（${monthStart} 以上 〜 ${nextMonthStart} 未満）`,
+		"",
+	];
+
+	if (salesPersonIds.length === 0) {
+		lines.push(
+			"⚠️ 対象営業ユーザー未設定のため定量データを収集できません。データ点検君（A）は『NG／目標未確定』相当として扱うこと。",
+		);
+	} else {
+		// 1) 営業パフォーマンス(月次成績) を 対象営業ユーザー×当月 で引く（検証済み実プロパティ）
+		let perfPage: Page | undefined;
+		for (const userId of salesPersonIds) {
+			try {
+				const res = await notion.dataSources.query({
+					data_source_id: SALES_PERFORMANCE_DATA_SOURCE_ID,
+					page_size: 10,
+					filter: {
+						and: [
+							{ property: "対象営業ユーザー", people: { contains: userId } },
+							{ property: "開始日", date: { on_or_after: monthStart } },
+							{ property: "開始日", date: { before: nextMonthStart } },
+						],
+					},
+				});
+				const results = res.results as Page[];
+				perfPage = results.find((p) => text(p.properties?.["期間種別"]) === "月次") ?? results[0];
+				if (perfPage) break;
+			} catch (error) {
+				lines.push(`（営業パフォーマンス検索エラー: ${String(error).slice(0, 160)}）`);
+			}
+		}
+
+		lines.push("【定量】営業パフォーマンス＝月次成績DB");
+		if (!perfPage) {
+			lines.push(
+				"当月の月次成績レコードが見つかりません。粗利・成約・商談は『データ源が空＝保留候補』として扱う（実力0点ではない）。",
+			);
+		} else {
+			const pp = perfPage.properties ?? {};
+			const gross = numberValue(pp["実績粗利額（自動）"]);
+			const target =
+				numberValue(pp["粗利目標"]) ??
+				numberValue(pp["粗利目標（申請DB）"]) ??
+				numberValue(pp["目標粗利額"]);
+			const closings = relationIdsFromProperty(pp["関連成約"]).length;
+			lines.push(`月次成績ページID: ${perfPage.id}`);
+			lines.push(`実績粗利額（自動）: ${gross === null ? "（空＝保留候補）" : formatYen(gross)}`);
+			lines.push(
+				target === null || target === undefined
+					? "粗利目標: （未設定＝目標未確定→粗利は保留）"
+					: `粗利目標: ${formatYen(target)}`,
+			);
+			if (gross !== null && target !== null && target !== undefined && target > 0) {
+				lines.push(`粗利達成率（実績粗利/粗利目標）: ${formatPercent(gross / target)}`);
+			}
+			lines.push(`関連成約 件数: ${closings} 件`);
+
+			// 2) 当月の活動ログを「関連営業パフォーマンス」relation で逆引き（件数のみ＝推測なし）
+			try {
+				const actRes = await notion.dataSources.query({
+					data_source_id: ACTIVITY_LOG_DATA_SOURCE_ID,
+					page_size: 100,
+					filter: { property: "関連営業パフォーマンス", relation: { contains: perfPage.id } },
+				});
+				lines.push("");
+				lines.push("【活動】活動ログDB（当月成績に紐づくもの）");
+				lines.push(`紐づく活動ログ 件数: ${actRes.results.length}${actRes.has_more ? "+（100件超）" : ""} 件`);
+			} catch (error) {
+				lines.push(`（活動ログ逆引きエラー: ${String(error).slice(0, 160)}）`);
+			}
+		}
+	}
+
+	lines.push("");
+	lines.push(
+		"【次段・未配線（正直に明記）】ノルマ申請・日報・会議発言・1on1・ツール活用・ナレッジは、各DBの『人×月』実フィルタを確認後に配線する（現時点は未収集＝A は該当軸を保留候補扱い）。",
+	);
+
+	const children: Record<string, unknown>[] = [
+		{
+			object: "block",
+			type: "heading_2",
+			heading_2: {
+				rich_text: [{ type: "text", text: { content: "自動収集データ（Workerが元DBから収集）" } }],
+			},
+		},
+	];
+	const body = lines.join("\n");
+	for (let i = 0; i < body.length; i += 1800) {
+		children.push({
+			object: "block",
+			type: "paragraph",
+			paragraph: { rich_text: [{ type: "text", text: { content: body.slice(i, i + 1800) || " " } }] },
+		});
+	}
+	await appendBlocksIfAny(notion, evalPageId, children);
+}
+
 worker.webhook("processHitomiEvalChainWebhook", {
 	title: "WAJO 人見さん月次評価 6体自動連鎖Webhook",
 	description:
@@ -4964,6 +5086,8 @@ worker.webhook("processHitomiEvalChainWebhook", {
 					"evalPageId / monthlyEvalPageId / pageId / entity.id のいずれからも月次評価ページIDを特定できませんでした。",
 				);
 			}
+			// A の前にデータ層を実行：元ソースDBから「人×月」の材料をページへ追記する。
+			await gatherHitomiSourceData(notion as unknown as NotionClient, evalPageId, new Date());
 			await runHitomiEvalChain(notion as never, evalPageId);
 		}
 	},
