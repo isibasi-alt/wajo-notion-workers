@@ -1,0 +1,46 @@
+name: CI/CD
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch: {} # 本番デプロイは手動トリガーのみ（自動デプロイはしない）
+
+jobs:
+  ci:
+    name: CI (typecheck + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - name: Typecheck (tsc --noEmit)
+        run: npm run check
+      - name: Tests (主要・段階的に拡充)
+        run: |
+          npm run test:hitomi-evaluation-system
+          npm run test:sales-performance-quantitative-score
+          npm run test:monthly-eval-pdf
+        # TODO: 全 test:* を集約する "npm test" を用意し、ここを1行にする
+
+  deploy:
+    name: CD (本番デプロイ) ※手動トリガー(workflow_dispatch)のみ
+    needs: ci
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - name: Deploy (ntn workers)
+        env:
+          NOTION_KEYRING: "0"
+          # TODO(認証・未解決): ntn が CI 上で非対話デプロイするための認証トークン。
+          #   1) 大ちゃんが GitHub Secrets に追加（Settings > Secrets > Actions）。
+          #   2) ntn が読む環境変数名を実機で確認し、ここにマッピングする。
+          #   これが揃うまで CD は回らない（この段階では deploy しない）。
+          NTN_DEPLOY_TOKEN: ${{ secrets.NTN_DEPLOY_TOKEN }}
+        run: npx ntn workers deploy --local-build --no-git
