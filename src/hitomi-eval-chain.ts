@@ -77,6 +77,9 @@ async function callClaude(input: {
 	console.log(`[callClaude #${callClaudeCallCount}] model=${input.model} apiMsgId=${json.id} in=${json.usage?.input_tokens}tok out=${json.usage?.output_tokens}tok head="${text.slice(0, 46).replace(/\n/g, " ")}"`);
 	return text;
 }
+export function getCallClaudeCount(): number {
+	return callClaudeCallCount;
+}
 
 // ── ページ本文を読む（前段の全ブロックをプレーンテキスト化）────────────────
 // 各エージェントは「ページに既にある前段の出力」を読んで応答する＝案2の心臓部。
