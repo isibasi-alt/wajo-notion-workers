@@ -3352,7 +3352,6 @@ worker.tool("processPendingBusinessCards", {
 						dryRun,
 						deepResearch: runOptions.deepResearch,
 						autoCreateMeetingPrepReport: runOptions.autoCreateMeetingPrepReport,
-						registerExternalAdvisor: runOptions.registerExternalAdvisor,
 					},
 					notion as unknown as NotionClient,
 				),
@@ -4498,6 +4497,7 @@ worker.webhook("processBusinessCardWebhook", {
 						dryRun: false,
 						deepResearch: runOptions.deepResearch,
 						autoCreateMeetingPrepReport: runOptions.autoCreateMeetingPrepReport,
+						registerExternalAdvisor: runOptions.registerExternalAdvisor,
 					},
 					notion as unknown as NotionClient,
 				);

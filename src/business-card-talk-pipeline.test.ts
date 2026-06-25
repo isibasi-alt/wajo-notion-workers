@@ -215,7 +215,12 @@ function makeNotionForNewCardCase(params: {
 				properties: Record<string, unknown>;
 			}) => {
 				creates.push({ parent, properties });
-				const created = { id: `created-page-${creates.length}`, properties };
+				const parentDataSourceId = typeof parent?.data_source_id === "string" ? parent.data_source_id : "";
+				const id =
+					parentDataSourceId === "de575c80-5e25-41a5-a27d-b1b3d84a0cbd"
+						? `advisor-page-${creates.length}`
+						: "new-company-1";
+				const created = { id, properties };
 				notion.__createdCompanies.set(created.id, created);
 				return created as { id: string; properties: Record<string, unknown> };
 			},
@@ -594,7 +599,7 @@ async function main() {
 	);
 	assert.ok(cardAdvisorUpdate);
 	assert.deepEqual(cardAdvisorUpdate!.properties?.["関連社外顧問"], {
-		relation: [{ id: "created-page-1" }],
+		relation: [{ id: "advisor-page-1" }],
 	});
 
 	const advisorRegistrationDryRunCase = makeNotionForNewCardCase({
