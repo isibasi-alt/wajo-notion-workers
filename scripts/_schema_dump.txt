@@ -1,0 +1,519 @@
+
+========== 月次成績PERF  [e67ec5d5-90d3-4118-9788-976a6f5c94a1] ==========
+  次月テーマ	<rich_text>	
+  粗利グラフ	<formula>	⚙自動(formula): round({{notion:block_property:TgL%3F:e67ec5d5-90d3-4118-9788
+  関連活動ログ	<relation>	→相手DS=a58a107d-92e3-43f3-887d-5e3acf72e9ec
+  改善ポイント	<rich_text>	
+  粗利達成率（グラフ用）	<formula>	⚙自動(formula): if({{notion:block_property:yRqw:e67ec5d5-90d3-4118-9788-976a
+  総合スコア（自動）	<formula>	⚙自動(formula): ((({{notion:block_property:Xbq%60:e67ec5d5-90d3-4118-9788-97
+  対象期間	<rich_text>	
+  仕入れ評価メモ	<rich_text>	
+  仕入れ件数達成率グラフ	<number>	
+  貢献スコア	<number>	
+  評価準備OK	<checkbox>	
+  上司確認事項	<rich_text>	
+  評価ID	<unique_id>	
+  売上達成率（監査）	<formula>	⚙自動(formula): {{notion:block_property:k_F%5B:e67ec5d5-90d3-4118-9788-976a6
+  期日遵守率	<number>	
+  監査区分	<select>	候補=[通常監査, 上司確認, 監査除外, 手入力採用, 成約紐付け待ち]
+  歩合見込額（自動）	<rollup>	⚙自動(rollup): rel=関連成約 prop=歩合見込額 fn=sum
+  仕入れカード	<formula>	⚙自動(formula): ((((((((((("🏭 " + format({{notion:block_property:voTm:e67ec
+  評価タイプ	<select>	候補=[販売, 仕入れ, 両方]
+  残り必要日次粗利額	<formula>	⚙自動(formula): lets(
+  periodType, format({{notion:block_property:VckO:e67e
+  次月改善ポイント	<rich_text>	
+  売上グラフ	<formula>	⚙自動(formula): round({{notion:block_property:k_F%5B:e67ec5d5-90d3-4118-9788
+  AI活用ポイントメモ	<rich_text>	
+  粗利見込みグラフURL	<formula>	⚙自動(formula): lets(
+  periodType, format({{notion:block_property:VckO:e67e
+  平均営業スコア（自動）	<rollup>	⚙自動(rollup): rel=関連商談 prop=営業スコア fn=average
+  評価内訳カード	<formula>	⚙自動(formula): (((((((((((("🎯 総合 " + format({{notion:block_property:%3EIDe
+  仕入れ件数	<number>	
+  成約商談カード	<formula>	⚙自動(formula): ((((("🏆 成約 " + format({{notion:block_property:USoE:e67ec5d5
+  残り必要粗利額	<formula>	⚙自動(formula): lets(
+  periodType, format({{notion:block_property:VckO:e67e
+  マネージャーコメント	<rich_text>	
+  仕入れ金額目標（申請DB）	<rollup>	⚙自動(rollup): rel=関連ノルマ申請 prop=仕入れ金額目標 fn=sum
+  ナレッジ貢献数	<number>	
+  成約件数目標（申請DB）	<rollup>	⚙自動(rollup): rel=関連ノルマ申請 prop=成約件数目標 fn=sum
+  仕入れ金額グラフ	<formula>	⚙自動(formula): round({{notion:block_property:voTm:e67ec5d5-90d3-4118-9788-9
+  月次専売許可達成率（申請連動）	<formula>	⚙自動(formula): if({{notion:block_property:tB%7Do:e67ec5d5-90d3-4118-9788-97
+  日報提出数	<number>	
+  ファネルカード	<formula>	⚙自動(formula): ((((((((("📦 " + format({{notion:block_property:Wpyx:e67ec5d
+  関連成約	<relation>	→相手DS=8d5a506b-59b8-4e50-bc77-d5412774048d
+  粗利着地差分額	<formula>	⚙自動(formula): lets(
+  periodType, format({{notion:block_property:VckO:e67e
+  評価ランク	<select>	候補=[S, A, B, C, D]
+  開始日	<date>	
+  当月日数	<formula>	⚙自動(formula): lets(
+  startDate, {{notion:block_property:N%3EH%60:e67ec5d5
+  関連商談	<relation>	→相手DS=7838db8a-907a-4c61-b062-109f8278b2c9
+  いいね数	<number>	
+  営業パフォーマンスグラフ	<formula>	⚙自動(formula): {{notion:block_property:FAK%5C:e67ec5d5-90d3-4118-9788-976a6
+  場所	<place>	
+  粗利見込みステータス	<formula>	⚙自動(formula): lets(
+  periodType, format({{notion:block_property:VckO:e67e
+  営業コックピット	<formula>	⚙自動(formula): lets(
+  actualYen, if(empty({{notion:block_property:TgL%3F:e
+  日報継続率	<number>	
+  低圧仕入れ件数	<number>	
+  仕入れ評価スコア	<number>	
+  平均マネージャー総合評価	<rollup>	⚙自動(rollup): rel=関連マネージャー評価 prop=総合評価スコア（自動） fn=average
+  担当マネージャー	<people>	
+  月次仕入れ金額達成率（申請連動）	<formula>	⚙自動(formula): if({{notion:block_property:Hc%5C%5D:e67ec5d5-90d3-4118-9788-
+  実績粗利額（自動）	<rollup>	⚙自動(rollup): rel=関連成約 prop=粗利額 fn=sum
+  関連案件	<relation>	→相手DS=54e869d7-ba3e-49e1-b760-af46e23499cb
+  期間種別	<select>	候補=[月次, 四半期]
+  歩合カード	<formula>	⚙自動(formula): ((("💵 歩合(粗利2%) " + format(round(({{notion:block_property:Tg
+  仕入れ件数目標（申請DB）	<rollup>	⚙自動(rollup): rel=関連ノルマ申請 prop=仕入れ件数目標 fn=sum
+  案件化件数	<number>	
+  行動スコア	<number>	
+  評価採用ソース	<formula>	⚙自動(formula): if(
+  and(
+    empty({{notion:block_property:k_F%5B:e67ec5d5
+  評価反映可否	<formula>	⚙自動(formula): if(format({{notion:block_property:DEnG:e67ec5d5-90d3-4118-97
+  結果スコア	<number>	
+  監査ステータス	<formula>	⚙自動(formula): lets(
+  gm, {{notion:block_property:TgL%3F:e67ec5d5-90d3-411
+  マネージャー評価件数	<rollup>	⚙自動(rollup): rel=関連マネージャー評価 prop=名前 fn=count
+  案件化件数目標（申請DB）	<rollup>	⚙自動(rollup): rel=関連ノルマ申請 prop=案件化件数目標 fn=sum
+  低圧仕入れ件数目標（申請DB）	<rollup>	⚙自動(rollup): rel=関連ノルマ申請 prop=低圧仕入れ件数目標 fn=sum
+  商談達成率グラフ	<number>	
+  粗利着地見込み額	<formula>	⚙自動(formula): lets(
+  periodType, format({{notion:block_property:VckO:e67e
+  商談準備実施数	<number>	
+  貢献カード	<formula>	⚙自動(formula): ((((((("🤝 貢献" + format({{notion:block_property:eclA:e67ec5d
+  月次商談達成率（申請連動）	<formula>	⚙自動(formula): if({{notion:block_property:p%3Ajw:e67ec5d5-90d3-4118-9788-97
+  作成日時	<created_time>	
+  レーダーチャートURL	<formula>	⚙自動(formula): (((((((((((((("https://radar-rust-two.vercel.app?d=" + forma
+  実績粗利差分（監査）	<formula>	⚙自動(formula): if(empty({{notion:block_property:TgL%3F:e67ec5d5-90d3-4118-9
+  実績売上差分（監査）	<formula>	⚙自動(formula): if(empty({{notion:block_property:k_F%5B:e67ec5d5-90d3-4118-9
+  日報提出カード	<formula>	⚙自動(formula): ((((("📝 提出 " + format({{notion:block_property:KeEf:e67ec5d5
+  月次案件化達成率（申請連動）	<formula>	⚙自動(formula): if({{notion:block_property:ZQzt:e67ec5d5-90d3-4118-9788-976a
+  評価ステータス	<select>	候補=[下書き, 集計中, レビュー中, 確定, 要確認]
+  管理職粗利カード	<formula>	⚙自動(formula): (("💰 粗利 " + format(round({{notion:block_property:TgL%3F:e67
+  AI活用カード	<rich_text>	
+  タスク完了率	<number>	
+  スコアカード	<formula>	⚙自動(formula): (((((if({{notion:block_property:%3EIDe:e67ec5d5-90d3-4118-97
+  売上カード	<formula>	⚙自動(formula): ((((((("💹 売上" + format({{notion:block_property:k_F%5B:e67ec
+  貢献ログ件数	<rollup>	⚙自動(rollup): rel=関連貢献ログ prop=貢献タイトル fn=count
+  商談件数（自動）	<rollup>	⚙自動(rollup): rel=関連商談 prop=商談名 fn=count
+  専売許可件数	<number>	
+  商談品質スコア	<number>	
+  経過日数	<formula>	⚙自動(formula): lets(
+  startDate, {{notion:block_property:N%3EH%60:e67ec5d5
+  粗利着地達成率	<formula>	⚙自動(formula): lets(
+  periodType, format({{notion:block_property:VckO:e67e
+  終了日	<date>	
+  実績売上額（自動）	<rollup>	⚙自動(rollup): rel=関連成約 prop=売上額 fn=sum
+  評価数値不整合アラート	<formula>	⚙自動(formula): if(
+  format({{notion:block_property:TgL%3F:e67ec5d5-90d3-41
+  粗利カード	<formula>	⚙自動(formula): lets(
+  actualYen, if(empty({{notion:block_property:TgL%3F:e
+  月次成約達成率（申請連動）	<formula>	⚙自動(formula): if({{notion:block_property:IYSc:e67ec5d5-90d3-4118-9788-976a
+  データ品質ステータス	<formula>	⚙自動(formula): if(format({{notion:block_property:DEnG:e67ec5d5-90d3-4118-97
+  成約件数（自動）	<rollup>	⚙自動(rollup): rel=関連成約 prop=成約名 fn=count
+  チーム貢献ポイント	<number>	
+  成約達成率グラフ	<formula>	⚙自動(formula): lets(
+  shodan, if(empty({{notion:block_property:G%3A%40e:e6
+  売上目標（申請DB）	<rollup>	⚙自動(rollup): rel=関連ノルマ申請 prop=売上目標 fn=sum
+  商談件数目標（申請DB）	<rollup>	⚙自動(rollup): rel=関連ノルマ申請 prop=商談件数目標 fn=sum
+  月次売上達成率（申請連動）	<formula>	⚙自動(formula): if({{notion:block_property:ob%7Cu:e67ec5d5-90d3-4118-9788-97
+  月次仕入れ件数達成率（申請連動）	<formula>	⚙自動(formula): if({{notion:block_property:WEIP:e67ec5d5-90d3-4118-9788-976a
+  関連マネージャー評価	<relation>	→相手DS=3574d017-81e7-8084-bbfb-000b9afc3ecc
+  AI活用ポイント上限	<number>	
+  高圧仕入れ件数	<number>	
+  AI活用ポイント（月次）	<number>	
+  総合スコアグラフ	<formula>	⚙自動(formula): {{notion:block_property:Xbq%60:e67ec5d5-90d3-4118-9788-976a6
+  粗利達成率（自動）	<formula>	⚙自動(formula): if({{notion:block_property:yRqw:e67ec5d5-90d3-4118-9788-976a
+  専売許可件数目標（申請DB）	<rollup>	⚙自動(rollup): rel=関連ノルマ申請 prop=専売許可件数目標 fn=sum
+  成長ポイント	<rich_text>	
+  売上達成率（自動）	<formula>	⚙自動(formula): lets(
+  actualYen, if(empty({{notion:block_property:k_F%5B:e
+  関連貢献ログ	<relation>	→相手DS=f88056da-3052-418e-8cf4-e9b4197cd7ba
+  関連ノルマ申請	<relation>	→相手DS=27df8a65-4729-4600-bfc1-59bb1c460e73
+  仕入れ金額	<number>	
+  月次粗利達成率（申請連動）	<formula>	⚙自動(formula): if({{notion:block_property:yRqw:e67ec5d5-90d3-4118-9788-976a
+  活動サマリー	<formula>	⚙自動(formula): lets(
+  shodan, if(empty({{notion:block_property:G%3A%40e:e6
+  粗利目標（申請DB）	<rollup>	⚙自動(rollup): rel=関連ノルマ申請 prop=粗利目標 fn=sum
+  貢献ログポイント合計	<rollup>	⚙自動(rollup): rel=関連貢献ログ prop=ポイント fn=sum
+  AI処理状態	<select>	候補=[未処理, 処理中, 処理済, 要確認, 対象外]
+  AI評価メモ	<rich_text>	
+  チーム貢献スコア	<number>	
+  歩合確定額（自動）	<rollup>	⚙自動(rollup): rel=関連成約 prop=歩合確定額 fn=sum
+  本人コメント	<rich_text>	
+  高圧仕入れ件数目標（申請DB）	<rollup>	⚙自動(rollup): rel=関連ノルマ申請 prop=高圧仕入れ件数目標 fn=sum
+  残り日数	<formula>	⚙自動(formula): lets(
+  startDate, {{notion:block_property:N%3EH%60:e67ec5d5
+  対象営業ユーザー	<people>	
+  評価名	<title>	
+
+========== 成約報告CLOSING  [8d5a506b-59b8-4e50-bc77-d5412774048d] ==========
+  AI学習ログ	<relation>	→相手DS=0577bcac-f09d-42f6-98e4-84062956abba
+  退役｜承認ステータス（使用禁止）	<select>	候補=[下書き, 申請中, 成約, 差戻し, 取り消し]
+  仕入れ担当	<people>	
+  関連企業	<relation>	→相手DS=7f394672-4f1e-4f01-ab6c-c98d29bd1f90
+  退役｜承認する（使用禁止）	<button>	
+  歩合見込額	<number>	
+  粗利率	<formula>	⚙自動(formula): if({{notion:block_property:b%3AYR:8d5a506b-59b8-4e50-bc77-d5
+  歩合対象	<checkbox>	
+  成約日	<date>	
+  顧客接点ログ	<relation>	→相手DS=b65c13b4-1a72-4c58-8d2d-305c3e04a561
+  次に活かす学び	<rich_text>	
+  仕入れ歩合	<formula>	⚙自動(formula): if(empty({{notion:block_property:xu%3CQ:8d5a506b-59b8-4e50-b
+  作成日時	<created_time>	
+  退役｜取り消す（使用禁止）	<button>	
+  ナレッジ化候補	<select>	候補=[候補, 不要, 作成済, 要確認]
+  歩合確定額	<number>	
+  AI処理状態	<select>	候補=[未処理, 処理中, 処理済, 要確認]
+  成約種別	<select>	候補=[仲介, 買取, 販売, 紹介, その他, 太陽光発電, 太陽光発電、低圧売りたい。]
+  販売歩合	<formula>	⚙自動(formula): if(empty({{notion:block_property:xu%3CQ:8d5a506b-59b8-4e50-b
+  売買区分	<select>	候補=[売却成約, 購入成約, 売買両方, その他, 不明]
+  売上額	<number>	
+  ナレッジ化メモ	<rich_text>	
+  担当営業ユーザー	<people>	
+  退役｜差し戻し可否（使用禁止）	<formula>	⚙自動(formula): ifs(
+  empty({{notion:block_property:r%5CWz:8d5a506b-59b8-4e
+  退役｜承認者（使用禁止）	<people>	
+  反省点	<rich_text>	
+  関連案件	<relation>	→相手DS=54e869d7-ba3e-49e1-b760-af46e23499cb
+  対象物種別	<select>	候補=[土地, 太陽光発電所, 系統用蓄電池, その他]
+  関連社外顧問	<relation>	→相手DS=de575c80-5e25-41a5-a27d-b1b3d84a0cbd
+  退役｜差し戻す（使用禁止）	<button>	
+  管理メモ	<rich_text>	
+  歩合率	<number>	
+  成約リンク判定	<formula>	⚙自動(formula): if(empty({{notion:block_property:jOCB:8d5a506b-59b8-4e50-bc7
+  📚 ナレッジ候補にする	<button>	
+  退役｜差し戻し理由（使用禁止）	<rich_text>	
+  退役｜取り消し可否（使用禁止）	<formula>	⚙自動(formula): ifs(
+  empty({{notion:block_property:o%60JK:8d5a506b-59b8-4e
+  ナレッジ化依頼日	<date>	
+  ナレッジ種別	<select>	候補=[営業トーク, FAQ, マニュアル, クレーム対応, 成功事例, その他]
+  勝因	<rich_text>	
+  粗利額	<number>	
+  成約ID	<unique_id>	
+  確定日	<date>	
+  関連商談	<relation>	→相手DS=7838db8a-907a-4c61-b062-109f8278b2c9
+  成約名	<title>	
+
+========== 案件DEAL  [7838db8a-907a-4c61-b062-109f8278b2c9] ==========
+  ナレッジ化メモ	<rich_text>	
+  商談日	<date>	
+  関連ミーティング	<relation>	→相手DS=c22e58f6-42c9-4a2f-b24d-e65e889d59e9
+  商談回数	<number>	
+  改善ポイント	<rich_text>	
+  フォローメールヒント	<rich_text>	
+  二次レビュー更新日時	<date>	
+   商談管理DB	<relation>	→相手DS=7838db8a-907a-4c61-b062-109f8278b2c9
+  関連案件	<relation>	→相手DS=54e869d7-ba3e-49e1-b760-af46e23499cb
+  営業FB最終処理議事録ID	<rich_text>	
+  商談結果	<select>	候補=[成約, 提案中, 失注, 未入力, 検討中, 保留, 再提案予定, キャンセル]
+  二次レビュー最終処理商談ID	<rich_text>	
+  関連社外顧問	<relation>	→相手DS=de575c80-5e25-41a5-a27d-b1b3d84a0cbd
+  担当営業ユーザー	<people>	
+  AI学習ログ	<relation>	→相手DS=0577bcac-f09d-42f6-98e4-84062956abba
+  商談概要	<rich_text>	
+  関連成約	<relation>	→相手DS=8d5a506b-59b8-4e50-bc77-d5412774048d
+  二次FBステータス	<select>	候補=[未処理, 二次レビュー依頼, レビュー済, 要確認, 対象外, エラー]
+  営業FB更新日時	<date>	
+  最新議事録日	<date>	
+  成約報告する	<button>	
+  関連タスク	<relation>	→相手DS=a9d1bc35-e94d-48f3-96fd-293ae2a7812f
+  🔥 案件リスト	<relation>	→相手DS=54e869d7-ba3e-49e1-b760-af46e23499cb
+  営業スコア	<number>	
+   商談管理DBからのリレーション	<relation>	→相手DS=7838db8a-907a-4c61-b062-109f8278b2c9
+  📚 ナレッジ候補にする	<button>	
+  二次レビューコメント	<rich_text>	
+  営業フィードバック	<rich_text>	
+  外部レビュー可否	<checkbox>	
+  フィードバック品質	<select>	候補=[良い, 要修正, 情報不足]
+  顧客接点ログ	<relation>	→相手DS=b65c13b4-1a72-4c58-8d2d-305c3e04a561
+  ナレッジ化ステータス	<multi_select>	候補=[未判定, 候補, 作成中, 作成済, 不要, 要確認]
+  成約へのヒント	<rich_text>	
+  タグ	<multi_select>	候補=[太陽光, 蓄電池, 売却/仲介, データセンター, 補助金/税制, 見積/費用, 工期/工程, 代理店/販売戦略, 売りたい商談, 買いたい商談, 社外顧問あり]
+  主権者同席	<multi_select>	候補=[同席なし, 同席, 担当が主権者]
+  商談ステータス	<select>	候補=[準備中, 実施済, フォロー中, 成約, 失注, 要確認]
+  元ミーティングID	<rich_text>	
+  次回トークイメージ	<rich_text>	
+  関連チームタスク 1	<relation>	→相手DS=3b44d017-81e7-82c9-9f2d-87004c53d722
+  関連企業	<relation>	→相手DS=7f394672-4f1e-4f01-ab6c-c98d29bd1f90
+  商談名	<title>	
+
+========== ミーティングMTG  [c22e58f6-42c9-4a2f-b24d-e65e889d59e9] ==========
+  タグ	<multi_select>	候補=[全体会議, 経営会議, 営業会議, 商談, 1on1, 社内ミーティング, 社外打合せ, 相談・壁打ち, 定例, 緊急, 重要, フォローアップ, 社内調整, トラブル対応, ナレッジ化候補, 採用/人事]
+  改善ポイント	<rich_text>	
+  AI率直フィードバック	<rich_text>	
+  決定事項	<rich_text>	
+  📚 ナレッジ候補にする	<button>	
+  関連企業	<relation>	→相手DS=7f394672-4f1e-4f01-ab6c-c98d29bd1f90
+  次回確認事項	<rich_text>	
+  議事内容	<rich_text>	
+  社外参加者	<rich_text>	
+  要約ステータス	<select>	候補=[未処理, 要約済, 要確認]
+  メモ整形メモ	<rich_text>	
+  タスク化ステータス	<select>	候補=[未処理, 作成済, 対象外, 要確認]
+  ミーティング名AI	<rich_text>	
+  参加者	<rich_text>	
+  ミーティング名（自動）	<formula>	⚙自動(formula): if(empty({{notion:block_property:a%3ESg:c22e58f6-42c9-4a2f-b
+  温度感	<select>	候補=[熱い, 前向き, 普通, 冷たい, 不明]
+  ミーティング	<relation>	→相手DS=c22e58f6-42c9-4a2f-b24d-e65e889d59e9
+  ミーティングの次の一手	<rich_text>	
+  アクション項目	<rich_text>	
+  担当営業ユーザー	<people>	
+  📌 ミーティングからタスク化	<button>	
+  ミーティング日	<date>	
+  関連商談	<relation>	→相手DS=7838db8a-907a-4c61-b062-109f8278b2c9
+  録音URL	<url>	
+  関連チームタスク	<relation>	→相手DS=3b44d017-81e7-82c9-9f2d-87004c53d722
+  メモ整形ステータス	<select>	候補=[未処理, 整形依頼, 整形済, 要確認, エラー, 対象外]
+  タスク化メモ	<rich_text>	
+  関連タスク	<relation>	→相手DS=a9d1bc35-e94d-48f3-96fd-293ae2a7812f
+  ナレッジ種別	<select>	候補=[営業トーク, FAQ, マニュアル, クレーム対応, 成功事例, その他]
+  振り返りメモ	<rich_text>	
+  ミーティング種別	<select>	候補=[1on1, 経営ミーティング, 全体ミーティング, 営業ミーティング, 商談, その他, ミーティング]
+  振り返りステータス	<select>	候補=[未処理, 振り返り依頼, 返却済, 要確認, 対象外, エラー]
+  参加者ユーザー	<people>	
+  良かった点	<rich_text>	
+  ナレッジ化メモ	<rich_text>	
+  重要度	<select>	候補=[高, 中, 低]
+  ナレッジ化ステータス	<select>	候補=[未判定, 候補, 作成中, 作成済, 不要, 要確認]
+  ナレッジ化依頼日	<date>	
+  商談連携状態	<select>	候補=[未処理, 連携済, 要確認]
+  要約	<rich_text>	
+  AI学習ログ	<relation>	→相手DS=0577bcac-f09d-42f6-98e4-84062956abba
+  作成日	<created_time>	
+  ミーティング名	<title>	
+
+========== 1on1  [6ad99df1-8ae7-47bd-a59b-236a6f0df521] ==========
+  要フォロー期限	<date>	
+  面談種別	<select>	候補=[月次1on1, 週次1on1, 評価面談, フォロー面談, 緊急面談]
+  対象スタッフ	<relation>	→相手DS=f770bee6-fb52-46db-adc2-9bcca9e406e8
+  評価反映状態	<select>	候補=[未反映, 評価材料化済, 反映不要, 要確認]
+  評価材料対象	<checkbox>	
+  次アクション	<rich_text>	
+  公開範囲	<select>	候補=[マネージャー限定, 本人共有可, 人事限定]
+  関連会議議事録	<relation>	→相手DS=c22e58f6-42c9-4a2f-b24d-e65e889d59e9
+  担当マネージャー	<people>	
+  対象営業ユーザー	<people>	
+  決定事項	<rich_text>	
+  本人の申告メモ	<rich_text>	
+  面談ステータス	<select>	候補=[予定, 実施済, 要フォロー, 評価材料化済]
+  面談日	<date>	
+  人見さん確認メモ	<rich_text>	
+  スタッフマスターDB (1)とのリレーション（1on1ログ）	<relation>	→相手DS=3714d017-81e7-808f-9d68-000be714e6d6
+  関連マネージャー評価	<relation>	→相手DS=3574d017-81e7-8084-bbfb-000b9afc3ecc
+  評価材料メモ	<rich_text>	
+  上司所見	<rich_text>	
+  関連営業パフォーマンス	<relation>	→相手DS=e67ec5d5-90d3-4118-9788-976a6f5c94a1
+  面談名	<title>	
+
+========== 営業貢献CONTRIB  [f88056da-3052-418e-8cf4-e9b4197cd7ba] ==========
+  コメント	<rich_text>	
+  確認日	<date>	
+  関連評価サマリー	<relation>	→相手DS=e67ec5d5-90d3-4118-9788-976a6f5c94a1
+  承認者	<people>	
+  AIスコア	<number>	
+  対象営業ユーザー	<people>	
+  関連日報	<relation>	→相手DS=8f7489a5-47fe-4e0a-833b-ee21ab033ad5
+  AIコメント	<rich_text>	
+  評価反映状態	<select>	候補=[未反映, 反映候補, 反映済み, 対象外]
+  種別	<select>	候補=[日報いいね, 上司FB, ナレッジ採用, 勝ちトーク化, 案件共有, 社外顧問紹介, 他者支援, チーム支援]
+  本人への見える化コメント	<rich_text>	
+  日付	<date>	
+  関連商談	<relation>	→相手DS=7838db8a-907a-4c61-b062-109f8278b2c9
+  貢献インパクト	<select>	候補=[小, 中, 大, 特大]
+  承認ステータス	<select>	候補=[下書き, 申請中, 承認, 差戻し]
+  関連案件	<relation>	→相手DS=54e869d7-ba3e-49e1-b760-af46e23499cb
+  ポイント	<formula>	⚙自動(formula): if({{notion:block_property:Uxbz:f88056da-3052-418e-8cf4-e9b4
+  関連ナレッジ	<relation>	→相手DS=8ffd91e0-2f44-4915-926a-d410bcb04e95
+  貢献カテゴリ	<select>	候補=[ナレッジ共有, 後輩育成, 提案支援, 案件支援, 会議貢献, 日報貢献, その他, 確認・調査, 商談フォロー, 書類作成]
+  マネージャーメモ	<rich_text>	
+  ポイント手入力	<number>	
+  貢献タイトル	<title>	
+
+========== 日報DAILY  [8f7489a5-47fe-4e0a-833b-ee21ab033ad5] ==========
+  提出日時	<date>	
+  関連ノルマ申請	<relation>	→相手DS=27df8a65-4729-4600-bfc1-59bb1c460e73
+  上司に提出	<button>	
+  日付	<date>	
+  提出状態	<select>	候補=[下書き, 修正中, 上司承認待ち, 承認済み]
+  修正依頼の受付	<multi_select>	候補=[受付ました, 完了です！, 確認して！, 回答不能]
+  上司コメント	<rich_text>	
+  AI今日の要約	<rich_text>	
+  AI進捗の見立て	<rich_text>	
+  AI明日の一手	<rich_text>	
+  AI絶対にやってはいけないこと	<rich_text>	
+  🔥連続記録	<number>	
+  今日一番心に残り、今後に残したいこと	<rich_text>	
+  関連案件	<relation>	→相手DS=54e869d7-ba3e-49e1-b760-af46e23499cb
+  テンション	<select>	候補=[☀️最強です, 🔥 好調です, 😊 普通です, 😫集中できません‥, 🥱しんどい]
+  日報ログ化状態	<multi_select>	候補=[要確認, 処理済み, 処理依頼, 未処理, 活動ログ連携済み]
+  担当営業ユーザー	<people>	
+  今日予定通りに行かなかったこと	<rich_text>	
+  AIフィードバック	<rich_text>	
+  AIハマりがちなパターン3つ	<rich_text>	
+  提出者	<people>	
+  タイトル	<title>	
+
+========== 発言SPEECH  [86f5693c-db36-4356-aec1-210495f6032a] ==========
+  評価AI連携日時	<date>	
+  Worker処理ID	<rich_text>	
+  関連活動	<relation>	→相手DS=a58a107d-92e3-43f3-887d-5e3acf72e9ec
+  発言カテゴリ	<select>	候補=[質問, 提案, 反論, 約束, 称賛, 指示, クロージング, 報告, その他]
+  関連企業	<relation>	→相手DS=7f394672-4f1e-4f01-ab6c-c98d29bd1f90
+  作成日時	<created_time>	
+  関連会議	<relation>	→相手DS=c22e58f6-42c9-4a2f-b24d-e65e889d59e9
+  重要度	<select>	候補=[高, 中, 低]
+  評価AI連携済み	<checkbox>	
+  評価連携エラー	<rich_text>	
+  発言者	<people>	
+  評価加点候補	<checkbox>	
+  発言日時	<date>	
+  発言処理メモ	<rich_text>	
+  発言内容	<rich_text>	
+  発言タイトル	<title>	
+
+========== 活動ACTIVITY  [a58a107d-92e3-43f3-887d-5e3acf72e9ec] ==========
+  録音元ページURL	<url>	
+  活動種別	<select>	候補=[商談, 会議, 1on1, 社外打合せ, 日報, タスク完了, ナレッジ作成, その他, 現地案内, 商談準備]
+  関連ミーティング	<relation>	→相手DS=c22e58f6-42c9-4a2f-b24d-e65e889d59e9
+  関連営業パフォーマンス	<relation>	→相手DS=e67ec5d5-90d3-4118-9788-976a6f5c94a1
+  活動時間(分)	<number>	
+  作成日時	<created_time>	
+  関連企業	<relation>	→相手DS=7f394672-4f1e-4f01-ab6c-c98d29bd1f90
+  関連ワニポメモリー	<relation>	→相手DS=b8b06036-4f7e-4efe-a242-2df47ff29b1e
+  Worker処理メモ	<rich_text>	
+  採点カテゴリ	<select>	候補=[発言ログ, 顧客接点ログ, 営業貢献ログ]
+  活動処理状態	<select>	候補=[未処理, 文字起こし待ち, 発言分解中, 完了, 要確認, 処理失敗]
+  Worker処理ID	<rich_text>	
+  活動者	<people>	
+  関連商談	<relation>	→相手DS=7838db8a-907a-4c61-b062-109f8278b2c9
+  評価対象	<checkbox>	
+  関連タスク	<relation>	→相手DS=3b44d017-81e7-82c9-9f2d-87004c53d722
+  活動ログ	<rich_text>	
+  タグ	<multi_select>	候補=[値段交渉, 専売契約, 資料授受, ヒヤリング, 紹介, 案件紹介もらう, 会社紹介もらう]
+  AIサマリ	<rich_text>	
+  関連営業貢献ログ	<relation>	→相手DS=f88056da-3052-418e-8cf4-e9b4197cd7ba
+  関連発言	<relation>	→相手DS=86f5693c-db36-4356-aec1-210495f6032a
+  関連顧客接点ログ	<relation>	→相手DS=b65c13b4-1a72-4c58-8d2d-305c3e04a561
+  関連人見さんメモ	<relation>	→相手DS=a1118ded-21b2-4636-94fb-a868aefb5168
+  活動日時	<date>	
+  活動タイトル	<title>	
+
+========== ノルマQUOTA  [27df8a65-4729-4600-bfc1-59bb1c460e73] ==========
+  粗利達成率（申請ベース）	<formula>	⚙自動(formula): if({{notion:block_property:%3E%40yn:27df8a65-4729-4600-bfc1-
+  売上目標	<number>	
+  申請キー	<formula>	⚙自動(formula): if(empty({{notion:block_property:RtI~:27df8a65-4729-4600-bfc
+  実績粗利額（評価DB）	<rollup>	⚙自動(rollup): rel=関連営業評価 prop=実績粗利額（自動） fn=sum
+  実績成約件数（評価DB）	<rollup>	⚙自動(rollup): rel=関連営業評価 prop=成約件数（自動） fn=sum
+  ノルマ達成率	<formula>	⚙自動(formula): if({{notion:block_property:%3E%40yn:27df8a65-4729-4600-bfc1-
+  粗利目標	<number>	
+  関連日報	<relation>	→相手DS=8f7489a5-47fe-4e0a-833b-ee21ab033ad5
+  売上達成率（申請ベース）	<formula>	⚙自動(formula): if({{notion:block_property:%3Ao%3F%5D:27df8a65-4729-4600-bfc
+  実績仕入れ件数（評価DB）	<rollup>	⚙自動(rollup): rel=関連営業評価 prop=仕入れ件数 fn=sum
+  実績専売許可件数（評価DB）	<rollup>	⚙自動(rollup): rel=関連営業評価 prop=専売許可件数 fn=sum
+  マネージャーコメント	<rich_text>	
+  重点テーマ	<rich_text>	
+  粗利率目標	<number>	
+  申請カード	<formula>	⚙自動(formula): if(
+  empty({{notion:block_property:RtI~:27df8a65-4729-4600-
+  商談表示	<formula>	⚙自動(formula): {{notion:block_property:WSDJ:27df8a65-4729-4600-bfc1-59bb1c4
+  対象営業ユーザー	<people>	
+  進捗ステータス	<formula>	⚙自動(formula): if({{notion:block_property:IVvy:27df8a65-4729-4600-bfc1-59bb
+  実績粗利額（自動）	<rollup>	⚙自動(rollup): rel=関連成約 prop=粗利額 fn=sum
+  専売許可件数目標	<number>	
+  1on1セッション	<relation>	→相手DS=c8b3e755-ddf8-438f-b3fb-da6c5b38352a
+  直近1on1日（自動）	<rollup>	⚙自動(rollup): rel=1on1セッション prop=実施日 fn=latest_date
+  仕入れ金額目標	<number>	
+  案件化達成率（申請ベース）	<formula>	⚙自動(formula): if({{notion:block_property:O%40~%7C:27df8a65-4729-4600-bfc1-
+  案件化件数目標	<number>	
+  商談達成率（申請ベース）	<formula>	⚙自動(formula): if({{notion:block_property:hv%40%3B:27df8a65-4729-4600-bfc1-
+  申請チェック（自動）	<formula>	⚙自動(formula): if(empty({{notion:block_property:RtI~:27df8a65-4729-4600-bfc
+  担当マネージャー	<people>	
+  対象期間	<date>	
+  実績高圧仕入れ件数（評価DB）	<rollup>	⚙自動(rollup): rel=関連営業評価 prop=高圧仕入れ件数 fn=sum
+  低圧仕入れ件数目標	<number>	
+  実績商談件数（評価DB）	<rollup>	⚙自動(rollup): rel=関連営業評価 prop=商談件数（自動） fn=sum
+  売上実績表示	<formula>	⚙自動(formula): {{notion:block_property:p%3BkE:27df8a65-4729-4600-bfc1-59bb1
+  営業スコア表示	<formula>	⚙自動(formula): {{notion:block_property:lI%5Dy:27df8a65-4729-4600-bfc1-59bb1
+  粗利実績表示	<formula>	⚙自動(formula): {{notion:block_property:%3BdIw:27df8a65-4729-4600-bfc1-59bb1
+  会議決定日	<date>	
+  1on1実施日一覧（自動）	<rollup>	⚙自動(rollup): rel=1on1セッション prop=実施日 fn=show_unique
+  ノルマ申請	<button>	
+  重複チェックキー	<formula>	⚙自動(formula): if(empty({{notion:block_property:RtI~:27df8a65-4729-4600-bfc
+  成約件数表示	<formula>	⚙自動(formula): {{notion:block_property:%3BjQG:27df8a65-4729-4600-bfc1-59bb1
+  次のタスク	<rich_text>	
+  営業本人コメント	<rich_text>	
+  評価タイプ	<select>	候補=[販売, 仕入れ, 両方]
+  日報進捗率（参考）	<formula>	⚙自動(formula): if({{notion:block_property:%3E%40yn:27df8a65-4729-4600-bfc1-
+  日報件数	<rollup>	⚙自動(rollup): rel=関連日報 prop=タイトル fn=count
+  商談件数目標	<number>	
+  実績仕入れ金額（評価DB）	<rollup>	⚙自動(rollup): rel=関連営業評価 prop=仕入れ金額 fn=sum
+  上司指示	<rich_text>	
+  AI月次サマリー	<rich_text>	
+  総合評価スコア（評価DB）	<rollup>	⚙自動(rollup): rel=関連営業評価 prop=総合スコア（自動） fn=average
+  月度	<formula>	⚙自動(formula): if(empty({{notion:block_property:RtI~:27df8a65-4729-4600-bfc
+  月次成約率（参考）	<formula>	⚙自動(formula): if({{notion:block_property:WSDJ:27df8a65-4729-4600-bfc1-59bb
+  歩合見込額（自動）	<rollup>	⚙自動(rollup): rel=関連成約 prop=歩合見込額 fn=sum
+  仕入れ案件化重要度	<select>	候補=[標準, 重視, 最重視]
+  仕入れ金額達成率（申請ベース）	<formula>	⚙自動(formula): if({{notion:block_property:N_U%7B:27df8a65-4729-4600-bfc1-59
+  高圧仕入れ件数目標	<number>	
+  実績売上額（評価DB）	<rollup>	⚙自動(rollup): rel=関連営業評価 prop=実績売上額（自動） fn=sum
+  関連営業評価	<relation>	→相手DS=e67ec5d5-90d3-4118-9788-976a6f5c94a1
+  成約件数目標	<number>	
+  専売許可達成率（申請ベース）	<formula>	⚙自動(formula): if({{notion:block_property:JW_Y:27df8a65-4729-4600-bfc1-59bb
+  成約件数（自動）	<rollup>	⚙自動(rollup): rel=関連成約 prop=成約名 fn=count
+  実績低圧仕入れ件数（評価DB）	<rollup>	⚙自動(rollup): rel=関連営業評価 prop=低圧仕入れ件数 fn=sum
+  取り組み方針	<rich_text>	
+  申請ID	<unique_id>	
+  仕入れ件数目標	<number>	
+  成約達成率（申請ベース）	<formula>	⚙自動(formula): if({{notion:block_property:p%5DrZ:27df8a65-4729-4600-bfc1-59
+  何月度	<rich_text>	
+  AI処理状態	<select>	候補=[処理中, 処理済, 要確認]
+  申請ステータス	<select>	候補=[下書き, 申請中, 差戻し, 承認, 運用中, 完了]
+  関連成約	<relation>	→相手DS=8d5a506b-59b8-4e50-bc77-d5412774048d
+  マネージャー承認日時	<date>	
+  仕入れ件数達成率（申請ベース）	<formula>	⚙自動(formula): if({{notion:block_property:u%5EMN:27df8a65-4729-4600-bfc1-59
+  実績案件化件数（評価DB）	<rollup>	⚙自動(rollup): rel=関連営業評価 prop=案件化件数 fn=sum
+  申請区分	<select>	候補=[月次, 四半期]
+  申請名	<title>	
+
+========== 月次評価EVAL  [cf6fc870-9c7b-4f98-a108-64a94d60c02d] ==========
+  案件化数	<number>	
+  対象営業ユーザー	<people>	
+  成長ポイント	<rich_text>	
+  粗利目標額	<number>	
+  歩合確定額	<number>	
+  総合スコア	<number>	
+  案件化率	<number>	
+  評価ステータス	<select>	候補=[集計中, 確定]
+  粗利達成率	<number>	
+  発言ログ数	<number>	
+  評価PDF	<files>	
+  次月テーマ	<rich_text>	
+  人見さんメモ本文	<rich_text>	
+  定性スコア	<number>	
+  定量スコア	<number>	
+  ナレッジ採用数	<number>	
+  AI活用pt	<number>	
+  日報提出数	<number>	
+  歩合見込額	<number>	
+  対象月	<rich_text>	
+  実績粗利額	<number>	
+  日報継続率	<number>	
+  商談数	<number>	
+  改善ポイント	<rich_text>	
+  顧客接点数	<number>	
+  仕入れ件数	<number>	
+  マネージャーコメント	<rich_text>	
+  締め日時	<date>	
+  成約数	<number>	
+  営業貢献数	<number>	
+  月次評価を取得	<button>	
+  本人コメント	<rich_text>	
+  評価ランク	<select>	候補=[S, A, B, C, D]
+  月次評価PDF を生成	<button>	
+  専売許可数	<number>	
+  上司確認事項	<rich_text>	
+  評価名	<title>	
