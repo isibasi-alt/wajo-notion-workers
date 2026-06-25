@@ -143,10 +143,11 @@ async function appendResult(
 // ── 1体の汎用ランナー：読む→LLM→末尾に追記 ────────────────────────────────
 async function runAgent(
 	notion: NotionLike,
-	pageId: string,
+	readPageId: string,
+	writePageId: string,
 	opts: { heading: string; system: string; model: string; instruction: string },
 ): Promise<string> {
-	const pageText = await readPageText(notion, pageId);
+	const pageText = await readPageText(notion, readPageId);
 	const user = [
 		opts.instruction,
 		"",
@@ -156,34 +157,34 @@ async function runAgent(
 		"記憶や推測でなく、上のページ内容を根拠にすること。前段ブロックの固有語・数値を引いて応答に含めよ。",
 	].join("\n");
 	const result = await callClaude({ system: opts.system, user, model: opts.model, maxTokens: 4096 });
-	await appendResult(notion, pageId, opts.heading, result);
+	await appendResult(notion, writePageId, opts.heading, result);
 	return result;
 }
 
 // ── オーケストレーター：A→B→C→D→C再→D再→E→F を順に自動連鎖 ───────────────
-export async function runHitomiEvalChain(notion: NotionLike, pageId: string): Promise<void> {
-	console.log(`[hitomi-chain] start: ${pageId}`);
+export async function runHitomiEvalChain(notion: NotionLike, workPageId: string, finalPageId: string): Promise<void> {
+	console.log(`[hitomi-chain] start: work=${workPageId} final=${finalPageId}`);
 
 	// data-layer：A の前段は index.ts の gatherHitomiSourceData（webhookハンドラ内）で実行済み。
 	//   収集範囲（検証済み実プロパティのみ）＝【定量】営業パフォーマンス(月次成績:実績粗利/粗利目標/達成率/関連成約件数)
 	//   ＋【活動】活動ログ(関連営業パフォーマンス逆引きの件数)。
 	//   未配線（次段で各DBの人×月実フィルタ確認後に配線）＝ノルマ申請・日報・会議発言・1on1・ツール・ナレッジ。
 
-	await runAgent(notion, pageId, {
+	await runAgent(notion, workPageId, workPageId, {
 		heading: "データ点検君（A）の結果",
 		system: PROMPT_A,
 		model: MODEL_SONNET,
 		instruction: "あなたはデータ点検君（A）。入口ゲートとして当月データが評価実行に足るかを判定し、結果を出力せよ。",
 	});
 
-	await runAgent(notion, pageId, {
+	await runAgent(notion, workPageId, workPageId, {
 		heading: "評価裏付け君（B）の結果",
 		system: PROMPT_B,
 		model: MODEL_SONNET,
 		instruction: "あなたは評価裏付け君（B）。Aの結果を読み、各評価軸の事実・引用・出典を抽出せよ。",
 	});
 
-	await runAgent(notion, pageId, {
+	await runAgent(notion, workPageId, workPageId, {
 		heading: "採点君（C）の結果",
 		system: PROMPT_C,
 		model: MODEL_SONNET,
@@ -192,7 +193,7 @@ export async function runHitomiEvalChain(notion: NotionLike, pageId: string): Pr
 			"案件化率は暫定保留（全ソース分母を定義中。Bの問い合わせのみ40%は不採用・母数から除外）。",
 	});
 
-	await runAgent(notion, pageId, {
+	await runAgent(notion, workPageId, workPageId, {
 		heading: "ツッコミ君（D）の結果",
 		system: PROMPT_D,
 		model: MODEL_OPUS,
@@ -200,7 +201,7 @@ export async function runHitomiEvalChain(notion: NotionLike, pageId: string): Pr
 	});
 
 	// C↔D 往復（最低1往復）。
-	await runAgent(notion, pageId, {
+	await runAgent(notion, workPageId, workPageId, {
 		heading: "採点君（C）の再採点",
 		system: PROMPT_C,
 		model: MODEL_SONNET,
@@ -209,7 +210,7 @@ export async function runHitomiEvalChain(notion: NotionLike, pageId: string): Pr
 			"見出し『採点君（C）の再採点』で出力せよ。案件化率は引き続き暫定保留。",
 	});
 
-	await runAgent(notion, pageId, {
+	await runAgent(notion, workPageId, workPageId, {
 		heading: "ツッコミ君（D）の再確認",
 		system: PROMPT_D,
 		model: MODEL_OPUS,
@@ -218,14 +219,14 @@ export async function runHitomiEvalChain(notion: NotionLike, pageId: string): Pr
 			"往復は原則1巡で締め、未決着は『継続論点』としてE・Fへ申し送れ。",
 	});
 
-	await runAgent(notion, pageId, {
+	await runAgent(notion, workPageId, workPageId, {
 		heading: "兆し発見君（E）の結果",
 		system: PROMPT_E,
 		model: MODEL_OPUS,
 		instruction: "あなたは兆し発見君（E）。全往復を読み、スコアに出ない変化・兆候を最大3シグナル、根拠付きで観測せよ。",
 	});
 
-	await runAgent(notion, pageId, {
+	await runAgent(notion, workPageId, finalPageId, {
 		heading: "月次評価（人見）",
 		system: PROMPT_F,
 		model: MODEL_SONNET,
@@ -235,7 +236,7 @@ export async function runHitomiEvalChain(notion: NotionLike, pageId: string): Pr
 			"案件の具体や『あの場でより良かった一言』は第2・3・8欄の解釈に簡潔に収める。根拠の無い欄は『データ不足』と明記し創作しない。",
 	});
 
-	console.log(`[hitomi-chain] done: ${pageId}`);
+	console.log(`[hitomi-chain] done: ${finalPageId}`);
 
 	// TODO(pdf): F の統合結果を既存 buildMonthlyEvalPdfBytes / 月次評価PDF Webhook に渡し、
 	//   月次報告書PDFを生成してページの「評価PDF」プロパティへ添付する。

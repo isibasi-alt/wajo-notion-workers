@@ -4977,6 +4977,7 @@ worker.webhook("attachMonthlyEvalPdfWebhook", {
 async function gatherHitomiSourceData(
 	notion: NotionClient,
 	evalPageId: string,
+	materialPageId: string,
 	now: Date,
 ): Promise<void> {
 	const evalPage = (await notion.pages.retrieve({ page_id: evalPageId })) as Page;
@@ -5158,7 +5159,7 @@ async function gatherHitomiSourceData(
 			paragraph: { rich_text: [{ type: "text", text: { content: body.slice(i, i + 1800) || " " } }] },
 		});
 	}
-	await appendBlocksIfAny(notion, evalPageId, children);
+	await appendBlocksIfAny(notion, materialPageId, children);
 }
 
 worker.webhook("processHitomiEvalChainWebhook", {
@@ -5176,8 +5177,10 @@ worker.webhook("processHitomiEvalChainWebhook", {
 				);
 			}
 			// A の前にデータ層を実行：元ソースDBから「人×月」の材料をページへ追記する。
-			await gatherHitomiSourceData(notion as unknown as NotionClient, evalPageId, new Date());
-			await runHitomiEvalChain(notion as never, evalPageId);
+			const workPage = await (notion as unknown as NotionClient).pages.create({ parent: { page_id: evalPageId }, properties: { title: [{ type: "text", text: { content: "🗂 評価ワークシート（A〜E検討・材料）" } }] } });
+			const workId = workPage.id;
+			await gatherHitomiSourceData(notion as unknown as NotionClient, evalPageId, workId, new Date());
+			await runHitomiEvalChain(notion as never, workId, evalPageId);
 		}
 	},
 });
