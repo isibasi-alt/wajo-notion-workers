@@ -6647,7 +6647,7 @@ function calculateBrokerPrimaryAssessment(ocr: BusinessCardOcr): BrokerPrimaryAs
 			routing: "later",
 			scoreReasons: [],
 			stopReasons,
-			nextAction: "要追加調査",
+			nextAction: stopReasons.some((reason) => reason.includes("個人リスク")) ? "要管理者確認" : "要追加調査",
 		};
 	}
 
@@ -6745,7 +6745,7 @@ function businessCardOcrFromCardInfo(card: CardInfo): BusinessCardOcr {
 		text(card.page.properties?.["メモ"]),
 		text(card.page.properties?.["企業連携メモ"]),
 		text(card.page.properties?.["名刺AI処理メモ"]),
-	].find((value) => value.trim()) ?? "";
+	].map((value) => value.trim()).filter(Boolean).join("\n");
 	return {
 		氏名: card.name,
 		会社名: card.companyName,

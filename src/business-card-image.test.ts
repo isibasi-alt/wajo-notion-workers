@@ -300,6 +300,30 @@ async function main() {
 		assert.deepEqual(props["ブローカー一次判定結果"], { select: { name: "broker" } });
 	}
 
+	// 個人リスク系ワード単独でも要管理者確認へ逃がす
+	{
+		const props = advisor(
+			{
+				氏名: "単独 風評",
+				会社名: "紹介事務所",
+				役職: "",
+				部署: "",
+				電話: "",
+				メール: "",
+				住所: "",
+				メモ: "反社という風評あり。",
+			},
+			undefined,
+			"",
+			"2026-06-11",
+		);
+		const json = JSON.stringify(props);
+		assert.equal("ブローカー一次判定スコア" in props, false);
+		assert.deepEqual(props["ブローカー一次判定結果"], { select: { name: "later" } });
+		assert.deepEqual(props["次アクション"], { select: { name: "要管理者確認" } });
+		assert.ok(json.includes("broker採点とは別に管理者確認"));
+	}
+
 	// 個人リスク系ワードはbrokerスコアとは別枠で管理者確認へ逃がす
 	{
 		const props = advisor(

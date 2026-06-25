@@ -182,6 +182,7 @@ function makeNotionForNewCardCase(params: {
 	cardName?: string;
 	cardMemo?: string;
 	existingAdvisorProperties?: PageProperties;
+	cardAiMemo?: string;
 	}) {
 	const card = {
 		id: "card-1",
@@ -193,6 +194,7 @@ function makeNotionForNewCardCase(params: {
 			住所: richTextProp(params.cardAddress ?? "大阪府大阪市中央区"),
 			役職: richTextProp(params.cardRole ?? "営業室長"),
 			メモ: richTextProp(params.cardMemo ?? ""),
+			名刺AI処理メモ: richTextProp(params.cardAiMemo ?? ""),
 			名刺画像: { type: "files", files: [] },
 		},
 	};
@@ -637,6 +639,32 @@ async function main() {
 	assert.deepEqual(advisorStrongCreate.properties["ブローカー一次判定スコア"], { number: 70 });
 	assert.equal(selectName(advisorStrongCreate.properties["ブローカー一次判定結果"]), "broker");
 	assert.equal(selectName(advisorStrongCreate.properties["次アクション"]), "要追加調査");
+
+	const advisorJoinedMemoCase = makeNotionForNewCardCase({
+		cardCompanyName: "紹介パートナー株式会社",
+		cardName: "結合 メモ",
+		cardRole: "Producer",
+		cardEmail: "joined@example.co.jp",
+		cardMemo: "薄いメモだけ。",
+		cardAiMemo: "第三者案件を紹介する。投資家の知り合いがあり、紹介契約でつなぐだけ。発注権限なし。",
+	});
+	const advisorJoinedMemoResult = await withoutAiKeys(() =>
+		processBusinessCardForTest(
+			{
+				pageId: "card-1",
+				dryRun: false,
+				routing: "broker",
+				engagementIntent: "active",
+				registerExternalAdvisor: true,
+			},
+			advisorJoinedMemoCase.notion,
+		),
+	);
+	assert.equal(advisorJoinedMemoResult.action, "external-advisor-registered");
+	const advisorJoinedMemoCreate = advisorJoinedMemoCase.creates[0]!;
+	assert.deepEqual(advisorJoinedMemoCreate.properties["ブローカー一次判定スコア"], { number: 80 });
+	assert.equal(selectName(advisorJoinedMemoCreate.properties["ブローカー一次判定結果"]), "broker");
+	assert.match(selectName(advisorJoinedMemoCreate.properties["判定根拠メモ"]), /紹介契約/);
 
 	const advisorExistingCase = makeNotionForNewCardCase({
 		cardCompanyName: "紹介パートナー株式会社",
