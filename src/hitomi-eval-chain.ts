@@ -39,6 +39,7 @@ const MODEL_OPUS = "claude-opus-4-8";
 
 // ── LLM 呼び出し（Anthropic Messages API）──────────────────────────────────
 // index.ts の callMultiAgentCommanderClaude と同等。ここでは self-contained に。
+let callClaudeCallCount = 0;
 async function callClaude(input: {
 	system: string;
 	user: string;
@@ -65,13 +66,15 @@ async function callClaude(input: {
 		const body = await res.text().catch(() => "");
 		throw new Error(`Anthropic API ${res.status}: ${body.slice(0, 500)}`);
 	}
-	const json = (await res.json()) as { content?: Array<{ type?: string; text?: string }> };
+	const json = (await res.json()) as { id?: string; usage?: { input_tokens?: number; output_tokens?: number }; content?: Array<{ type?: string; text?: string }> };
 	const text = (json.content ?? [])
 		.filter((c) => c.type === "text" && typeof c.text === "string")
 		.map((c) => c.text)
 		.join("\n")
 		.trim();
 	if (!text) throw new Error("Anthropic 応答にテキストがありません。");
+	callClaudeCallCount += 1;
+	console.log(`[callClaude #${callClaudeCallCount}] model=${input.model} apiMsgId=${json.id} in=${json.usage?.input_tokens}tok out=${json.usage?.output_tokens}tok head="${text.slice(0, 46).replace(/\n/g, " ")}"`);
 	return text;
 }
 
