@@ -4878,10 +4878,8 @@ registerMeetingQuickStartWebhook(
 	"WAJO ミーティングを始めるWebhook",
 	"ミーティング",
 );
-registerDealQuickStartWebhook(
-	"quickStartDealMeetingWebhook",
-	"WAJO 商談を作るWebhook",
-);
+// Capability上限(100件)を超えるため、商談クイック起動Webhookの重複エイリアスは登録しない。
+// 残す正本: quickStartDealWebhook。外す旧/曖昧エイリアス: quickStartDealMeetingWebhook。
 registerDealQuickStartWebhook(
 	"quickStartDealWebhook",
 	"WAJO 商談を作るWebhook",
