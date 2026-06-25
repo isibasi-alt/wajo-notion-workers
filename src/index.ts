@@ -5014,10 +5014,9 @@ async function gatherHitomiSourceData(
 		} else {
 			const pp = perfPage.properties ?? {};
 			const gross = numberValue(pp["実績粗利額（自動）"]);
-			const target =
-				numberValue(pp["粗利目標"]) ??
-				numberValue(pp["粗利目標（申請DB）"]) ??
-				numberValue(pp["目標粗利額"]);
+			// 粗利目標の実プロパティは「粗利目標（申請DB）」。
+			// （probe-hitomi-datalayer.mjs でライブ照合：「粗利目標」「目標粗利額」は当DBに非存在＝使わない）
+			const target = numberValue(pp["粗利目標（申請DB）"]);
 			const closings = relationIdsFromProperty(pp["関連成約"]).length;
 			lines.push(`月次成績ページID: ${perfPage.id}`);
 			lines.push(`実績粗利額（自動）: ${gross === null ? "（空＝保留候補）" : formatYen(gross)}`);
