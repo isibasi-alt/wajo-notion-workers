@@ -73,66 +73,84 @@ async function main() {
 		engagementIntent: "save-only",
 		deepResearch: false,
 		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: false,
 	});
 	assert.deepEqual(runOptions({ 営業判断: "今回は流す" }), {
 		routing: "company",
 		engagementIntent: "save-only",
 		deepResearch: false,
 		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: false,
 	});
 	assert.deepEqual(runOptions({ engagementIntent: "本気で追う" }), {
 		routing: "company",
 		engagementIntent: "active",
 		deepResearch: true,
 		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: false,
 	});
 	assert.deepEqual(runOptions({ engagementIntent: "名刺だけ保存", deepResearch: true }), {
 		routing: "company",
 		engagementIntent: "save-only",
 		deepResearch: false,
 		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: false,
 	});
 	assert.deepEqual(runOptions({ routing: "broker", engagementIntent: "active" }), {
 		routing: "broker",
 		engagementIntent: "active",
 		deepResearch: false,
 		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: false,
 	});
 	assert.deepEqual(runOptions({ routing: "later", engagementIntent: "active" }), {
 		routing: "later",
 		engagementIntent: "active",
 		deepResearch: false,
 		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: false,
 	});
 	assert.deepEqual(runOptions({ routing: "company", engagementIntent: "save-only" }), {
 		routing: "company",
 		engagementIntent: "save-only",
 		deepResearch: false,
 		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: false,
 	});
 	assert.deepEqual(runOptions(JSON.stringify({ routing: "broker", engagementIntent: "active" })), {
 		routing: "broker",
 		engagementIntent: "active",
 		deepResearch: false,
 		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: false,
 	});
 	assert.deepEqual(runOptions(JSON.stringify({ routing: "later", engagementIntent: "active" })), {
 		routing: "later",
 		engagementIntent: "active",
 		deepResearch: false,
 		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: false,
 	});
 	assert.deepEqual(runOptions(JSON.stringify({ routing: "company", engagementIntent: "save-only" })), {
 		routing: "company",
 		engagementIntent: "save-only",
 		deepResearch: false,
 		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: false,
+	});
+	assert.deepEqual(runOptions({ routing: "broker", engagementIntent: "active", registerExternalAdvisor: true }), {
+		routing: "broker",
+		engagementIntent: "active",
+		deepResearch: false,
+		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: true,
 	});
 	assert.deepEqual(runOptions({}), {
 		routing: "company",
 		engagementIntent: "active",
 		deepResearch: true,
 		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: false,
 	});
 	assert.deepEqual(byIdRunOptions(), {
 		deepResearch: true,

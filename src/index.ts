@@ -126,6 +126,9 @@ const MONTHLY_QUOTA_DATA_SOURCE_ID =
 const TEAM_TRACKER_DATA_SOURCE_ID =
 	process.env.TEAM_TRACKER_DATA_SOURCE_ID ??
 	"3b44d017-81e7-82c9-9f2d-87004c53d722";
+const STAFF_MASTER_DATA_SOURCE_ID =
+	process.env.STAFF_MASTER_DATA_SOURCE_ID ??
+	"f770bee6-fb52-46db-adc2-9bcca9e406e8";
 const NEWS_DATA_SOURCE_ID =
 	process.env.NEWS_DATA_SOURCE_ID ??
 	"15273928-a119-4b42-8801-185f54e55c58";
@@ -1792,6 +1795,8 @@ type CardInput = {
 	// 後方互換用。名刺1枚プロジェクト第1段階の入口では商談準備レポートを自動生成しない。
 	// 実環境の三段階連携を有効化するためのフラグ。テストやdry-runでは false が無難。
 	autoCreateMeetingPrepReport?: boolean;
+	// 明示されたときだけ、企業マスター高密度化ではなく社外顧問DB登録ラインへ送る。
+	registerExternalAdvisor?: boolean;
 };
 
 type CardResult = {
@@ -1801,6 +1806,7 @@ type CardResult = {
 		| "created-company"
 		| "duplicate-hold"
 		| "needs-review"
+		| "external-advisor-registered"
 		| "skipped"
 		| "dry-run";
 	companyId: string | null;
@@ -3280,6 +3286,9 @@ worker.tool("processBusinessCardById", {
 		pageId: j.string().describe("名刺管理DBのページID"),
 		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
 		force: j.boolean().describe("trueなら処理済みステータスを無視して再実行します"),
+		registerExternalAdvisor: j
+			.boolean()
+			.describe("trueなら企業連携ではなく社外顧問DB登録ラインへ送ります。新規capabilityを増やさないための明示フラグ。"),
 		autoCreateMeetingPrepReport: j
 			.boolean()
 			.describe("後方互換用。第1段階の名刺入口では指定されても商談前準備レポートを自動作成しません。"),
@@ -3291,15 +3300,18 @@ worker.tool("processBusinessCardById", {
 		companyName: j.string().nullable(),
 		message: j.string(),
 	}),
-	execute: async ({ pageId, dryRun, force = false }, { notion }) => {
+	execute: async ({ pageId, dryRun, force = false, registerExternalAdvisor = false }, { notion }) => {
 		const runOptions = readBusinessCardByIdRunOptions();
 		return processBusinessCard(
 			{
 				pageId,
 				dryRun,
-				force,
+				force: registerExternalAdvisor ? true : force,
+				routing: registerExternalAdvisor ? "broker" : undefined,
+				engagementIntent: registerExternalAdvisor ? "active" : undefined,
+				registerExternalAdvisor,
 				autoCreateMeetingPrepReport: runOptions.autoCreateMeetingPrepReport,
-				deepResearch: runOptions.deepResearch,
+				deepResearch: registerExternalAdvisor ? false : runOptions.deepResearch,
 			},
 			notion as unknown as NotionClient,
 		);
@@ -3340,6 +3352,7 @@ worker.tool("processPendingBusinessCards", {
 						dryRun,
 						deepResearch: runOptions.deepResearch,
 						autoCreateMeetingPrepReport: runOptions.autoCreateMeetingPrepReport,
+						registerExternalAdvisor: runOptions.registerExternalAdvisor,
 					},
 					notion as unknown as NotionClient,
 				),
@@ -4469,6 +4482,9 @@ worker.webhook("processBusinessCardWebhook", {
 			const body = coerceWebhookBodyRecord(event.body);
 			const runOptions = readBusinessCardRunOptions(body);
 			const pageId = readBusinessCardWebhookPageId(body);
+			if (runOptions.registerExternalAdvisor && !pageId) {
+				throw new Error("registerExternalAdvisor=true は単一の pageId 指定時だけ使用できます。");
+			}
 			const limit =
 				typeof body.limit === "number"
 					? Math.max(1, Math.min(body.limit, MAX_PENDING_LIMIT))
@@ -5866,6 +5882,26 @@ async function processBusinessCard(
 		};
 	}
 
+	if (routing === "broker" && input.registerExternalAdvisor) {
+		if (input.dryRun) {
+			return {
+				pageId: input.pageId,
+				action: "dry-run",
+				companyId: null,
+				companyName: null,
+				message: "dry-run: 社外顧問DB登録ライン。Notionへの作成・更新は行いません。",
+			};
+		}
+		const advisor = await registerExternalAdvisorFromBusinessCard(notion, card);
+		return {
+			pageId: input.pageId,
+			action: "external-advisor-registered",
+			companyId: null,
+			companyName: null,
+			message: `社外顧問DBへ${advisor.created ? "新規登録" : "既存更新"}しました。advisorPageId=${advisor.page.id}`,
+		};
+	}
+
 	if (routing === "broker") {
 		const memo = buildBrokerRegistrationHoldMemo(card, engagementIntent);
 		if (!input.dryRun) {
@@ -6193,6 +6229,7 @@ function readBusinessCardRunOptions(body: unknown): {
 	engagementIntent: "active" | "save-only";
 	deepResearch: boolean;
 	autoCreateMeetingPrepReport: boolean;
+	registerExternalAdvisor: boolean;
 } {
 	const record = coerceWebhookBodyRecord(body);
 	const routing = normalizeCardRouting(
@@ -6214,12 +6251,20 @@ function readBusinessCardRunOptions(body: unknown): {
 			record["熱量"],
 		),
 	);
+	const registerExternalAdvisor = booleanFlag(
+		record.registerExternalAdvisor,
+		record.registerAdvisor,
+		record.registerBroker,
+		record["社外顧問登録"],
+		record["ブローカー登録"],
+	);
 	if (engagement === "save-only" || routing !== "company") {
 		return {
 			routing,
 			engagementIntent: engagement,
 			deepResearch: false,
 			autoCreateMeetingPrepReport: false,
+			registerExternalAdvisor,
 		};
 	}
 	const deepResearch =
@@ -6229,7 +6274,18 @@ function readBusinessCardRunOptions(body: unknown): {
 		engagementIntent: engagement,
 		deepResearch,
 		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor,
 	};
+}
+
+function booleanFlag(...values: unknown[]): boolean {
+	return values.some((value) => {
+		if (value === true) return true;
+		if (typeof value === "number") return value === 1;
+		if (typeof value !== "string") return false;
+		const normalized = value.trim().toLowerCase();
+		return ["true", "1", "yes", "y", "on", "登録", "する", "はい"].includes(normalized);
+	});
 }
 
 function readBusinessCardWebhookPageId(body: unknown): string | undefined {
@@ -6365,22 +6421,33 @@ function buildAdvisorProperties(
 	assigneeUserId: string | undefined,
 	cardPageUrl: string,
 	today: string,
+	cardPageId?: string,
 ): Record<string, unknown> {
 	const memoLines = [
-		`名刺パシャ経由で登録(${today})。`,
+		`名刺パシャ/社外顧問登録ライン経由で登録(${today})。`,
 		ocr.会社名 ? `所属(名刺より): ${ocr.会社名}` : "",
 		ocr.部署 || ocr.役職
 			? `役職: ${[ocr.部署, ocr.役職].filter(Boolean).join(" ")}`
 			: "",
-		cardPageUrl ? `名刺: ${cardPageUrl}` : "",
+		cardPageUrl ? `名刺URL: ${cardPageUrl}` : "",
+		cardPageId ? `名刺ページID: ${cardPageId}` : "",
 	].filter(Boolean);
 	const properties: Record<string, unknown> = {
 		顧問名: title(ocr.氏名 || ocr.会社名 || "名刺(氏名読み取り不可)"),
 		ステータス: select("関係構築中"),
 		信頼度: select("要確認"),
+		関係深度: select("不明"),
 		初回接点日: { date: { start: today } },
 		紹介実績メモ: richText(memoLines.join("\n")),
+		ブローカー一次判定スコア: { number: 60 },
+		ブローカー一次判定結果: select("broker"),
+		候補本人一致度: select("中"),
+		リスク兆候: select("要確認"),
+		次アクション: select("要追加調査"),
+		判定根拠メモ: richText(buildExternalAdvisorAssessmentMemo(ocr, cardPageId)),
+		注意点: richText("個人に対する反社判定は未実施。公開情報上のリスク兆候と本人一致度は、必要時に別途スクリーニングする。"),
 	};
+	if (cardPageId) properties["関連名刺"] = relation(cardPageId);
 	if (ocr.電話) properties["電話番号"] = { phone_number: ocr.電話 };
 	if (ocr.メール) properties["連絡先メール"] = { email: ocr.メール };
 	if (assigneeUserId) {
@@ -6392,12 +6459,100 @@ function buildAdvisorProperties(
 }
 export { buildAdvisorProperties as buildAdvisorPropertiesForTest };
 
+function buildExternalAdvisorAssessmentMemo(
+	ocr: BusinessCardOcr,
+	cardPageId?: string,
+): string {
+	return [
+		"【登録理由】名刺起点で社外顧問・ブローカーとして扱うため、社外顧問DBへ登録。",
+		"【一次判定】初期登録時は broker / 60点 として記録。詳細な60点判定は別ロジックで後続確認。",
+		"【本人一致度】名刺本人を登録候補として扱う。外部ネガティブ情報との本人一致確認は未実施。",
+		"【リスク兆候】反社判定は行わない。公開情報上のリスク兆候は未確認のため、必要に応じて追加調査。",
+		"【次アクション】要追加調査。営業上の扱い、紹介可能領域、本人/所属確認を人が確認する。",
+		cardPageId ? `【元名刺】${cardPageId}` : "",
+		ocr.会社名 ? `【所属候補】${ocr.会社名}` : "",
+		ocr.役職 || ocr.部署 ? `【役職】${[ocr.部署, ocr.役職].filter(Boolean).join(" ")}` : "",
+	].filter(Boolean).join("\n");
+}
+
+async function linkAdvisorToBusinessCard(
+	notion: NotionClient,
+	advisorPage: Page,
+	cardPageId: string,
+): Promise<void> {
+	const current = relationIdsFromProperty(advisorPage.properties?.["関連名刺"]);
+	const next = uniqueIds([...current, cardPageId]);
+	await notion.pages.update({
+		page_id: advisorPage.id,
+		properties: {
+			関連名刺: relationIds(next),
+		},
+	});
+}
+
+async function linkBusinessCardToAdvisor(
+	notion: NotionClient,
+	cardPage: Page,
+	advisorPageId: string,
+	memo: string,
+): Promise<void> {
+	const current = relationIdsFromProperty(cardPage.properties?.["関連社外顧問"]);
+	const next = uniqueIds([...current, advisorPageId]);
+	await notion.pages.update({
+		page_id: cardPage.id,
+		properties: {
+			関連社外顧問: relationIds(next),
+			企業連携ステータス: select("対象外"),
+			Webhook引き継ぎステータス: select("引き継ぎ済"),
+			名刺AI処理状態: select("対象外"),
+			企業連携メモ: richText(memo),
+			名刺AI処理メモ: richText(memo),
+		},
+	});
+}
+
+function businessCardOcrFromCardInfo(card: CardInfo): BusinessCardOcr {
+	return {
+		氏名: card.name,
+		会社名: card.companyName,
+		役職: card.role,
+		部署: "",
+		電話: card.phone,
+		メール: card.email,
+		住所: card.address,
+		メモ: "",
+	};
+}
+
+async function registerExternalAdvisorFromBusinessCard(
+	notion: NotionClient,
+	card: CardInfo,
+): Promise<{ page: Page; created: boolean }> {
+	const advisor = await createAdvisorFromCard(
+		notion,
+		businessCardOcrFromCardInfo(card),
+		undefined,
+		typeof card.page.url === "string" ? card.page.url : "",
+		card.page.id,
+	);
+	const memo = [
+		`【社外顧問DB登録】${advisor.created ? "新規登録" : "既存ページへ紐づけ更新"}`,
+		`【社外顧問ページ】${advisor.page.id}`,
+		`【元名刺】${card.page.id}`,
+		"【企業マスター高密度化】routing=broker のため対象外。企業作成・外部調査・商談準備レポート自動作成は行わない。",
+		"【注意】個人に対する反社判定は行っていない。必要時は本人一致度、リスク兆候、追加確認要否だけを別途確認する。",
+	].join("\n");
+	await linkBusinessCardToAdvisor(notion, card.page, advisor.page.id, memo);
+	return advisor;
+}
+
 // 同名の社外顧問が既にいれば再登録しない(名寄せは同名完全一致のみ=安全側)
 async function createAdvisorFromCard(
 	notion: NotionClient,
 	ocr: BusinessCardOcr,
 	assigneeUserId: string | undefined,
 	cardPageUrl: string,
+	cardPageId?: string,
 ): Promise<{ page: Page; created: boolean }> {
 	const name = ocr.氏名 || ocr.会社名 || "";
 	if (name) {
@@ -6407,7 +6562,10 @@ async function createAdvisorFromCard(
 			filter: { property: "顧問名", title: { equals: name } },
 		});
 		const existing = dup.results[0];
-		if (existing) return { page: existing, created: false };
+		if (existing) {
+			if (cardPageId) await linkAdvisorToBusinessCard(notion, existing, cardPageId);
+			return { page: existing, created: false };
+		}
 	}
 	const page = await notion.pages.create({
 		parent: { data_source_id: ADVISOR_DATA_SOURCE_ID },
@@ -6416,6 +6574,7 @@ async function createAdvisorFromCard(
 			assigneeUserId,
 			cardPageUrl,
 			todayIsoDateInTokyo(),
+			cardPageId,
 		),
 	});
 	return { page, created: true };
@@ -6593,26 +6752,33 @@ async function processBusinessCardImage(
 
 	// 5. 振り分け(入口ルール: 人がその場で選んだ結果を尊重し、AIは確実な作業だけやる)
 	if (routing === "broker") {
+		const advisor = await createAdvisorFromCard(
+			notion,
+			ocr,
+			input.assigneeUserId,
+			typeof page.url === "string" ? page.url : "",
+			page.id,
+		);
 		const memo = buildHoldMemo({
 			stopReason: "撮影時に本人が社外顧問・ブローカーを選択したため、企業マスター高密度化の対象外。",
 			scope: "名刺画像保存とOCR結果の反映まで。企業マスターDB連携と外部調査は未実行。",
 			humanDecision: "社外顧問DBや別プロジェクトで扱うかを大ちゃんが決める。",
 			restartCondition: "企業案件として扱う判断に変わった場合のみ、routing=company で再実行。",
 		});
-		await safeUpdateExistingProperties(notion, page, {
-			企業連携ステータス: { kind: "select", value: "対象外" },
-			Webhook引き継ぎステータス: { kind: "select", value: "要確認で停止" },
-			名刺AI処理状態: { kind: "select", value: "対象外" },
-			名刺AI処理メモ: {
-				kind: "text",
-				value: memo,
-			},
-		});
+		await linkBusinessCardToAdvisor(
+			notion,
+			page as Page,
+			advisor.page.id,
+			`${memo}
+
+【社外顧問DB登録】${advisor.created ? "新規登録" : "既存ページへ紐づけ更新"}
+【社外顧問ページ】${advisor.page.id}`,
+		);
 		return {
 			pageId: page.id,
 			action: "broker-routed",
 			companyId: null,
-			message: `名刺を保存し、企業マスター高密度化の対象外として停止しました(${ocr.氏名 || ocr.会社名})。`,
+			message: `名刺を保存し、社外顧問DBへ${advisor.created ? "新規登録" : "既存紐づけ"}しました(${ocr.氏名 || ocr.会社名})。`,
 		};
 	}
 	if (routing === "later") {

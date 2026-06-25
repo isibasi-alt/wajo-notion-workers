@@ -194,6 +194,7 @@ function makeNotionForNewCardCase(params: {
 		},
 	};
 
+	const creates: Array<{ parent?: Record<string, unknown>; properties: Record<string, unknown> }> = [];
 	const notion = {
 		__createdCompanies: new Map<string, { id: string; properties: Record<string, unknown> }>(),
 		dataSources: {
@@ -207,11 +208,14 @@ function makeNotionForNewCardCase(params: {
 			throw new Error(`unexpected retrieve: ${page_id}`);
 		},
 			create: async ({
+				parent,
 				properties,
 			}: {
+				parent?: Record<string, unknown>;
 				properties: Record<string, unknown>;
 			}) => {
-				const created = { id: "new-company-1", properties };
+				creates.push({ parent, properties });
+				const created = { id: `created-page-${creates.length}`, properties };
 				notion.__createdCompanies.set(created.id, created);
 				return created as { id: string; properties: Record<string, unknown> };
 			},
@@ -231,7 +235,7 @@ function makeNotionForNewCardCase(params: {
 		},
 	};
 
-		return { notion: wrapped, updates };
+		return { notion: wrapped, updates, creates };
 	}
 
 function makeNotionForCompanyResearchCase(overrides: PageProperties = {}) {
@@ -555,6 +559,63 @@ async function main() {
 		0,
 		"brokerのdryRunではNotionへ要確認メモを書き込まない",
 	);
+
+	const advisorRegistrationCase = makeNotionForNewCardCase({
+		cardCompanyName: "紹介パートナー株式会社",
+		cardName: "紹介 太郎",
+		cardRole: "社外顧問",
+		cardPhone: "090-1111-2222",
+		cardEmail: "advisor@example.com",
+	});
+	const advisorRegistrationResult = await withoutAiKeys(() =>
+		processBusinessCardForTest(
+			{
+				pageId: "card-1",
+				dryRun: false,
+				routing: "broker",
+				engagementIntent: "active",
+				registerExternalAdvisor: true,
+			},
+			advisorRegistrationCase.notion,
+		),
+	);
+	assert.equal(advisorRegistrationResult.action, "external-advisor-registered");
+	assert.equal(advisorRegistrationCase.creates.length, 1);
+	const advisorCreate = advisorRegistrationCase.creates[0]!;
+	assert.deepEqual(advisorCreate.parent, { data_source_id: "de575c80-5e25-41a5-a27d-b1b3d84a0cbd" });
+	assert.deepEqual(advisorCreate.properties["関連名刺"], { relation: [{ id: "card-1" }] });
+	assert.equal(selectName(advisorCreate.properties["ブローカー一次判定結果"]), "broker");
+	assert.equal(selectName(advisorCreate.properties["候補本人一致度"]), "中");
+	assert.equal(selectName(advisorCreate.properties["リスク兆候"]), "要確認");
+	assert.equal(selectName(advisorCreate.properties["次アクション"]), "要追加調査");
+	assert.match(selectName(advisorCreate.properties["判定根拠メモ"]), /反社判定は行わない/);
+	const cardAdvisorUpdate = advisorRegistrationCase.updates.find(
+		(update) => update.page_id === "card-1" && update.properties?.["関連社外顧問"],
+	);
+	assert.ok(cardAdvisorUpdate);
+	assert.deepEqual(cardAdvisorUpdate!.properties?.["関連社外顧問"], {
+		relation: [{ id: "created-page-1" }],
+	});
+
+	const advisorRegistrationDryRunCase = makeNotionForNewCardCase({
+		cardCompanyName: "紹介パートナー株式会社",
+		cardName: "紹介 太郎",
+	});
+	const advisorRegistrationDryRunResult = await withoutAiKeys(() =>
+		processBusinessCardForTest(
+			{
+				pageId: "card-1",
+				dryRun: true,
+				routing: "broker",
+				engagementIntent: "active",
+				registerExternalAdvisor: true,
+			},
+			advisorRegistrationDryRunCase.notion,
+		),
+	);
+	assert.equal(advisorRegistrationDryRunResult.action, "dry-run");
+	assert.equal(advisorRegistrationDryRunCase.creates.length, 0);
+	assert.equal(advisorRegistrationDryRunCase.updates.length, 0);
 
 	const laterCase = makeNotionForCardCase("");
 	const laterResult = await withoutAiKeys(() =>
