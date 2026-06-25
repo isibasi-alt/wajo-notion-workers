@@ -595,6 +595,7 @@ async function main() {
 	assert.equal(selectName(advisorCreate.properties["リスク兆候"]), "要確認");
 	assert.equal(selectName(advisorCreate.properties["次アクション"]), "要追加調査");
 	assert.match(selectName(advisorCreate.properties["判定根拠メモ"]), /反社判定は行わない/);
+	assert.match(selectName(advisorCreate.properties["判定根拠メモ"]), /一次判定済み/);
 	assert.match(selectName(advisorCreate.properties["判定根拠メモ"]), /10点/);
 	assert.match(selectName(advisorCreate.properties["判定根拠メモ"]), /60点未満/);
 	const cardAdvisorUpdate = advisorRegistrationCase.updates.find(

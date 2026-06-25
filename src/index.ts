@@ -6344,6 +6344,15 @@ function readBusinessCardRunOptions(body: unknown): {
 		record["社外顧問登録"],
 		record["ブローカー登録"],
 	);
+	if (registerExternalAdvisor) {
+		return {
+			routing: "broker",
+			engagementIntent: "active",
+			deepResearch: false,
+			autoCreateMeetingPrepReport: false,
+			registerExternalAdvisor,
+		};
+	}
 	if (engagement === "save-only" || routing !== "company") {
 		return {
 			routing,
@@ -6635,6 +6644,7 @@ function buildExternalAdvisorAssessmentMemo(
 ): string {
 	return [
 		"【登録理由】名刺起点で社外顧問・ブローカーとして扱うため、社外顧問DBへ登録。",
+		assessment.score === null ? "【登録状態】仮登録（未採点）" : "【登録状態】一次判定済み（採点根拠あり）",
 		assessment.score === null
 			? "【一次判定】未採点。撮影時選択以外の採点根拠が不足しているため、スコアは入力しない。"
 			: `【一次判定】名刺情報・初回メモに基づく一次スコア: ${assessment.score}点 / routing=${assessment.routing}`,
@@ -6660,6 +6670,29 @@ async function linkAdvisorToBusinessCard(
 		page_id: advisorPage.id,
 		properties: {
 			関連名刺: relationIds(next),
+		},
+	});
+}
+
+async function repairLegacyAdvisorInitialScoreIfNeeded(
+	notion: NotionClient,
+	advisorPage: Page,
+): Promise<void> {
+	const scoreProp = advisorPage.properties?.["ブローカー一次判定スコア"] as { number?: number | null } | undefined;
+	const memo = text(advisorPage.properties?.["判定根拠メモ"]);
+	const isLegacyInitialScore =
+		scoreProp?.number === 60 && /初期登録時は broker \/ 60点|撮影時選択による broker 仮登録/.test(memo);
+	if (!isLegacyInitialScore) return;
+	await notion.pages.update({
+		page_id: advisorPage.id,
+		properties: {
+			ブローカー一次判定スコア: { number: null },
+			判定根拠メモ: richText([
+				memo,
+				"",
+				"【修正情報】旧初期値60点を空欄に修正。60点判定ロジックを実行した結果ではないため。",
+				`【確認日】${todayIsoDateInTokyo()}`,
+			].filter((line, index) => index === 1 || line).join("\n")),
 		},
 	});
 }
@@ -6738,6 +6771,7 @@ async function createAdvisorFromCard(
 		const existing = dup.results[0];
 		if (existing) {
 			if (cardPageId) await linkAdvisorToBusinessCard(notion, existing, cardPageId);
+			await repairLegacyAdvisorInitialScoreIfNeeded(notion, existing);
 			return { page: existing, created: false };
 		}
 	}

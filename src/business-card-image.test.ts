@@ -145,6 +145,13 @@ async function main() {
 		autoCreateMeetingPrepReport: false,
 		registerExternalAdvisor: true,
 	});
+	assert.deepEqual(runOptions({ registerExternalAdvisor: true }), {
+		routing: "broker",
+		engagementIntent: "active",
+		deepResearch: false,
+		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: true,
+	});
 	assert.deepEqual(runOptions({}), {
 		routing: "company",
 		engagementIntent: "active",
@@ -194,6 +201,84 @@ async function main() {
 		assert.ok(json.includes("user-123"));
 		assert.ok(json.includes("2026-06-11"));
 	}
+	// 未採点: 撮影時選択以外の根拠が無い場合はスコアを入れない
+	{
+		const props = advisor(
+			{ 氏名: "山田", 会社名: "", 役職: "", 部署: "", 電話: "", メール: "", 住所: "", メモ: "" },
+			undefined,
+			"",
+			"2026-06-11",
+		);
+		const json = JSON.stringify(props);
+		assert.equal("ブローカー一次判定スコア" in props, false);
+		assert.ok(json.includes("仮登録（未採点）"));
+	}
+
+	// 40-59点: broker兆候はあるが60点未満ならlaterに逃がす
+	{
+		const props = advisor(
+			{
+				氏名: "確認 太郎",
+				会社名: "",
+				役職: "社外顧問",
+				部署: "",
+				電話: "",
+				メール: "",
+				住所: "",
+				メモ: "第三者案件の話が中心。紹介契約の可能性あり。",
+			},
+			undefined,
+			"",
+			"2026-06-11",
+		);
+		assert.deepEqual(props["ブローカー一次判定スコア"], { number: 45 });
+		assert.deepEqual(props["ブローカー一次判定結果"], { select: { name: "later" } });
+	}
+
+	// 60点ちょうど: 停止理由なしならbroker
+	{
+		const props = advisor(
+			{
+				氏名: "判定 太郎",
+				会社名: "紹介事務所",
+				役職: "社外顧問",
+				部署: "",
+				電話: "",
+				メール: "",
+				住所: "",
+				メモ: "第三者案件を紹介する。知り合いがいる。紹介契約の可能性あり。",
+			},
+			undefined,
+			"",
+			"2026-06-11",
+		);
+		assert.deepEqual(props["ブローカー一次判定スコア"], { number: 60 });
+		assert.deepEqual(props["ブローカー一次判定結果"], { select: { name: "broker" } });
+	}
+
+	// company兆候混在: 点数があってもlaterに逃がす
+	{
+		const props = advisor(
+			{
+				氏名: "混在 太郎",
+				会社名: "混在商事",
+				役職: "社外顧問",
+				部署: "",
+				電話: "",
+				メール: "mixed@example.co.jp",
+				住所: "",
+				メモ: "第三者案件を紹介する。知り合いがいる。紹介契約の可能性あり。",
+			},
+			undefined,
+			"",
+			"2026-06-11",
+		);
+		const json = JSON.stringify(props);
+		assert.deepEqual(props["ブローカー一次判定スコア"], { number: 50 });
+		assert.deepEqual(props["ブローカー一次判定結果"], { select: { name: "later" } });
+		assert.ok(json.includes("broker兆候とcompany兆候が混在"));
+	}
+
 	// 連絡先が無ければそのキー自体を作らない(空値でNotionを汚さない)
 	{
 		const props = advisor(
