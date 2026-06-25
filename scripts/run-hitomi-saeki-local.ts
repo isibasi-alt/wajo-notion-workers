@@ -29,7 +29,7 @@ async function heads(pid: string){ const out: string[] = []; let c: string|undef
   const material = `対象者: 佐伯 亮太／対象月: 2026年6月／販売・関西南部\n\n【定量（月次成績・自動集計）】\n${quant}\n\n【案件ログ】\n${deals}\n\n【1on1】\n${ones}\n\n【営業貢献（承認済みのみ）】\n${contribs}\n\n【日報要点】\n${dailies}\n\n【会議発言】\n${speeches}`;
 
   const evalPage: any = await notion.pages.create({ parent: { page_id: PARENT }, icon: { emoji: "📋" }, properties: { title: [{ type: "text", text: { content: "【本番フロー実証】佐伯 月次評価 2026年6月" } }] } });
-  const workPage: any = await notion.pages.create({ parent: { page_id: evalPage.id }, properties: { title: [{ type: "text", text: { content: "🗂 評価ワークシート（A〜E検討・材料）" } }] } });
+  const workPage: any = await notion.pages.create({ parent: { data_source_id: "d78b8698-219b-451f-88c9-2992a39754ed" }, properties: { Name: { title: [{ type: "text", text: { content: "佐伯 亮太 2026年6月｜A〜E作業ログ" } }] }, "対象月": { rich_text: [{ type: "text", text: { content: "2026-06" } }] }, "対象営業ユーザー": { people: [{ id: UID }] }, "月次評価ページ": { url: evalPage.url }, "ステータス": { select: { name: "処理中" } } } });
   const chunks: string[] = []; for(let i=0;i<material.length;i+=1800) chunks.push(material.slice(i,i+1800));
   await notion.blocks.children.append({ block_id: workPage.id, children: [{ object: "block", type: "heading_2", heading_2: { rich_text: [{ type: "text", text: { content: "自動収集データ（材料）" } }] } }, ...chunks.map(c=>({ object: "block", type: "paragraph", paragraph: { rich_text: [{ type: "text", text: { content: c } }] } }))] } as any);
 

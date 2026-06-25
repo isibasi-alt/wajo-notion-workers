@@ -181,7 +181,7 @@ async function main() {
 				役職: "社外顧問",
 				部署: "",
 				電話: "090-0000-0000",
-				メール: "",
+				メール: "jiro@example.co.jp",
 				住所: "",
 				メモ: "第三者案件を紹介する。投資家の知り合いがあり、紹介契約でつなぐだけ。発注権限なし。",
 			},
@@ -267,16 +267,60 @@ async function main() {
 				電話: "",
 				メール: "mixed@example.co.jp",
 				住所: "",
-				メモ: "第三者案件を紹介する。知り合いがいる。紹介契約の可能性あり。",
+				メモ: "第三者案件を紹介する。知り合いがいる。紹介契約の可能性あり。弊社の蓄電池導入も相談。",
 			},
 			undefined,
 			"",
 			"2026-06-11",
 		);
 		const json = JSON.stringify(props);
-		assert.deepEqual(props["ブローカー一次判定スコア"], { number: 50 });
+		assert.deepEqual(props["ブローカー一次判定スコア"], { number: 35 });
 		assert.deepEqual(props["ブローカー一次判定結果"], { select: { name: "later" } });
 		assert.ok(json.includes("broker兆候とcompany兆候が混在"));
+	}
+
+	// 代表肩書があっても、強いbrokerメモがあれば肩書だけで止めない
+	{
+		const props = advisor(
+			{
+				氏名: "代表 顧問",
+				会社名: "紹介事務所",
+				役職: "代表取締役 社外顧問",
+				部署: "",
+				電話: "",
+				メール: "daihyo@example.co.jp",
+				住所: "",
+				メモ: "第三者案件を紹介する。知り合いがいる。紹介契約の可能性あり。発注権限なし。",
+			},
+			undefined,
+			"",
+			"2026-06-11",
+		);
+		assert.deepEqual(props["ブローカー一次判定スコア"], { number: 70 });
+		assert.deepEqual(props["ブローカー一次判定結果"], { select: { name: "broker" } });
+	}
+
+	// 個人リスク系ワードはbrokerスコアとは別枠で管理者確認へ逃がす
+	{
+		const props = advisor(
+			{
+				氏名: "風評 顧問",
+				会社名: "紹介事務所",
+				役職: "社外顧問",
+				部署: "",
+				電話: "",
+				メール: "",
+				住所: "",
+				メモ: "第三者案件を紹介する。知り合いがいる。紹介契約の可能性あり。反社という風評あり。",
+			},
+			undefined,
+			"",
+			"2026-06-11",
+		);
+		const json = JSON.stringify(props);
+		assert.deepEqual(props["ブローカー一次判定結果"], { select: { name: "later" } });
+		assert.deepEqual(props["次アクション"], { select: { name: "要管理者確認" } });
+		assert.ok(json.includes("broker採点とは別に管理者確認"));
 	}
 
 	// 連絡先が無ければそのキー自体を作らない(空値でNotionを汚さない)

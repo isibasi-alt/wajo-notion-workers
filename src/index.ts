@@ -129,6 +129,9 @@ const TEAM_TRACKER_DATA_SOURCE_ID =
 const STAFF_MASTER_DATA_SOURCE_ID =
 	process.env.STAFF_MASTER_DATA_SOURCE_ID ??
 	"f770bee6-fb52-46db-adc2-9bcca9e406e8";
+const HITOMI_EVAL_WORKLOG_DATA_SOURCE_ID =
+	process.env.HITOMI_EVAL_WORKLOG_DATA_SOURCE_ID ??
+	"d78b8698-219b-451f-88c9-2992a39754ed";
 const NEWS_DATA_SOURCE_ID =
 	process.env.NEWS_DATA_SOURCE_ID ??
 	"15273928-a119-4b42-8801-185f54e55c58";
@@ -1807,6 +1810,7 @@ type CardResult = {
 		| "duplicate-hold"
 		| "needs-review"
 		| "external-advisor-registered"
+		| "external-advisor-linked"
 		| "skipped"
 		| "dry-run";
 	companyId: string | null;
@@ -5177,10 +5181,25 @@ worker.webhook("processHitomiEvalChainWebhook", {
 				);
 			}
 			// A の前にデータ層を実行：元ソースDBから「人×月」の材料をページへ追記する。
-			const workPage = await (notion as unknown as NotionClient).pages.create({ parent: { page_id: evalPageId }, properties: { title: [{ type: "text", text: { content: "🗂 評価ワークシート（A〜E検討・材料）" } }] } });
+			// A〜Eの検討は「月次評価ワークログDB」（石橋大右ダッシュボード配下）に1評価=1レコードで蓄積する。
+			const evalPg = (await (notion as unknown as NotionClient).pages.retrieve({ page_id: evalPageId })) as Page;
+			const ep = evalPg.properties ?? {};
+			const workName = `${text(ep["評価名"]) || "月次評価"}｜A〜E作業ログ`;
+			const targetMonth = text(ep["対象月"]);
+			const workPage = await (notion as unknown as NotionClient).pages.create({
+				parent: { data_source_id: HITOMI_EVAL_WORKLOG_DATA_SOURCE_ID },
+				properties: {
+					Name: { title: [{ type: "text", text: { content: workName } }] },
+					対象月: targetMonth ? { rich_text: [{ type: "text", text: { content: targetMonth } }] } : { rich_text: [] },
+					対象営業ユーザー: { people: personIdsFromProperty(ep["対象営業ユーザー"]).map((id) => ({ id })) },
+					月次評価ページ: { url: (evalPg as { url?: string }).url ?? null },
+					ステータス: { select: { name: "処理中" } },
+				},
+			});
 			const workId = workPage.id;
 			await gatherHitomiSourceData(notion as unknown as NotionClient, evalPageId, workId, new Date());
 			await runHitomiEvalChain(notion as never, workId, evalPageId);
+			await (notion as unknown as NotionClient).pages.update({ page_id: workId, properties: { ステータス: { select: { name: "完了" } } } });
 		}
 	},
 });
@@ -5974,7 +5993,7 @@ async function processBusinessCard(
 		const advisor = await registerExternalAdvisorFromBusinessCard(notion, card);
 		return {
 			pageId: input.pageId,
-			action: "external-advisor-registered",
+			action: advisor.created ? "external-advisor-registered" : "external-advisor-linked",
 			companyId: null,
 			companyName: null,
 			message: `社外顧問DBへ${advisor.created ? "新規登録" : "既存更新"}しました。advisorPageId=${advisor.page.id}`,
@@ -6539,7 +6558,7 @@ function buildAdvisorProperties(
 		初回接点日: { date: { start: today } },
 		紹介実績メモ: richText(memoLines.join("\n")),
 		ブローカー一次判定結果: select(assessment.routing),
-		候補本人一致度: select("中"),
+		候補本人一致度: select("低"),
 		リスク兆候: select("要確認"),
 		次アクション: select(assessment.nextAction),
 		判定根拠メモ: richText(buildExternalAdvisorAssessmentMemo(ocr, assessment, cardPageId)),
@@ -6599,14 +6618,8 @@ function calculateBrokerPrimaryAssessment(ocr: BusinessCardOcr): BrokerPrimaryAs
 		add(10, "初回メモに本人が発注・導入決裁者ではない兆候あり");
 	}
 
-	if (/代表取締役|代表|社長|取締役|役員|事業責任者|部門長|部長|工場長|責任者/i.test(roleText)) {
-		subtract(20, "肩書に自社判断者の兆候あり");
-	}
 	if (/自社.*(電気代|設備|土地|発電所|蓄電池|ppa|屋根|工場|倉庫)|弊社.*(電気代|設備|土地|発電所|蓄電池|ppa|屋根|工場|倉庫)/i.test(memoText)) {
 		subtract(25, "初回メモが自社課題の相談に見える");
-	}
-	if (companyText && email && !/(gmail|yahoo|icloud|outlook|hotmail|docomo|ezweb|softbank|au\.com)/i.test(email)) {
-		subtract(10, "会社名と会社メールらしき連絡先がある");
 	}
 
 	if (!ocr.氏名) stopReasons.push("氏名が未確認");
@@ -6614,13 +6627,17 @@ function calculateBrokerPrimaryAssessment(ocr: BusinessCardOcr): BrokerPrimaryAs
 	if (email && /(gmail|yahoo|icloud|outlook|hotmail|docomo|ezweb|softbank|au\.com)/i.test(email)) {
 		stopReasons.push("個人メールのため所属確認が弱い");
 	}
+	if (/反社|暴力団|風評|訴訟|行政処分|トラブル|違法/i.test(memoText)) {
+		stopReasons.push("個人リスク系の言及があるため、broker採点とは別に管理者確認");
+	}
 	if (scoreReasons.length === 0) {
 		stopReasons.push("撮影時選択以外のbroker/company判定根拠が未確認");
 	}
-	if (score > 0 && score < 60) {
+	const normalizedScore = Math.max(0, Math.min(100, score));
+	if (normalizedScore > 0 && normalizedScore < 60) {
 		stopReasons.push("broker兆候はあるが60点未満のためbroker確定不可");
 	}
-	if (score > 0 && companyReasons.length > 0) {
+	if (normalizedScore > 0 && companyReasons.length > 0) {
 		stopReasons.push("broker兆候とcompany兆候が混在");
 	}
 
@@ -6635,9 +6652,9 @@ function calculateBrokerPrimaryAssessment(ocr: BusinessCardOcr): BrokerPrimaryAs
 	}
 
 	const routing: BrokerPrimaryRouting =
-		stopReasons.length > 0 ? "later" : score >= 60 ? "broker" : score <= 39 ? "company" : "later";
-	const nextAction = routing === "broker" ? "軽確認" : "要追加調査";
-	return { score, routing, scoreReasons, stopReasons, nextAction };
+		stopReasons.length > 0 ? "later" : normalizedScore >= 60 ? "broker" : normalizedScore <= 39 ? "company" : "later";
+	const nextAction = stopReasons.some((reason) => reason.includes("個人リスク")) ? "要管理者確認" : "要追加調査";
+	return { score: normalizedScore, routing, scoreReasons, stopReasons, nextAction };
 }
 
 function buildExternalAdvisorAssessmentMemo(
@@ -6647,7 +6664,7 @@ function buildExternalAdvisorAssessmentMemo(
 ): string {
 	return [
 		"【登録理由】名刺起点で社外顧問・ブローカーとして扱うため、社外顧問DBへ登録。",
-		assessment.score === null ? "【登録状態】仮登録（未採点）" : "【登録状態】一次判定済み（採点根拠あり）",
+		assessment.score === null ? "【登録状態】仮登録（未採点）" : "【登録状態】一次整理済み（採点根拠あり）",
 		assessment.score === null
 			? "【一次判定】未採点。撮影時選択以外の採点根拠が不足しているため、スコアは入力しない。"
 			: `【一次判定】名刺情報・初回メモに基づく一次スコア: ${assessment.score}点 / routing=${assessment.routing}`,
@@ -6677,25 +6694,27 @@ async function linkAdvisorToBusinessCard(
 	});
 }
 
-async function repairLegacyAdvisorInitialScoreIfNeeded(
+async function updateExistingAdvisorAssessmentFromCard(
 	notion: NotionClient,
 	advisorPage: Page,
+	ocr: BusinessCardOcr,
+	cardPageId?: string,
 ): Promise<void> {
-	const scoreProp = advisorPage.properties?.["ブローカー一次判定スコア"] as { number?: number | null } | undefined;
-	const memo = text(advisorPage.properties?.["判定根拠メモ"]);
+	const assessment = calculateBrokerPrimaryAssessment(ocr);
+	const currentScore = (advisorPage.properties?.["ブローカー一次判定スコア"] as { number?: number | null } | undefined)?.number;
+	const currentMemo = text(advisorPage.properties?.["判定根拠メモ"]);
 	const isLegacyInitialScore =
-		scoreProp?.number === 60 && /初期登録時は broker \/ 60点|撮影時選択による broker 仮登録/.test(memo);
-	if (!isLegacyInitialScore) return;
+		currentScore === 60 && /初期登録時は broker \/ 60点|撮影時選択による broker 仮登録/.test(currentMemo);
+	if (assessment.score === null && !isLegacyInitialScore) return;
 	await notion.pages.update({
 		page_id: advisorPage.id,
 		properties: {
-			ブローカー一次判定スコア: { number: null },
-			判定根拠メモ: richText([
-				memo,
-				"",
-				"【修正情報】旧初期値60点を空欄に修正。60点判定ロジックを実行した結果ではないため。",
-				`【確認日】${todayIsoDateInTokyo()}`,
-			].filter((line, index) => index === 1 || line).join("\n")),
+			ブローカー一次判定スコア: { number: assessment.score },
+			ブローカー一次判定結果: select(assessment.routing),
+			候補本人一致度: select("低"),
+			リスク兆候: select("要確認"),
+			次アクション: select(assessment.nextAction),
+			判定根拠メモ: richText(buildExternalAdvisorAssessmentMemo(ocr, assessment, cardPageId)),
 		},
 	});
 }
@@ -6722,6 +6741,11 @@ async function linkBusinessCardToAdvisor(
 }
 
 function businessCardOcrFromCardInfo(card: CardInfo): BusinessCardOcr {
+	const memo = [
+		text(card.page.properties?.["メモ"]),
+		text(card.page.properties?.["企業連携メモ"]),
+		text(card.page.properties?.["名刺AI処理メモ"]),
+	].find((value) => value.trim()) ?? "";
 	return {
 		氏名: card.name,
 		会社名: card.companyName,
@@ -6730,7 +6754,7 @@ function businessCardOcrFromCardInfo(card: CardInfo): BusinessCardOcr {
 		電話: card.phone,
 		メール: card.email,
 		住所: card.address,
-		メモ: "",
+		メモ: memo,
 	};
 }
 
@@ -6774,7 +6798,7 @@ async function createAdvisorFromCard(
 		const existing = dup.results[0];
 		if (existing) {
 			if (cardPageId) await linkAdvisorToBusinessCard(notion, existing, cardPageId);
-			await repairLegacyAdvisorInitialScoreIfNeeded(notion, existing);
+			await updateExistingAdvisorAssessmentFromCard(notion, existing, ocr, cardPageId);
 			return { page: existing, created: false };
 		}
 	}

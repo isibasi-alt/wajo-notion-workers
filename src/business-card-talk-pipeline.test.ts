@@ -180,6 +180,8 @@ function makeNotionForNewCardCase(params: {
 	cardAddress?: string;
 	cardRole?: string;
 	cardName?: string;
+	cardMemo?: string;
+	existingAdvisorProperties?: PageProperties;
 	}) {
 	const card = {
 		id: "card-1",
@@ -190,6 +192,7 @@ function makeNotionForNewCardCase(params: {
 			電話: { type: "phone_number", phone_number: params.cardPhone ?? "06-0000-1111" },
 			住所: richTextProp(params.cardAddress ?? "大阪府大阪市中央区"),
 			役職: richTextProp(params.cardRole ?? "営業室長"),
+			メモ: richTextProp(params.cardMemo ?? ""),
 			名刺画像: { type: "files", files: [] },
 		},
 	};
@@ -198,7 +201,11 @@ function makeNotionForNewCardCase(params: {
 	const notion = {
 		__createdCompanies: new Map<string, { id: string; properties: Record<string, unknown> }>(),
 		dataSources: {
-			query: async () => ({ results: [] as Array<{ id: string; properties: Record<string, unknown> }> }),
+			query: async () => ({
+				results: params.existingAdvisorProperties
+					? ([{ id: "advisor-existing-1", properties: params.existingAdvisorProperties }] as Array<{ id: string; properties: Record<string, unknown> }>)
+					: ([] as Array<{ id: string; properties: Record<string, unknown> }>),
+			}),
 		},
 		pages: {
 			retrieve: async ({ page_id }: { page_id: string }) => {
@@ -589,14 +596,14 @@ async function main() {
 	const advisorCreate = advisorRegistrationCase.creates[0]!;
 	assert.deepEqual(advisorCreate.parent, { data_source_id: "de575c80-5e25-41a5-a27d-b1b3d84a0cbd" });
 	assert.deepEqual(advisorCreate.properties["関連名刺"], { relation: [{ id: "card-1" }] });
-	assert.deepEqual(advisorCreate.properties["ブローカー一次判定スコア"], { number: 10 });
+	assert.deepEqual(advisorCreate.properties["ブローカー一次判定スコア"], { number: 20 });
 	assert.equal(selectName(advisorCreate.properties["ブローカー一次判定結果"]), "later");
-	assert.equal(selectName(advisorCreate.properties["候補本人一致度"]), "中");
+	assert.equal(selectName(advisorCreate.properties["候補本人一致度"]), "低");
 	assert.equal(selectName(advisorCreate.properties["リスク兆候"]), "要確認");
 	assert.equal(selectName(advisorCreate.properties["次アクション"]), "要追加調査");
 	assert.match(selectName(advisorCreate.properties["判定根拠メモ"]), /反社判定は行わない/);
-	assert.match(selectName(advisorCreate.properties["判定根拠メモ"]), /一次判定済み/);
-	assert.match(selectName(advisorCreate.properties["判定根拠メモ"]), /10点/);
+	assert.match(selectName(advisorCreate.properties["判定根拠メモ"]), /一次整理済み/);
+	assert.match(selectName(advisorCreate.properties["判定根拠メモ"]), /20点/);
 	assert.match(selectName(advisorCreate.properties["判定根拠メモ"]), /60点未満/);
 	const cardAdvisorUpdate = advisorRegistrationCase.updates.find(
 		(update) => update.page_id === "card-1" && update.properties?.["関連社外顧問"],
@@ -605,6 +612,62 @@ async function main() {
 	assert.deepEqual(cardAdvisorUpdate!.properties?.["関連社外顧問"], {
 		relation: [{ id: "advisor-page-1" }],
 	});
+
+	const advisorStrongMemoCase = makeNotionForNewCardCase({
+		cardCompanyName: "紹介パートナー株式会社",
+		cardName: "紹介 二郎",
+		cardRole: "社外顧問",
+		cardEmail: "jiro@example.co.jp",
+		cardMemo: "第三者案件を紹介する。投資家の知り合いがあり、紹介契約でつなぐだけ。発注権限なし。",
+	});
+	const advisorStrongMemoResult = await withoutAiKeys(() =>
+		processBusinessCardForTest(
+			{
+				pageId: "card-1",
+				dryRun: false,
+				routing: "broker",
+				engagementIntent: "active",
+				registerExternalAdvisor: true,
+			},
+			advisorStrongMemoCase.notion,
+		),
+	);
+	assert.equal(advisorStrongMemoResult.action, "external-advisor-registered");
+	const advisorStrongCreate = advisorStrongMemoCase.creates[0]!;
+	assert.deepEqual(advisorStrongCreate.properties["ブローカー一次判定スコア"], { number: 70 });
+	assert.equal(selectName(advisorStrongCreate.properties["ブローカー一次判定結果"]), "broker");
+	assert.equal(selectName(advisorStrongCreate.properties["次アクション"]), "要追加調査");
+
+	const advisorExistingCase = makeNotionForNewCardCase({
+		cardCompanyName: "紹介パートナー株式会社",
+		cardName: "既存 顧問",
+		cardRole: "社外顧問",
+		cardMemo: "第三者案件を紹介する。投資家の知り合いがあり、紹介契約でつなぐだけ。発注権限なし。",
+		existingAdvisorProperties: {
+			顧問名: titleProp("既存 顧問"),
+			関連名刺: relationProp([]),
+			ブローカー一次判定スコア: { type: "number", number: 60 },
+			判定根拠メモ: richTextProp("【一次判定】初期登録時は broker / 60点 として記録。"),
+		},
+	});
+	const advisorExistingResult = await withoutAiKeys(() =>
+		processBusinessCardForTest(
+			{
+				pageId: "card-1",
+				dryRun: false,
+				routing: "broker",
+				engagementIntent: "active",
+				registerExternalAdvisor: true,
+			},
+			advisorExistingCase.notion,
+		),
+	);
+	assert.equal(advisorExistingResult.action, "external-advisor-linked");
+	const existingAdvisorScoreUpdate = advisorExistingCase.updates.find(
+		(update) => update.page_id === "advisor-existing-1" && update.properties?.["ブローカー一次判定スコア"],
+	);
+	assert.ok(existingAdvisorScoreUpdate);
+	assert.deepEqual(existingAdvisorScoreUpdate!.properties?.["ブローカー一次判定スコア"], { number: 70 });
 
 	const advisorRegistrationDryRunCase = makeNotionForNewCardCase({
 		cardCompanyName: "紹介パートナー株式会社",
