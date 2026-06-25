@@ -666,6 +666,35 @@ async function main() {
 	assert.equal(selectName(advisorJoinedMemoCreate.properties["ブローカー一次判定結果"]), "broker");
 	assert.match(selectName(advisorJoinedMemoCreate.properties["判定根拠メモ"]), /紹介契約/);
 
+	const advisorInternalMemoOnlyCase = makeNotionForNewCardCase({
+		cardCompanyName: "紹介パートナー株式会社",
+		cardName: "内部メモのみ",
+		cardRole: "",
+		cardMemo: "",
+		cardAiMemo: [
+			"【社外顧問DB登録】既存ページへ紐づけ更新",
+			"【社外顧問ページ】advisor-existing-1",
+			"【注意】個人に対する反社判定は行っていない。",
+		].join("\n"),
+	});
+	const advisorInternalMemoOnlyResult = await withoutAiKeys(() =>
+		processBusinessCardForTest(
+			{
+				pageId: "card-1",
+				dryRun: false,
+				routing: "broker",
+				engagementIntent: "active",
+				registerExternalAdvisor: true,
+			},
+			advisorInternalMemoOnlyCase.notion,
+		),
+	);
+	assert.equal(advisorInternalMemoOnlyResult.action, "external-advisor-registered");
+	const advisorInternalMemoOnlyCreate = advisorInternalMemoOnlyCase.creates[0]!;
+	assert.equal("ブローカー一次判定スコア" in advisorInternalMemoOnlyCreate.properties, false);
+	assert.equal(selectName(advisorInternalMemoOnlyCreate.properties["ブローカー一次判定結果"]), "later");
+	assert.equal(selectName(advisorInternalMemoOnlyCreate.properties["次アクション"]), "要追加調査");
+
 	const advisorExistingCase = makeNotionForNewCardCase({
 		cardCompanyName: "紹介パートナー株式会社",
 		cardName: "既存 顧問",
@@ -696,6 +725,45 @@ async function main() {
 	);
 	assert.ok(existingAdvisorScoreUpdate);
 	assert.deepEqual(existingAdvisorScoreUpdate!.properties?.["ブローカー一次判定スコア"], { number: 70 });
+
+	const advisorExistingClearScoreCase = makeNotionForNewCardCase({
+		cardCompanyName: "紹介パートナー株式会社",
+		cardName: "既存 未採点化",
+		cardRole: "",
+		cardMemo: "",
+		cardAiMemo: [
+			"【社外顧問DB登録】既存ページへ紐づけ更新",
+			"【注意】個人に対する反社判定は行っていない。",
+		].join("\n"),
+		existingAdvisorProperties: {
+			顧問名: titleProp("既存 未採点化"),
+			関連名刺: relationProp([]),
+			ブローカー一次判定スコア: { type: "number", number: 20 },
+			判定根拠メモ: richTextProp("【一次判定】旧メモ由来で 20点。"),
+		},
+	});
+	const advisorExistingClearScoreResult = await withoutAiKeys(() =>
+		processBusinessCardForTest(
+			{
+				pageId: "card-1",
+				dryRun: false,
+				routing: "broker",
+				engagementIntent: "active",
+				registerExternalAdvisor: true,
+			},
+			advisorExistingClearScoreCase.notion,
+		),
+	);
+	assert.equal(advisorExistingClearScoreResult.action, "external-advisor-linked");
+	const existingAdvisorClearScoreUpdate = advisorExistingClearScoreCase.updates.find(
+		(update) => update.page_id === "advisor-existing-1" && update.properties?.["ブローカー一次判定スコア"],
+	);
+	assert.ok(existingAdvisorClearScoreUpdate);
+	assert.deepEqual(existingAdvisorClearScoreUpdate!.properties?.["ブローカー一次判定スコア"], { number: null });
+	assert.equal(
+		selectName(existingAdvisorClearScoreUpdate!.properties?.["次アクション"]),
+		"要追加調査",
+	);
 
 	const advisorRegistrationDryRunCase = makeNotionForNewCardCase({
 		cardCompanyName: "紹介パートナー株式会社",

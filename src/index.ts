@@ -6584,6 +6584,10 @@ function calculateBrokerPrimaryAssessment(ocr: BusinessCardOcr): BrokerPrimaryAs
 	const email = (ocr.メール || "").toLowerCase();
 	const joined = [roleText, memoText].filter(Boolean).join(" ").toLowerCase();
 	const companyJoined = [companyText, roleText, memoText].filter(Boolean).join(" ").toLowerCase();
+	const riskSignalText = memoText
+		.split(/\n+/)
+		.filter((line) => !/反社判定は(?:行わない|行っていない|未実施)|個人に対する反社判定/.test(line))
+		.join("\n");
 	const scoreReasons: string[] = [];
 	const companyReasons: string[] = [];
 	const stopReasons: string[] = [];
@@ -6627,7 +6631,7 @@ function calculateBrokerPrimaryAssessment(ocr: BusinessCardOcr): BrokerPrimaryAs
 	if (email && /(gmail|yahoo|icloud|outlook|hotmail|docomo|ezweb|softbank|au\.com)/i.test(email)) {
 		stopReasons.push("個人メールのため所属確認が弱い");
 	}
-	if (/反社|暴力団|風評|訴訟|行政処分|トラブル|違法/i.test(memoText)) {
+	if (/反社|暴力団|風評|訴訟|行政処分|トラブル|違法/i.test(riskSignalText)) {
 		stopReasons.push("個人リスク系の言及があるため、broker採点とは別に管理者確認");
 	}
 	if (scoreReasons.length === 0) {
@@ -6701,11 +6705,6 @@ async function updateExistingAdvisorAssessmentFromCard(
 	cardPageId?: string,
 ): Promise<void> {
 	const assessment = calculateBrokerPrimaryAssessment(ocr);
-	const currentScore = (advisorPage.properties?.["ブローカー一次判定スコア"] as { number?: number | null } | undefined)?.number;
-	const currentMemo = text(advisorPage.properties?.["判定根拠メモ"]);
-	const isLegacyInitialScore =
-		currentScore === 60 && /初期登録時は broker \/ 60点|撮影時選択による broker 仮登録/.test(currentMemo);
-	if (assessment.score === null && !isLegacyInitialScore) return;
 	await notion.pages.update({
 		page_id: advisorPage.id,
 		properties: {
@@ -6745,7 +6744,11 @@ function businessCardOcrFromCardInfo(card: CardInfo): BusinessCardOcr {
 		text(card.page.properties?.["メモ"]),
 		text(card.page.properties?.["企業連携メモ"]),
 		text(card.page.properties?.["名刺AI処理メモ"]),
-	].map((value) => value.trim()).filter(Boolean).join("\n");
+	].flatMap((value) => value.split(/\n+/))
+		.map((value) => value.trim())
+		.filter(Boolean)
+		.filter((line) => !/^【(?:社外顧問DB登録|社外顧問ページ|元名刺|企業マスター高密度化|注意)】/.test(line))
+		.join("\n");
 	return {
 		氏名: card.name,
 		会社名: card.companyName,

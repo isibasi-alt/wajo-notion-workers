@@ -347,6 +347,33 @@ async function main() {
 		assert.ok(json.includes("broker採点とは別に管理者確認"));
 	}
 
+	// 内部注意書きの「反社判定は行わない」はリスク兆候として加点・停止しない
+	{
+		const props = advisor(
+			{
+				氏名: "注意書き 顧問",
+				会社名: "紹介事務所",
+				役職: "社外顧問",
+				部署: "",
+				電話: "",
+				メール: "",
+				住所: "",
+				メモ: [
+					"第三者案件を紹介する。知り合いがいる。紹介契約の可能性あり。発注権限なし。",
+					"【注意】個人に対する反社判定は行っていない。",
+				].join("\n"),
+			},
+			undefined,
+			"",
+			"2026-06-11",
+		);
+		const json = JSON.stringify(props);
+		assert.deepEqual(props["ブローカー一次判定スコア"], { number: 70 });
+		assert.deepEqual(props["ブローカー一次判定結果"], { select: { name: "broker" } });
+		assert.deepEqual(props["次アクション"], { select: { name: "要追加調査" } });
+		assert.equal(json.includes("broker採点とは別に管理者確認"), false);
+	}
+
 	// 連絡先が無ければそのキー自体を作らない(空値でNotionを汚さない)
 	{
 		const props = advisor(
