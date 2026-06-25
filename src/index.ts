@@ -6029,7 +6029,7 @@ function readBusinessCardRunOptions(body: unknown): {
 			record["熱量"],
 		),
 	);
-	if (engagement === "save-only") {
+	if (engagement === "save-only" || routing !== "company") {
 		return {
 			routing,
 			engagementIntent: engagement,
@@ -6043,7 +6043,7 @@ function readBusinessCardRunOptions(body: unknown): {
 		routing,
 		engagementIntent: engagement,
 		deepResearch,
-		autoCreateMeetingPrepReport: deepResearch,
+		autoCreateMeetingPrepReport: false,
 	};
 }
 
@@ -6432,7 +6432,7 @@ async function processBusinessCardImage(
 			routing,
 			engagementIntent: engagement,
 			deepResearch: engagement === "active",
-			autoCreateMeetingPrepReport: engagement === "active",
+			autoCreateMeetingPrepReport: false,
 		},
 		notion,
 	);
@@ -24352,8 +24352,8 @@ async function createCompany(
 		企業調査ステータス: select(deepResearch ? "解析開始" : "未着手"),
 		名刺起点Webhookメモ: richText(
 			deepResearch
-				? "Notion Workerが名刺起点で企業を作成し、外部調査と3C返却を実行。"
-				: "Notion Workerが名刺起点で企業を作成。営業判断=名刺だけ保存のため、外部調査と3C返却は未実行。",
+				? "Notion Workerが名刺起点で企業を作成し、外部調査と企業マスター高密度化を実行。"
+				: "Notion Workerが名刺起点で企業を作成。営業判断=名刺だけ保存のため、外部調査と企業マスター高密度化は未実行。",
 		),
 		重複整理ステータス: select(weakCandidate ? "重複候補" : "正本候補"),
 		関連名刺: relation(card.page.id),
@@ -24427,7 +24427,7 @@ async function linkCardToCompany(
 				企業連携メモ: richText(memo),
 				Webhook引き継ぎステータス: select("引き継ぎ済"),
 				Webhook引き継ぎメモ: richText(
-					webhookMemo ?? "Notion Workerが企業調査と3C返却まで完了。",
+					webhookMemo ?? "Notion Workerが企業調査と企業マスター高密度化まで実行。",
 				),
 			名刺AI処理状態: select(status),
 			名刺AI処理メモ: richText(

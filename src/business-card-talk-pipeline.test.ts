@@ -389,7 +389,7 @@ async function main() {
 	});
 	assert.equal(brokerOptions.routing, "broker");
 	assert.equal(brokerOptions.engagementIntent, "active");
-	assert.equal(brokerOptions.deepResearch, true);
+	assert.equal(brokerOptions.deepResearch, false);
 
 	const laterOptions = readBusinessCardRunOptionsForTest({
 		routing: "later",
@@ -397,7 +397,7 @@ async function main() {
 	});
 	assert.equal(laterOptions.routing, "later");
 	assert.equal(laterOptions.engagementIntent, "active");
-	assert.equal(laterOptions.deepResearch, true);
+	assert.equal(laterOptions.deepResearch, false);
 
 	const saveOnlyOptions = readBusinessCardRunOptionsForTest({
 		routing: "company",
@@ -501,7 +501,7 @@ async function main() {
 	assert.ok(saveOnlyCardUpdate);
 	assert.match(
 		richTextFromPatch(saveOnlyCardUpdate!.properties?.["Webhook引き継ぎメモ"]),
-		/外部調査・3C・商談準備は未実行/,
+		/外部調査・企業マスター高密度化は未実行/,
 	);
 
 	const brokerCase = makeNotionForCardCase("");

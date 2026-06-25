@@ -81,7 +81,7 @@ async function main() {
 		routing: "company",
 		engagementIntent: "active",
 		deepResearch: true,
-		autoCreateMeetingPrepReport: true,
+		autoCreateMeetingPrepReport: false,
 	});
 	assert.deepEqual(runOptions({ engagementIntent: "名刺だけ保存", deepResearch: true }), {
 		routing: "company",
@@ -93,13 +93,13 @@ async function main() {
 		routing: "broker",
 		engagementIntent: "active",
 		deepResearch: true,
-		autoCreateMeetingPrepReport: true,
+		autoCreateMeetingPrepReport: false,
 	});
 	assert.deepEqual(runOptions({ routing: "later", engagementIntent: "active" }), {
 		routing: "later",
 		engagementIntent: "active",
 		deepResearch: true,
-		autoCreateMeetingPrepReport: true,
+		autoCreateMeetingPrepReport: false,
 	});
 	assert.deepEqual(runOptions({ routing: "company", engagementIntent: "save-only" }), {
 		routing: "company",
@@ -111,13 +111,13 @@ async function main() {
 		routing: "broker",
 		engagementIntent: "active",
 		deepResearch: true,
-		autoCreateMeetingPrepReport: true,
+		autoCreateMeetingPrepReport: false,
 	});
 	assert.deepEqual(runOptions(JSON.stringify({ routing: "later", engagementIntent: "active" })), {
 		routing: "later",
 		engagementIntent: "active",
 		deepResearch: true,
-		autoCreateMeetingPrepReport: true,
+		autoCreateMeetingPrepReport: false,
 	});
 	assert.deepEqual(runOptions(JSON.stringify({ routing: "company", engagementIntent: "save-only" })), {
 		routing: "company",
@@ -129,7 +129,7 @@ async function main() {
 		routing: "company",
 		engagementIntent: "active",
 		deepResearch: true,
-		autoCreateMeetingPrepReport: true,
+		autoCreateMeetingPrepReport: false,
 	});
 
 	// ── 社外顧問プロパティ組み立て(人=案件の種ドクトリン) ──
