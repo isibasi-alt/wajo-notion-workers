@@ -5058,6 +5058,82 @@ async function gatherHitomiSourceData(
 				lines.push(`（活動ログ逆引きエラー: ${String(error).slice(0, 160)}）`);
 			}
 		}
+		// ── 3) 対象者プロフィール＝スタッフマスターDB（氏名の正本・属性・年間目標・1on1回数）──
+		//   A〜F は本ページ本文を読むため、ここで置けば6体全員が参照できる（DB中継）。
+		//   氏名はここを正本にし、A〜F の出力での表記揺れ・誤記を防ぐ。
+		try {
+			let staffPage: Page | undefined;
+			for (const userId of salesPersonIds) {
+				const staffRes = await notion.dataSources.query({
+					data_source_id: STAFF_MASTER_DATA_SOURCE_ID,
+					page_size: 5,
+					filter: { property: "Notionユーザー", people: { contains: userId } },
+				});
+				staffPage = (staffRes.results as Page[])[0];
+				if (staffPage) break;
+			}
+			lines.push("");
+			lines.push("【対象者プロフィール】スタッフマスターDB（氏名はこの表記を正本として使うこと）");
+			if (!staffPage) {
+				lines.push("対象者のスタッフマスター行が見つかりません（氏名・属性は未取得）。");
+			} else {
+				const sp = staffPage.properties ?? {};
+				const annualGross = numberValue(sp["年間粗利目標"]);
+				const annualClose = numberValue(sp["年間成約目標"]);
+				const oneCount = numberValue(sp["1on1実施回数"]);
+				const mgrAvg = numberValue(sp["平均マネージャー評価スコア"]);
+				lines.push(`氏名（正本）: ${text(sp["氏名"]) || "（空）"}`);
+				lines.push(
+					`役職: ${text(sp["役職"]) || "（空）"} ／ 部署: ${text(sp["部署"]) || "（空）"} ／ 評価タイプ: ${text(sp["評価タイプ"]) || "（空）"}`,
+				);
+				lines.push(
+					`担当エリア: ${text(sp["担当エリア"]) || "（空）"} ／ 在籍: ${text(sp["在籍ステータス"]) || "（空）"} ／ 雇用形態: ${text(sp["雇用形態"]) || "（空）"}`,
+				);
+				lines.push(
+					`年間粗利目標: ${annualGross === null ? "（空）" : formatYen(annualGross)} ／ 年間成約目標: ${annualClose === null ? "（空）" : `${annualClose}件`}`,
+				);
+				lines.push(
+					`1on1実施回数（通算・自動）: ${oneCount === null ? "（空）" : oneCount} ／ 平均マネージャー評価（自動）: ${mgrAvg === null ? "（空）" : mgrAvg}`,
+				);
+				lines.push(
+					"※スタッフマスターの『今月〜（自動）』値は現在月のスナップショットのため、過去月の評価では参照しない（当月評価のみ参考）。",
+				);
+			}
+		} catch (error) {
+			lines.push(`（スタッフマスター取得エラー: ${String(error).slice(0, 160)}）`);
+		}
+
+		// ── 4) チーム文脈＝チームトラッカーDB（対象者の担当タスク状況）──
+		//   行動量・段取りの補助材料。加点減点の直接根拠にはしない。
+		try {
+			let tasks: Page[] = [];
+			for (const userId of salesPersonIds) {
+				const ttRes = await notion.dataSources.query({
+					data_source_id: TEAM_TRACKER_DATA_SOURCE_ID,
+					page_size: 100,
+					filter: { property: "タスク担当者", people: { contains: userId } },
+				});
+				tasks = ttRes.results as Page[];
+				if (tasks.length) break;
+			}
+			lines.push("");
+			lines.push("【チーム文脈】チームトラッカーDB（対象者の担当タスク。補助材料＝直接の加点減点根拠にしない）");
+			if (!tasks.length) {
+				lines.push("対象者担当のタスクは見つかりません。");
+			} else {
+				const byStatus: Record<string, number> = {};
+				for (const t of tasks) {
+					const st = text(t.properties?.["ステータス"]) || "未設定";
+					byStatus[st] = (byStatus[st] ?? 0) + 1;
+				}
+				lines.push(`担当タスク総数: ${tasks.length}${tasks.length >= 100 ? "+（100件上限）" : ""} 件`);
+				lines.push(
+					`ステータス内訳: ${Object.entries(byStatus).map(([k, v]) => `${k} ${v}件`).join(" / ") || "（なし）"}`,
+				);
+			}
+		} catch (error) {
+			lines.push(`（チームトラッカー取得エラー: ${String(error).slice(0, 160)}）`);
+		}
 	}
 
 	lines.push("");
