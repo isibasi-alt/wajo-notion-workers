@@ -4,7 +4,10 @@ import {
 	normalizeCardEngagementForTest as engagement,
 	normalizeCardRoutingForTest as routing,
 	parseBusinessCardOcrForTest as parse,
+	readBusinessCardByIdRunOptionsForTest as byIdRunOptions,
+	readBusinessCardResearchWebhookRunOptionsForTest as researchWebhookRunOptions,
 	readBusinessCardRunOptionsForTest as runOptions,
+	readPendingBusinessCardsRunOptionsForTest as pendingRunOptions,
 } from "./index";
 
 // 名刺画像インテイク(入口ルール2026-06-11)の純関数:
@@ -128,6 +131,18 @@ async function main() {
 	assert.deepEqual(runOptions({}), {
 		routing: "company",
 		engagementIntent: "active",
+		deepResearch: true,
+		autoCreateMeetingPrepReport: false,
+	});
+	assert.deepEqual(byIdRunOptions(), {
+		deepResearch: true,
+		autoCreateMeetingPrepReport: false,
+	});
+	assert.deepEqual(pendingRunOptions(), {
+		deepResearch: true,
+		autoCreateMeetingPrepReport: false,
+	});
+	assert.deepEqual(researchWebhookRunOptions(), {
 		deepResearch: true,
 		autoCreateMeetingPrepReport: false,
 	});

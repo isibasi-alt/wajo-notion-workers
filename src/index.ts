@@ -1785,11 +1785,11 @@ type CardInput = {
 	dryRun?: boolean;
 	routing?: "company" | "broker" | "later";
 	engagementIntent?: "active" | "save-only";
-	// 入口で営業が決めた熱量。false 相当なら企業連携だけ行い、外部調査/3C/商談準備は走らせない。
+	// 入口で営業が決めた熱量。false 相当なら企業連携だけ行い、外部調査/企業マスター高密度化は走らせない。
 	deepResearch?: boolean;
 	// 画像インテイク経由の明示実行(自分で「処理中」を立てた直後に呼ぶため終端ガードを通す)
 	force?: boolean;
-	// 名刺起点処理で商談準備レポートの自動生成を起動する。
+	// 後方互換用。名刺1枚プロジェクト第1段階の入口では商談準備レポートを自動生成しない。
 	// 実環境の三段階連携を有効化するためのフラグ。テストやdry-runでは false が無難。
 	autoCreateMeetingPrepReport?: boolean;
 };
@@ -3282,7 +3282,7 @@ worker.tool("processBusinessCardById", {
 		force: j.boolean().describe("trueなら処理済みステータスを無視して再実行します"),
 		autoCreateMeetingPrepReport: j
 			.boolean()
-			.describe("trueなら商談前準備レポート作成まで実行します。falseなら連携まで。"),
+			.describe("後方互換用。第1段階の名刺入口では指定されても商談前準備レポートを自動作成しません。"),
 	}),
 	outputSchema: j.object({
 		pageId: j.string(),
@@ -3291,17 +3291,15 @@ worker.tool("processBusinessCardById", {
 		companyName: j.string().nullable(),
 		message: j.string(),
 	}),
-	execute: async (
-		{ pageId, dryRun, force = false, autoCreateMeetingPrepReport = true },
-		{ notion },
-	) => {
+	execute: async ({ pageId, dryRun, force = false }, { notion }) => {
+		const runOptions = readBusinessCardByIdRunOptions();
 		return processBusinessCard(
 			{
 				pageId,
 				dryRun,
 				force,
-				autoCreateMeetingPrepReport,
-				deepResearch: autoCreateMeetingPrepReport,
+				autoCreateMeetingPrepReport: runOptions.autoCreateMeetingPrepReport,
+				deepResearch: runOptions.deepResearch,
 			},
 			notion as unknown as NotionClient,
 		);
@@ -3311,7 +3309,7 @@ worker.tool("processBusinessCardById", {
 worker.tool("processPendingBusinessCards", {
 	title: "WAJO 未処理名刺をまとめて処理",
 	description:
-		"名刺管理DBから未処理名刺を拾い、企業DBへの紐づけ/作成と3C返却を行います。",
+		"名刺管理DBから未処理名刺を拾い、企業DBへの紐づけ/作成と企業マスター高密度化まで行います。商談準備レポートは自動作成しません。",
 	schema: j.object({
 		limit: j.integer().describe("一度に処理する最大件数。通常は1から5"),
 		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
@@ -3330,6 +3328,7 @@ worker.tool("processPendingBusinessCards", {
 	}),
 	execute: async ({ limit, dryRun }, { notion }) => {
 		const safeLimit = Math.max(1, Math.min(limit || 1, MAX_PENDING_LIMIT));
+		const runOptions = readPendingBusinessCardsRunOptions();
 		const cards = await findPendingCards(notion as unknown as NotionClient, safeLimit);
 		const results: CardResult[] = [];
 		for (const card of cards) {
@@ -3339,7 +3338,8 @@ worker.tool("processPendingBusinessCards", {
 						pageId: card.id,
 						pageData: card,
 						dryRun,
-						autoCreateMeetingPrepReport: true,
+						deepResearch: runOptions.deepResearch,
+						autoCreateMeetingPrepReport: runOptions.autoCreateMeetingPrepReport,
 					},
 					notion as unknown as NotionClient,
 				),
@@ -4427,7 +4427,7 @@ worker.webhook("processBusinessCardImageWebhook", {
 worker.tool("processBusinessCardImage", {
 	title: "WAJO 名刺画像インテイク",
 	description:
-		"名刺画像(base64)からOCR→名刺ページ作成→振り分け→企業連携を実行します。営業判断=名刺だけ保存なら外部調査・3C・商談準備は走らせません。",
+		"名刺画像(base64)からOCR→名刺ページ作成→振り分け→企業連携を実行します。activeでも商談準備レポートは自動作成せず、企業マスター高密度化までに止めます。",
 	schema: j.object({
 		imageBase64: j.string().describe("名刺画像のbase64(データURL可)"),
 		routing: j
@@ -4462,7 +4462,7 @@ worker.tool("processBusinessCardImage", {
 worker.webhook("processBusinessCardWebhook", {
 	title: "WAJO 名刺処理Webhook",
 	description:
-		"外部サービスやNotion webhookから名刺処理を起動します。body.pageId があれば1件処理、なければ未処理を拾います。営業判断=名刺だけ保存なら外部調査・3C・商談準備は走らせません。",
+		"外部サービスやNotion webhookから名刺処理を起動します。body.pageId があれば1件処理、なければ未処理を拾います。activeでも商談準備レポートは自動作成せず、企業マスター高密度化までに止めます。",
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			verifyWebhookSecret(event.headers, event.body);
@@ -4509,7 +4509,7 @@ worker.webhook("processBusinessCardWebhook", {
 worker.webhook("processBusinessCardLinkWebhook", {
 	title: "WAJO 名刺連携のみWebhook",
 	description:
-		"名刺管理DB上の単一名刺を、外部調査・3C・商談準備なしで企業連携まで実行します。",
+		"名刺管理DB上の単一名刺を、外部調査・企業マスター高密度化なしで企業連携まで実行します。",
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			verifyWebhookSecret(event.headers, event.body);
@@ -4534,7 +4534,7 @@ worker.webhook("processBusinessCardLinkWebhook", {
 worker.webhook("processBusinessCardResearchWebhook", {
 	title: "WAJO 名刺調査Webhook",
 	description:
-		"名刺管理DB上の単一名刺を、企業連携済みの想定で外部調査・3C・商談準備レポートまで実行します。",
+		"名刺管理DB上の単一名刺を、第1段階の調査入口として外部調査・企業マスター高密度化まで実行します。商談準備レポートは自動作成しません。",
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			verifyWebhookSecret(event.headers, event.body);
@@ -4543,12 +4543,13 @@ worker.webhook("processBusinessCardResearchWebhook", {
 			if (!pageId) {
 				throw new Error("pageId / page_id / entity.id のいずれからも名刺ページIDを特定できませんでした。");
 			}
+			const runOptions = readBusinessCardResearchWebhookRunOptions();
 			await processBusinessCard(
 				{
 					pageId,
 					dryRun: false,
-					deepResearch: true,
-					autoCreateMeetingPrepReport: true,
+					deepResearch: runOptions.deepResearch,
+					autoCreateMeetingPrepReport: runOptions.autoCreateMeetingPrepReport,
 					force: true,
 				},
 				notion as unknown as NotionClient,
@@ -6071,6 +6072,33 @@ function readBusinessCardWebhookPageId(body: unknown): string | undefined {
 	return extractWebhookPageId(coerceWebhookBodyRecord(body));
 }
 export { readBusinessCardRunOptions as readBusinessCardRunOptionsForTest };
+
+function readBusinessCardByIdRunOptions(): {
+	deepResearch: boolean;
+	autoCreateMeetingPrepReport: boolean;
+} {
+	return { deepResearch: true, autoCreateMeetingPrepReport: false };
+}
+export { readBusinessCardByIdRunOptions as readBusinessCardByIdRunOptionsForTest };
+
+function readPendingBusinessCardsRunOptions(): {
+	deepResearch: boolean;
+	autoCreateMeetingPrepReport: boolean;
+} {
+	return { deepResearch: true, autoCreateMeetingPrepReport: false };
+}
+export { readPendingBusinessCardsRunOptions as readPendingBusinessCardsRunOptionsForTest };
+
+function readBusinessCardResearchWebhookRunOptions(): {
+	deepResearch: boolean;
+	autoCreateMeetingPrepReport: boolean;
+} {
+	return { deepResearch: true, autoCreateMeetingPrepReport: false };
+}
+export {
+	readBusinessCardResearchWebhookRunOptions as readBusinessCardResearchWebhookRunOptionsForTest,
+};
+
 
 async function callOpenAIBusinessCardOcr(imageDataUrl: string): Promise<BusinessCardOcr> {
 	const apiKey = process.env.OPENAI_API_KEY || process.env.WAJO_OPENAI_API_KEY;
