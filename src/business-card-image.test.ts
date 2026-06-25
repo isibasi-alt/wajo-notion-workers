@@ -186,6 +186,8 @@ async function main() {
 		assert.ok(json.includes("仲介 次郎"));
 		assert.ok(json.includes("関係構築中")); // 死蔵させない=働きかけ対象として登録
 		assert.ok(json.includes("要確認")); // 信頼度は人が判断するまで断定しない
+		assert.equal("ブローカー一次判定スコア" in props, false); // 初期登録では採点済みに見せない
+		assert.ok(json.includes("60点判定ロジックは未実行"));
 		assert.ok(json.includes("ブローカー商事")); // 所属はメモに残る
 		assert.ok(json.includes("090-0000-0000"));
 		assert.ok(json.includes("user-123"));
