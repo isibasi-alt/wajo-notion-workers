@@ -6564,8 +6564,8 @@ function calculateBrokerPrimaryAssessment(ocr: BusinessCardOcr): BrokerPrimaryAs
 	};
 	const subtract = (points: number, reason: string) => {
 		score -= points;
-		companyReasons.push(`${points}: ${reason}`);
-		scoreReasons.push(`${points}: ${reason}`);
+		companyReasons.push(`-${points}: ${reason}`);
+		scoreReasons.push(`-${points}: ${reason}`);
 	};
 
 	if (/社外顧問|(?<!社外)顧問|アドバイザー|advisor|コンサル|consultant|紹介|仲介|ブローカー|broker|エージェント|agent/i.test(joined)) {
@@ -6588,13 +6588,13 @@ function calculateBrokerPrimaryAssessment(ocr: BusinessCardOcr): BrokerPrimaryAs
 	}
 
 	if (/代表取締役|代表|社長|取締役|役員|事業責任者|部門長|部長|工場長|責任者/i.test(roleText)) {
-		subtract(-20, "肩書に自社判断者の兆候あり");
+		subtract(20, "肩書に自社判断者の兆候あり");
 	}
 	if (/自社.*(電気代|設備|土地|発電所|蓄電池|ppa|屋根|工場|倉庫)|弊社.*(電気代|設備|土地|発電所|蓄電池|ppa|屋根|工場|倉庫)/i.test(memoText)) {
-		subtract(-25, "初回メモが自社課題の相談に見える");
+		subtract(25, "初回メモが自社課題の相談に見える");
 	}
 	if (companyText && email && !/(gmail|yahoo|icloud|outlook|hotmail|docomo|ezweb|softbank|au\.com)/i.test(email)) {
-		subtract(-10, "会社名と会社メールらしき連絡先がある");
+		subtract(10, "会社名と会社メールらしき連絡先がある");
 	}
 
 	if (!ocr.氏名) stopReasons.push("氏名が未確認");

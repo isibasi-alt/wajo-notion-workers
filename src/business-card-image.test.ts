@@ -174,7 +174,7 @@ async function main() {
 				役職: "社外顧問",
 				部署: "",
 				電話: "090-0000-0000",
-				メール: "jiro@example.com",
+				メール: "",
 				住所: "",
 				メモ: "第三者案件を紹介する。投資家の知り合いがあり、紹介契約でつなぐだけ。発注権限なし。",
 			},
@@ -186,7 +186,7 @@ async function main() {
 		assert.ok(json.includes("仲介 次郎"));
 		assert.ok(json.includes("関係構築中")); // 死蔵させない=働きかけ対象として登録
 		assert.ok(json.includes("要確認")); // 信頼度は人が判断するまで断定しない
-		assert.deepEqual(props["ブローカー一次判定スコア"], { number: 60 });
+		assert.deepEqual(props["ブローカー一次判定スコア"], { number: 70 });
 		assert.ok(json.includes("routing=broker"));
 		assert.ok(json.includes("紹介契約"));
 		assert.ok(json.includes("ブローカー商事")); // 所属はメモに残る
