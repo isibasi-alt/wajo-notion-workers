@@ -5869,19 +5869,14 @@ async function processBusinessCard(
 	}
 
 	if (routing === "broker") {
-		const memo = buildHoldMemo({
-			stopReason: "名刺振り分けで「社外顧問・ブローカー」が選択されたため、企業高密度化の外部調査対象外。",
-			scope: "名刺情報(会社名/連絡先)の確認のみ。",
-			humanDecision: "ブローカー/社外顧問の別DB登録要否を営業側で決める。",
-			restartCondition: "本件を企業案件として扱う判断を明確化した場合のみ、再起動して企業連携を実行。",
-		});
+		const memo = buildBrokerRegistrationHoldMemo(card, engagementIntent);
 		await markCardNeedsReview(notion, card, memo);
 		return {
 			pageId: input.pageId,
 			action: "needs-review",
 			companyId: null,
 			companyName: null,
-			message: `routing=${routing} / engagement=${engagementIntent} のため企業連携を停止しました。`,
+			message: `routing=${routing} / engagement=${engagementIntent} のため企業連携を停止し、ブローカー登録ライン待ちにしました。`,
 		};
 	}
 
@@ -6112,6 +6107,50 @@ function parseBusinessCardOcr(raw: string): BusinessCardOcr | null {
 	}
 }
 export { parseBusinessCardOcr as parseBusinessCardOcrForTest };
+
+function buildBrokerRegistrationHoldMemo(
+	card: {
+		name?: string;
+		companyName?: string;
+		email?: string;
+		phone?: string;
+		address?: string;
+	},
+	engagementIntent: "active" | "save-only",
+): string {
+	const valueOrUnknown = (value: string | undefined) => {
+		const trimmed = String(value ?? "").trim();
+		return trimmed || "未取得";
+	};
+	const candidateLines = [
+		`氏名: ${valueOrUnknown(card.name)}`,
+		`会社名/所属: ${valueOrUnknown(card.companyName)}`,
+		`メール: ${valueOrUnknown(card.email)}`,
+		`電話: ${valueOrUnknown(card.phone)}`,
+		`住所: ${valueOrUnknown(card.address)}`,
+		`engagementIntent: ${engagementIntent}`,
+	].join("\n");
+
+	return `${buildHoldMemo({
+		stopReason:
+			"名刺振り分けで「社外顧問・ブローカー」が選択されたため、企業マスター高密度化ラインの外部調査対象外。",
+		scope: "名刺情報(氏名/会社名/連絡先)の確認のみ。企業候補検索、企業作成、外部調査は実施しない。",
+		humanDecision:
+			"大ちゃんまたは営業責任者が、ブローカー/社外顧問として別ラインに登録するか、企業案件として再扱いするかを決める。",
+		restartCondition:
+			"企業案件として扱う判断が明確になった場合のみ routing=company で再実行。ブローカー登録する場合は、登録先DB/UI/トリガー確定後に専用ラインで処理する。",
+	})}
+
+【ブローカー登録ライン】
+【現在の扱い】企業マスター高密度化ラインへ進めず、ブローカー/社外顧問の別ライン待ちにする。
+【登録候補情報】
+${candidateLines}
+【一次判定】未実施。60点基準はブローカー一次判定ロジックで別途判定する。
+【停止条件】情報不足、本人の立場不明、会社/ドメイン衝突、broker/company兆候拮抗はbroker加点に使わず、要確認またはlaterへ逃がす。
+【個人リスク】反社判定は行わない。本人一致度、リスク兆候、追加確認要否だけを整理する。
+【未実施】ブローカー登録先DB、Notion UI権限、登録トリガーが未確定のため、このWorkerでは自動登録しない。
+【次アクション】登録先DB/UI/トリガー確定後、登録ボタンまたは専用Webhookで別ラインへ送る。`;
+}
 
 // 振り分け(入口で営業が選ぶ)の正規化(純関数)。絵文字つきラベルでも判定できるようにする。
 function normalizeCardRouting(value: string | undefined): "company" | "broker" | "later" {
