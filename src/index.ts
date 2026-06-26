@@ -27258,6 +27258,26 @@ async function processClosingReport(
 
 	// 6. ページコンテンツ（callout）
 	const contentBlocks: unknown[] = [];
+	contentBlocks.push({
+		object: "block",
+		type: "callout",
+		callout: {
+			rich_text: [{
+				type: "text",
+				text: {
+					content: buildClosingFanfareMessage({
+						projectName,
+						grossProfit,
+						commissionAmount,
+						syncedDealCount: syncedDeals.updatedCount,
+						linkedDealCount: syncedDeals.dealIds.length,
+					}),
+				},
+			}],
+			icon: { emoji: "🎉" },
+			color: "green_background",
+		},
+	});
 	if (!hasSeparateSourcing) {
 		contentBlocks.push({
 			object: "block",
@@ -27525,6 +27545,36 @@ function buildClosingSuccessMessage({
 		"",
 		"マネージャーは必要に応じて差し戻し/取り消しを行えます。",
 		commissionNote,
+	].join("\n");
+}
+
+function buildClosingFanfareMessage({
+	projectName,
+	grossProfit,
+	commissionAmount,
+	syncedDealCount,
+	linkedDealCount,
+}: {
+	projectName: string;
+	grossProfit: number;
+	commissionAmount: number;
+	syncedDealCount: number;
+	linkedDealCount: number;
+}): string {
+	return [
+		`🎉 成約ファンファーレ: ${projectName}`,
+		"",
+		"成約報告 実行結果",
+		"案件更新: 成功",
+		`商談同期: ${syncedDealCount}件成功 / 関連商談 ${linkedDealCount}件`,
+		"成約報告DB: 作成済み",
+		"関連案件: 紐付け済み",
+		linkedDealCount > 0 ? "関連商談: 紐付け済み" : "関連商談: 対象なし",
+		`粗利額: ${formatYen(grossProfit)}`,
+		`歩合見込: ${formatYen(commissionAmount)}`,
+		"月次成績反映: 後続処理で確認",
+		"AIフィードバック: 後続処理で確認",
+		"ナレッジ候補: AI処理後に判定",
 	].join("\n");
 }
 

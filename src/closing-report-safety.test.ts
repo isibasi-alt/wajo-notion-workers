@@ -76,7 +76,23 @@ async function main() {
 			関連案件: { relation: Array<{ id: string }> };
 			担当営業ユーザー: { people: Array<{ id: string }> };
 		};
+		children: Array<{
+			type: string;
+			callout?: {
+				rich_text: Array<{ text: { content: string } }>;
+			};
+		}>;
 	};
+	const firstBlockText = closingCreate.children[0]!.callout!.rich_text
+		.map((item) => item.text.content)
+		.join("");
+	assert.equal(closingCreate.children[0]!.type, "callout");
+	assert.match(firstBlockText, /成約ファンファーレ/);
+	assert.match(firstBlockText, /成約報告 実行結果/);
+	assert.match(firstBlockText, /案件更新: 成功/);
+	assert.match(firstBlockText, /成約報告DB: 作成済み/);
+	assert.match(firstBlockText, /月次成績反映: 後続処理で確認/);
+	assert.match(firstBlockText, /歩合見込: ¥49,200/);
 	// 旧「承認ステータス: 成約」は実機DBに存在しない列(退役リネーム済み)のため、
 	// pages.create に含めない(含めると validation_error で成約報告の作成が落ちる)
 	assert.equal(closingCreate.properties.承認ステータス, undefined);
