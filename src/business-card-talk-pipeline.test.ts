@@ -112,6 +112,26 @@ async function withoutAiKeys<T>(fn: () => Promise<T>): Promise<T> {
 	}
 }
 
+async function withFakePerplexity<T>(content: string, fn: () => Promise<T>): Promise<T> {
+	const oldPerplexity = process.env.PERPLEXITY_API_KEY;
+	const oldFetch = globalThis.fetch;
+	process.env.PERPLEXITY_API_KEY = "test-perplexity-key";
+	globalThis.fetch = (async () => ({
+		ok: true,
+		json: async () => ({
+			choices: [{ message: { content } }],
+			citations: ["https://example.com/advisor-profile"],
+		}),
+	})) as typeof fetch;
+	try {
+		return await fn();
+	} finally {
+		if (oldPerplexity === undefined) delete process.env.PERPLEXITY_API_KEY;
+		else process.env.PERPLEXITY_API_KEY = oldPerplexity;
+		globalThis.fetch = oldFetch;
+	}
+}
+
 function makeNotionForCardCase(companyClosingPoint: string) {
 	const card = {
 		id: "card-1",
@@ -614,6 +634,63 @@ async function main() {
 	assert.deepEqual(cardAdvisorUpdate!.properties?.["関連社外顧問"], {
 		relation: [{ id: "advisor-page-1" }],
 	});
+
+	const advisorPublicResearchCase = makeNotionForNewCardCase({
+		cardCompanyName: "CLUB AMON",
+		cardName: "瀬名 亮",
+		cardRole: "Producer",
+		cardPhone: "06-6225-8098",
+		cardMemo: "紹介者候補。本人一致は未確認。",
+	});
+	const advisorPublicResearchResult = await withFakePerplexity(
+		[
+			"【公開Web調査日】2026-06-26",
+			"【本人一致度】低",
+			"【所属確認】未確認",
+			"【電話番号一致】未確認",
+			"【紹介可能領域】未確認",
+			"【紹介実績】未確認",
+			"【リスク兆候】要確認",
+			"【確認できた情報】",
+			"- 公開Web強一致なし",
+			"【確認できなかった情報】",
+			"- 本人・所属・電話番号の強一致",
+			"【注意点】",
+			"- 反社判定、信用断定、紹介可否判断は行わない",
+			"【次アクション】要追加調査",
+		].join("\n"),
+		() =>
+			processBusinessCardForTest(
+				{
+					pageId: "card-1",
+					dryRun: false,
+					routing: "broker",
+					engagementIntent: "active",
+					registerExternalAdvisor: true,
+				},
+				advisorPublicResearchCase.notion,
+			),
+	);
+	assert.equal(advisorPublicResearchResult.action, "external-advisor-registered");
+	const advisorPublicResearchUpdate = advisorPublicResearchCase.updates.find(
+		(update) => update.page_id === "advisor-page-1" && update.properties?.["判定根拠メモ"],
+	);
+	assert.ok(advisorPublicResearchUpdate);
+	assert.match(
+		richTextFromPatch(advisorPublicResearchUpdate!.properties?.["判定根拠メモ"]),
+		/【公開Web調査 2026-06-26】/,
+	);
+	assert.match(
+		richTextFromPatch(advisorPublicResearchUpdate!.properties?.["判定根拠メモ"]),
+		/公開Web強一致なし/,
+	);
+	assert.equal(selectName(advisorPublicResearchUpdate!.properties?.["候補本人一致度"]), "低");
+	assert.equal(selectName(advisorPublicResearchUpdate!.properties?.["リスク兆候"]), "要確認");
+	assert.equal(selectName(advisorPublicResearchUpdate!.properties?.["次アクション"]), "要追加調査");
+	assert.match(
+		richTextFromPatch(advisorPublicResearchUpdate!.properties?.["注意点"]),
+		/反社判定、信用断定、紹介可否判断は行わない/,
+	);
 
 	const advisorStrongMemoCase = makeNotionForNewCardCase({
 		cardCompanyName: "紹介パートナー株式会社",
