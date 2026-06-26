@@ -5551,20 +5551,20 @@ worker.webhook("processSalesTalkFinalizeWebhook", {
 worker.webhook("processClosingReportWebhook", {
 	title: "WAJO 成約報告Webhook",
 	description:
-		"案件管理DBの「🏆 成約報告する」ボタンから起動。重複ガード付きで成約報告DBに成約レコードを作成し、案件ステータスを「🏆 成約」に更新。マネージャーは後追いで差し戻し/取り消しを行います。",
+		"案件管理DBまたは商談管理DBの「成約報告」ボタンから起動。商談ページの場合は関連案件を1件解決して、重複ガード付きで成約報告DBに成約レコードを作成し、案件ステータスを「🏆 成約」に更新します。マネージャーは後追いで差し戻し/取り消しを行います。",
 	execute: async (events, { notion }) => {
 		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
 		for (const event of events) {
 			const body = event.body as Record<string, unknown>;
-			const projectPageId = extractProjectPageIdFromWebhook(body);
-			if (!projectPageId) {
+			const sourcePageId = extractProjectPageIdFromWebhook(body);
+			if (!sourcePageId) {
 				throw new Error(
 					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
 				);
 			}
 			// ボタンを押したユーザーIDを取得（担当営業に自動セット）
 			const triggerUserId = extractTriggerUserIdFromWebhook(body);
-			await processClosingReport(projectPageId, notion as unknown as NotionClient, triggerUserId);
+			await processClosingReportRequest(sourcePageId, notion as unknown as NotionClient, triggerUserId);
 		}
 	},
 });
@@ -26161,6 +26161,70 @@ function extractClosingReportPageIdFromWebhook(body: Record<string, unknown>): s
 	);
 }
 
+async function resolveClosingReportProjectPageId(
+	sourcePageId: string,
+	notion: NotionClient,
+): Promise<{
+	action: "ready" | "needs-related-project" | "ambiguous-related-project";
+	message: string;
+	projectPageId: string | null;
+	sourcePageId: string;
+}> {
+	const sourcePage = await notion.pages.retrieve({ page_id: sourcePageId });
+	const parentDataSourceId = ((sourcePage as { parent?: { data_source_id?: string } }).parent)?.data_source_id;
+	if (parentDataSourceId === PROJECT_DATA_SOURCE_ID) {
+		return {
+			action: "ready",
+			message: "案件管理DBページとして成約報告を続行します。",
+			projectPageId: sourcePageId,
+			sourcePageId,
+		};
+	}
+
+	const relatedProjectIds = relationIdsFromProperty(sourcePage.properties?.["関連案件"]);
+	const sourceTitle = readGenericPageTitle(sourcePage) || sourcePageId;
+	if (relatedProjectIds.length === 1) {
+		return {
+			action: "ready",
+			message: `商談「${sourceTitle}」の関連案件から成約報告を続行します。`,
+			projectPageId: relatedProjectIds[0]!,
+			sourcePageId,
+		};
+	}
+
+	if (relatedProjectIds.length === 0) {
+		const message = [
+			`⚠️ 成約報告を止めました: ${sourceTitle}`,
+			"",
+			"この商談ページに「関連案件」が入っていないため、どの案件を成約にするか特定できません。",
+			"商談ページの「関連案件」を1件だけ設定してから、もう一度「成約報告する」を押してください。",
+			"この時点では案件ステータス、成約報告DB、月次成績は更新していません。",
+		].join("\n");
+		await createPageComment(notion, sourcePageId, message);
+		return {
+			action: "needs-related-project",
+			message,
+			projectPageId: null,
+			sourcePageId,
+		};
+	}
+
+	const message = [
+		`⚠️ 成約報告を止めました: ${sourceTitle}`,
+		"",
+		`この商談ページに「関連案件」が${relatedProjectIds.length}件入っているため、どの案件を成約にするか一意に決められません。`,
+		"商談ページの「関連案件」を1件だけにしてから、もう一度「成約報告する」を押してください。",
+		"この時点では案件ステータス、成約報告DB、月次成績は更新していません。",
+	].join("\n");
+	await createPageComment(notion, sourcePageId, message);
+	return {
+		action: "ambiguous-related-project",
+		message,
+		projectPageId: null,
+		sourcePageId,
+	};
+}
+
 /** Webhookを起動したユーザーのIDを抽出（ボタンを押した人） */
 function extractTriggerUserIdFromWebhook(body: Record<string, unknown>): string | undefined {
 	return firstString(
@@ -27357,6 +27421,36 @@ async function processClosingReport(
 	};
 }
 
+async function processClosingReportRequest(
+	sourcePageId: string,
+	notion: NotionClient,
+	triggerUserId?: string,
+): Promise<{
+	action: string;
+	message: string;
+	closingPageId: string | null;
+	projectPageId: string | null;
+	sourcePageId: string;
+}> {
+	const resolved = await resolveClosingReportProjectPageId(sourcePageId, notion);
+	if (!resolved.projectPageId) {
+		return {
+			action: resolved.action,
+			message: resolved.message,
+			closingPageId: null,
+			projectPageId: null,
+			sourcePageId,
+		};
+	}
+
+	const result = await processClosingReport(resolved.projectPageId, notion, triggerUserId);
+	return {
+		...result,
+		projectPageId: resolved.projectPageId,
+		sourcePageId,
+	};
+}
+
 function buildMissingGrossProfitMessage(projectName: string): string {
 	return [
 		`⚠️ 成約報告の準備はできています: ${projectName}`,
@@ -27628,6 +27722,7 @@ export {
 	linkClosingToMonthlyPerformanceRecord as linkClosingToMonthlyPerformanceRecordForTest,
 	linkClosingToMonthlyPerformanceRecord as linkClosingToPerformanceRecordForTest,
 	processClosingReport as processClosingReportForTest,
+	processClosingReportRequest as processClosingReportRequestForTest,
 };
 
 function monthWindowJST(now: Date): {
