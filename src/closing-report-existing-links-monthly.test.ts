@@ -4,6 +4,8 @@ import { processClosingReportForTest } from "./index";
 const queries: Array<Record<string, unknown>> = [];
 const updates: Array<Record<string, unknown>> = [];
 const creates: Array<Record<string, unknown>> = [];
+const appends: Array<Record<string, unknown>> = [];
+const comments: Array<Record<string, unknown>> = [];
 
 const CLOSING_REPORT_DATA_SOURCE_ID = "8d5a506b-59b8-4e50-bc77-d5412774048d";
 const DEAL_DATA_SOURCE_ID = "7838db8a-907a-4c61-b062-109f8278b2c9";
@@ -79,7 +81,18 @@ const notion = {
 		},
 	},
 	comments: {
-		create: async () => ({}),
+		create: async (args: Record<string, unknown>) => {
+			comments.push(args);
+			return {};
+		},
+	},
+	blocks: {
+		children: {
+			append: async (args: Record<string, unknown>) => {
+				appends.push(args);
+				return {};
+			},
+		},
 	},
 };
 
@@ -119,6 +132,16 @@ async function main() {
 			},
 		},
 	});
+	const fanfareAppend = appends.find((append) => {
+		if (append.block_id !== "closing-existing") return false;
+		return JSON.stringify(append).includes("成約ファンファーレ");
+	});
+	assert.ok(fanfareAppend, "既存成約報告ページにも成約ファンファーレcalloutを追記する");
+	const celebrationComment = comments.find((comment) =>
+		JSON.stringify(comment).includes("クラッカー画面を開く")
+	);
+	assert.ok(celebrationComment, "案件ページにクラッカー画面リンクコメントを投稿する");
+	assert.match(JSON.stringify(celebrationComment), /add=1500000/);
 }
 
 main().catch((error) => {

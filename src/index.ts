@@ -27326,10 +27326,26 @@ async function processClosingReport(
 		} catch (error) {
 			console.error("existing closing monthly link repair error:", String(error));
 		}
+		if (closingSummary) {
+			await appendClosingFanfareCallout(notion, existingId, {
+				projectName,
+				grossProfit: closingSummary.grossProfit,
+				commissionAmount: closingSummary.commissionAmount,
+				syncedDealCount: syncedDeals.updatedCount,
+				linkedDealCount: syncedDeals.dealIds.length,
+			});
+		}
 		const message = linked
 			? `この案件の成約報告は既に存在します（ID: ${existingId}）。重複作成せず、案件ステータスを「🏆 成約」へ補修し、月次成績への紐付けを確認しました。関連商談 ${syncedDeals.updatedCount} 件を成約へ同期しました。`
 			: `この案件の成約報告は既に存在します（ID: ${existingId}）。重複作成せず、案件ステータスを「🏆 成約」へ補修しました。関連商談 ${syncedDeals.updatedCount} 件を成約へ同期しました。月次成績への紐付けは未確認です。`;
 		await createPageComment(notion, projectPage.id, message);
+		if (closingSummary) {
+			await createPageComment(
+				notion,
+				projectPage.id,
+				buildClosingCelebrationComment(projectName, closingSummary.grossProfit),
+			);
+		}
 		return {
 			action: linked ? "already-exists-linked" : "already-exists",
 			closingPageId: existingId,
@@ -27595,6 +27611,14 @@ async function processClosingReport(
 	).catch(() => {
 		// コメントAPIが利用できない場合はサイレントスキップ
 	});
+	void createPageComment(
+		notion,
+		projectPage.id,
+		buildClosingCelebrationComment(projectName, grossProfit),
+		false,
+	).catch(() => {
+		// コメントAPIが利用できない場合はサイレントスキップ
+	});
 
 	// 9. AI フィードバック（勝因・学び・ナレッジ化候補）を生成。await で完走させる
 	// （このランタイムは return 後の非同期を破棄するため、void だと OpenAI 完了前に
@@ -27743,6 +27767,42 @@ function buildClosingFanfareMessage({
 		"AIフィードバック: 後続処理で確認",
 		"ナレッジ候補: AI処理後に判定",
 	].join("\n");
+}
+
+function buildClosingCelebrationComment(projectName: string, grossProfit: number): string {
+	const celebrationUrl = `https://effulgent-pie-bed871.netlify.app/wajo_deal_closed_v4?add=${grossProfit}&deal=${encodeURIComponent(projectName)}&mode=modern`;
+	return `🎊 ${projectName} 成約おめでとうございます！\nクラッカー画面を開く → ${celebrationUrl}`;
+}
+
+async function appendClosingFanfareCallout(
+	notion: NotionClient,
+	closingPageId: string,
+	input: {
+		projectName: string;
+		grossProfit: number;
+		commissionAmount: number;
+		syncedDealCount: number;
+		linkedDealCount: number;
+	},
+): Promise<void> {
+	if (!notion.blocks?.children?.append) return;
+	await notion.blocks.children.append({
+		block_id: closingPageId,
+		children: [
+			{
+				object: "block",
+				type: "callout",
+				callout: {
+					rich_text: [{
+						type: "text",
+						text: { content: buildClosingFanfareMessage(input) },
+					}],
+					icon: { emoji: "🎉" },
+					color: "green_background",
+				},
+			},
+		],
+	});
 }
 
 function formatYen(value: number): string {
