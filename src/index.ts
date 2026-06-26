@@ -27133,6 +27133,8 @@ function buildBrokerCaseMemo(brokerName: string, caseMemo: string): string {
 		"社外顧問DBからWorker紹介案件化。",
 		`紹介元: ${brokerName}`,
 		caseMemo ? `起点メモ: ${caseMemo}` : "起点メモ: 未入力。対象物・売買条件・価格・所有者/決裁者を確認してください。",
+		"営業上の見方: ブローカー紹介起点で案件化。具体条件は情報収集中。",
+		"次の一手: 対象物・売買条件・価格・所有者/決裁者を確認し、案件名を実態に合わせて修正する。",
 		"案件DBには具体案件だけを作る。ブローカー預かりや匂いだけの段階は社外顧問DBで追跡する。",
 	].join("\n");
 }
@@ -27182,9 +27184,7 @@ async function processBrokerCaseCreation(
 		紹介ブローカー: relation(brokerPageId),
 		案件詳細: richText(memo),
 		情報ソース: richText("社外顧問DB / Worker紹介案件化"),
-		確認待ち内容: richText("対象物、売買条件、価格、所有者/決裁者、必要資料を確認してください。"),
-		AI営業マップ: richText("ブローカー紹介起点で案件化。具体条件は情報収集中。"),
-		次のアクション: richText("対象物・売買条件・価格・所有者/決裁者を確認し、案件名を実態に合わせて修正する。"),
+		確認待ち内容: richText("対象物、売買条件、価格、所有者/決裁者、必要資料を確認してください。次の一手は案件詳細に記録しています。"),
 	};
 	if (assignedUserIds.length > 0) {
 		projectProperties["担当営業ユーザー"] = {
