@@ -6703,19 +6703,21 @@ async function updateExistingAdvisorAssessmentFromCard(
 	advisorPage: Page,
 	ocr: BusinessCardOcr,
 	cardPageId?: string,
-): Promise<void> {
+): Promise<Record<string, unknown>> {
 	const assessment = calculateBrokerPrimaryAssessment(ocr);
+	const properties = {
+		ブローカー一次判定スコア: { number: assessment.score },
+		ブローカー一次判定結果: select(assessment.routing),
+		候補本人一致度: select("低"),
+		リスク兆候: select("要確認"),
+		次アクション: select(assessment.nextAction),
+		判定根拠メモ: richText(buildExternalAdvisorAssessmentMemo(ocr, assessment, cardPageId)),
+	};
 	await notion.pages.update({
 		page_id: advisorPage.id,
-		properties: {
-			ブローカー一次判定スコア: { number: assessment.score },
-			ブローカー一次判定結果: select(assessment.routing),
-			候補本人一致度: select("低"),
-			リスク兆候: select("要確認"),
-			次アクション: select(assessment.nextAction),
-			判定根拠メモ: richText(buildExternalAdvisorAssessmentMemo(ocr, assessment, cardPageId)),
-		},
+		properties,
 	});
+	return properties;
 }
 
 async function linkBusinessCardToAdvisor(
@@ -6765,13 +6767,15 @@ async function registerExternalAdvisorFromBusinessCard(
 	notion: NotionClient,
 	card: CardInfo,
 ): Promise<{ page: Page; created: boolean }> {
+	const ocr = businessCardOcrFromCardInfo(card);
 	const advisor = await createAdvisorFromCard(
 		notion,
-		businessCardOcrFromCardInfo(card),
+		ocr,
 		undefined,
 		typeof card.page.url === "string" ? card.page.url : "",
 		card.page.id,
 	);
+	await researchExternalAdvisorPublicWeb(notion, advisor.page, ocr);
 	const memo = [
 		`【社外顧問DB登録】${advisor.created ? "新規登録" : "既存ページへ紐づけ更新"}`,
 		`【社外顧問ページ】${advisor.page.id}`,
@@ -6801,8 +6805,14 @@ async function createAdvisorFromCard(
 		const existing = dup.results[0];
 		if (existing) {
 			if (cardPageId) await linkAdvisorToBusinessCard(notion, existing, cardPageId);
-			await updateExistingAdvisorAssessmentFromCard(notion, existing, ocr, cardPageId);
-			return { page: existing, created: false };
+			const updatedProperties = await updateExistingAdvisorAssessmentFromCard(notion, existing, ocr, cardPageId);
+			return {
+				page: {
+					...existing,
+					properties: { ...(existing.properties ?? {}), ...updatedProperties },
+				} as Page,
+				created: false,
+			};
 		}
 	}
 	const page = await notion.pages.create({
@@ -6816,6 +6826,156 @@ async function createAdvisorFromCard(
 		),
 	});
 	return { page, created: true };
+}
+
+type ExternalAdvisorPublicWebResearch = {
+	memo: string;
+	notes: string;
+	identity: "高" | "中" | "低";
+	risk: "なし" | "軽微" | "要確認" | "強い要確認";
+	nextAction: "進行可" | "軽確認" | "要追加調査" | "要管理者確認" | "要法務確認" | "保留";
+};
+
+function buildExternalAdvisorPublicWebPrompt(ocr: BusinessCardOcr): string {
+	const name = ocr.氏名 || "氏名未確認";
+	const company = ocr.会社名 || "所属候補未確認";
+	const domain = (ocr.メール || "").split("@")[1] || "メールドメイン未確認";
+	return [
+		"和上ホールディングスの社外顧問・ブローカー候補について、公開Web情報だけで本人一致度と追加確認事項を整理してください。",
+		"反社判定、信用断定、紹介可否判断は行わないでください。",
+		"同姓同名を本人と断定せず、出典URLがある事実だけを書いてください。",
+		"",
+		`氏名: ${name}`,
+		`所属候補: ${company}`,
+		`役職: ${ocr.役職 || "未確認"}`,
+		`電話番号: ${ocr.電話 || "未確認"}`,
+		`メールドメイン: ${domain}`,
+		`住所/地域: ${ocr.住所 || "未確認"}`,
+		`メモ: ${ocr.メモ || "なし"}`,
+		"",
+		"最低検索セット: 氏名、氏名空白あり/なし、氏名+所属候補、氏名+電話番号、氏名+メールドメイン、所属候補+電話番号、所属候補+地域、氏名+紹介、氏名+仲介、氏名+顧問、氏名+コンサル、氏名+案件、氏名+投資家、氏名+人脈。",
+		"",
+		"次の形式で返してください。",
+		"【公開Web調査日】YYYY-MM-DD",
+		"【検索した語】",
+		"- ...",
+		"【本人一致度】高 / 中 / 低",
+		"【所属確認】確認 / 候補あり / 未確認",
+		"【電話番号一致】確認 / 候補あり / 未確認",
+		"【紹介可能領域】確認 / 候補あり / 未確認",
+		"【紹介実績】確認 / 候補あり / 未確認",
+		"【リスク兆候】なし / 軽微 / 要確認 / 強い要確認",
+		"【確認できた情報】",
+		"- 事実: ... 出典: URL",
+		"【確認できなかった情報】",
+		"- ...",
+		"【注意点】",
+		"- ...",
+		"【次に人が確認すること】",
+		"- 本人確認",
+		"- 所属確認",
+		"- 紹介可能領域",
+		"- 紹介実績",
+		"- 社内紹介経路",
+		"【次アクション】進行可 / 軽確認 / 要追加調査 / 要管理者確認 / 要法務確認 / 保留",
+	].join("\n");
+}
+
+function extractBracketValue(raw: string, label: string): string {
+	const match = raw.match(new RegExp(`【${label}】([^\\n]+)`));
+	return match?.[1]?.trim() ?? "";
+}
+
+function normalizeAdvisorIdentity(value: string): ExternalAdvisorPublicWebResearch["identity"] {
+	if (value.includes("高")) return "高";
+	if (value.includes("中")) return "中";
+	return "低";
+}
+
+function normalizeAdvisorRisk(value: string): ExternalAdvisorPublicWebResearch["risk"] {
+	if (value.includes("強い要確認")) return "強い要確認";
+	if (value.includes("要確認")) return "要確認";
+	if (value.includes("軽微")) return "軽微";
+	return "なし";
+}
+
+function normalizeAdvisorNextAction(value: string): ExternalAdvisorPublicWebResearch["nextAction"] {
+	if (value.includes("要法務確認")) return "要法務確認";
+	if (value.includes("要管理者確認")) return "要管理者確認";
+	if (value.includes("要追加調査")) return "要追加調査";
+	if (value.includes("軽確認")) return "軽確認";
+	if (value.includes("進行可")) return "進行可";
+	return "要追加調査";
+}
+
+function normalizeExternalAdvisorPublicWebResearch(raw: string, today: string): ExternalAdvisorPublicWebResearch {
+	const identity = normalizeAdvisorIdentity(extractBracketValue(raw, "本人一致度"));
+	const risk = normalizeAdvisorRisk(extractBracketValue(raw, "リスク兆候"));
+	const nextAction = normalizeAdvisorNextAction(extractBracketValue(raw, "次アクション"));
+	return {
+		memo: [`【公開Web調査 ${today}】`, raw.trim()].filter(Boolean).join("\n"),
+		notes: [
+			`【公開Web調査 ${today} 注意点】`,
+			extractBracketValue(raw, "注意点") || "反社判定、信用断定、紹介可否判断は行わない。本人確認、所属確認、紹介可能領域、紹介実績、社内紹介経路を人が確認する。",
+		].join("\n"),
+		identity,
+		risk: risk === "なし" && identity === "低" ? "要確認" : risk,
+		nextAction: identity === "低" && nextAction === "進行可" ? "要追加調査" : nextAction,
+	};
+}
+
+function buildExternalAdvisorPublicWebNotRun(today: string, reason: string): ExternalAdvisorPublicWebResearch {
+	return {
+		memo: [
+			`【公開Web調査未実行 ${today}】`,
+			`理由: ${reason}`,
+			"公開Web調査結果は捏造せず、未調査として残す。",
+		].join("\n"),
+		notes: [
+			`【公開Web調査未実行 ${today} 注意点】`,
+			"本人確認、所属確認、紹介可能領域、紹介実績、社内紹介経路を人が確認する。",
+			"反社判定、信用断定、紹介可否判断は行わない。",
+		].join("\n"),
+		identity: "低",
+		risk: "要確認",
+		nextAction: "要追加調査",
+	};
+}
+
+async function researchExternalAdvisorPublicWeb(
+	notion: NotionClient,
+	advisorPage: Page,
+	ocr: BusinessCardOcr,
+): Promise<void> {
+	const today = todayDateJST();
+	let research: ExternalAdvisorPublicWebResearch;
+	if (!currentPerplexityApiKey()) {
+		research = buildExternalAdvisorPublicWebNotRun(today, "PERPLEXITY_API_KEY が未設定");
+	} else {
+		try {
+			const response = await perplexityChat([
+				{
+					role: "user",
+					content: buildExternalAdvisorPublicWebPrompt(ocr),
+				},
+			]);
+			research = normalizeExternalAdvisorPublicWebResearch(response.content, today);
+		} catch (error) {
+			research = buildExternalAdvisorPublicWebNotRun(today, String(error).slice(0, 200));
+		}
+	}
+	const existingMemo = text(advisorPage.properties?.["判定根拠メモ"]);
+	const existingNotes = text(advisorPage.properties?.["注意点"]);
+	await notion.pages.update({
+		page_id: advisorPage.id,
+		properties: {
+			候補本人一致度: select(research.identity),
+			リスク兆候: select(research.risk),
+			次アクション: select(research.nextAction),
+			判定根拠メモ: richText([existingMemo, research.memo].filter(Boolean).join("\n\n")),
+			注意点: richText([existingNotes, research.notes].filter(Boolean).join("\n\n")),
+		},
+	});
 }
 
 type BusinessCardImageInput = {
