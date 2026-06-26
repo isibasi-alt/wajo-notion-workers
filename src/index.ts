@@ -4088,55 +4088,11 @@ worker.tool("processMeetingKnowledgeById", {
 	},
 });
 
-worker.tool("quickStartMeetingByType", {
-	title: "WAJO ミーティング開始",
-	description:
-		"ミーティングデータベースに、本日のミーティングページを作成します。商談はquickStartDealで商談データベースへ作成します。",
-	schema: j.object({
-		meetingType: j
-			.string()
-			.describe("ミーティング、営業会議、1on1など。旧値はタグ候補としてミーティングへ寄せます。商談はquickStartDealを使います。"),
-		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
-	}),
-	outputSchema: j.object({
-		meetingPageId: j.string().nullable(),
-		meetingUrl: j.string().nullable(),
-		action: j.string(),
-		meetingType: j.string(),
-		meetingDate: j.string(),
-		title: j.string(),
-		message: j.string(),
-	}),
-	execute: async ({ meetingType, dryRun }, { notion }) => {
-		return processMeetingQuickStart(
-			{ meetingType, dryRun },
-			notion as unknown as NotionClient,
-		);
-	},
-});
+// Capability上限(100件)を超えるため、補助toolの quickStartMeetingByType は公開しない。
+// Notionボタン用の quickStartMeetingWebhook は下で継続公開する。
 
-worker.tool("quickStartDeal", {
-	title: "WAJO 商談を作る",
-	description:
-		"商談データベースに本日の商談ページを作成します。会議/ミーティングDBには作成しません。関連企業未設定のため要確認で止めます。",
-	schema: j.object({
-		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
-	}),
-	outputSchema: j.object({
-		dealPageId: j.string().nullable(),
-		dealUrl: j.string().nullable(),
-		action: j.string(),
-		dealDate: j.string(),
-		title: j.string(),
-		message: j.string(),
-	}),
-	execute: async ({ dryRun }, { notion }) => {
-		return processDealQuickStart(
-			{ dryRun },
-			notion as unknown as NotionClient,
-		);
-	},
-});
+// Capability上限(100件)を超えるため、補助toolの quickStartDeal は公開しない。
+// Notionボタン用の quickStartDealWebhook は下で継続公開する。
 
 worker.tool("processManagerReviewById", {
 	title: "WAJO 人見さん壁打ち補助",
@@ -4651,10 +4607,10 @@ worker.webhook("processInquiryProjectCreationWebhook", {
 	},
 });
 
-worker.webhook("processBrokerActionWebhook", {
-	title: "WAJO ブローカー案件化/預かりWebhook",
+worker.webhook("processBrokerCaseCreationWebhook", {
+	title: "WAJO ブローカー紹介を案件化Webhook",
 	description:
-		"社外顧問DBのボタンから起動。action=case なら紹介案件化、action=custody ならブローカー預かり登録を実行します。capability上限を避けるため1本のWebhookに集約しています。",
+		"社外顧問DBの「🤝 紹介を案件化する」ボタンから起動。ブローカーから具体案件を受け取った時点で案件管理DBへ紹介案件を作成します。",
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			const body = coerceWebhookBodyRecord(event.body);
@@ -4664,13 +4620,26 @@ worker.webhook("processBrokerActionWebhook", {
 					"brokerPageId / advisorPageId / pageId / entity.id のいずれからも社外顧問ページIDを特定できませんでした。",
 				);
 			}
-			const action = extractBrokerActionFromWebhook(body);
-			if (action === "case") {
-				await processBrokerCaseCreation(brokerPageId, notion as unknown as NotionClient, {
-					triggerUserId: extractTriggerUserIdFromWebhook(body),
-					caseMemo: extractCustodyMemoFromWebhook(body),
-				});
-				continue;
+			await processBrokerCaseCreation(brokerPageId, notion as unknown as NotionClient, {
+				triggerUserId: extractTriggerUserIdFromWebhook(body),
+				caseMemo: extractCustodyMemoFromWebhook(body),
+			});
+		}
+	},
+});
+
+worker.webhook("processBrokerCustodyRegisterWebhook", {
+	title: "WAJO ブローカー預かり登録Webhook",
+	description:
+		"社外顧問DBの「📦 ブローカー預かり登録」ボタンから起動。案件化前のブローカー預かり状態を更新し、追跡タスクを作成します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = coerceWebhookBodyRecord(event.body);
+			const brokerPageId = extractBrokerPageIdFromWebhook(body);
+			if (!brokerPageId) {
+				throw new Error(
+					"brokerPageId / advisorPageId / pageId / entity.id のいずれからも社外顧問ページIDを特定できませんでした。",
+				);
 			}
 			await processBrokerCustodyRegister(brokerPageId, notion as unknown as NotionClient, {
 				triggerUserId: extractTriggerUserIdFromWebhook(body),
@@ -27214,8 +27183,8 @@ async function processBrokerCaseCreation(
 		案件詳細: richText(memo),
 		情報ソース: richText("社外顧問DB / Worker紹介案件化"),
 		確認待ち内容: richText("対象物、売買条件、価格、所有者/決裁者、必要資料を確認してください。"),
-		営業サマリー: richText("ブローカー紹介起点で案件化。具体条件は情報収集中。"),
-		次の一手: richText("対象物・売買条件・価格・所有者/決裁者を確認し、案件名を実態に合わせて修正する。"),
+		AI営業マップ: richText("ブローカー紹介起点で案件化。具体条件は情報収集中。"),
+		次のアクション: richText("対象物・売買条件・価格・所有者/決裁者を確認し、案件名を実態に合わせて修正する。"),
 	};
 	if (assignedUserIds.length > 0) {
 		projectProperties["担当営業ユーザー"] = {
