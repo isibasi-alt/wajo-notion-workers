@@ -64,6 +64,7 @@ const notion = {
 				売買区分: { type: "select", select: { name: "売却案件" } },
 				対象物種別: { type: "select", select: { name: "土地" } },
 				実績粗利額: { type: "number", number: 1500000 },
+				"🎉 クラッカー画面": { type: "url", url: null },
 				担当営業ユーザー: { type: "people", people: [{ id: "project-sales-user" }] },
 				仕入れ担当: { type: "people", people: [] },
 				関連企業: { type: "relation", relation: [{ id: "company-1" }] },
@@ -115,6 +116,10 @@ async function main() {
 	assert.equal(
 		((projectStatusUpdate.properties as { 成約日: { date: { start: string } } }).成約日.date.start).length,
 		10,
+	);
+	assert.match(
+		(projectStatusUpdate.properties as { "🎉 クラッカー画面": { url: string } })["🎉 クラッカー画面"].url,
+		/^https:\/\/effulgent-pie-bed871\.netlify\.app\/wajo_deal_closed_v4\?add=1500000&/,
 	);
 	const dealStatusUpdate = updates.find((update) => update.page_id === "deal-1");
 	assert.deepEqual(dealStatusUpdate, {

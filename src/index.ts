@@ -27297,10 +27297,6 @@ async function processClosingReport(
 				message,
 			};
 		}
-		await safeUpdateExistingProperties(notion, projectPage, {
-			ステータス: { kind: "select", value: "🏆 成約" },
-			成約日: { kind: "date", value: todayDateJST() },
-		});
 		const syncedDeals = await syncRelatedDealsToClosed(projectPageId, notion);
 		const dealSalesPersonIds = personIdsFromProperty(projectProperties["担当営業ユーザー"]);
 		const salesPersonIds = dealSalesPersonIds.length > 0
@@ -27314,6 +27310,13 @@ async function processClosingReport(
 		const closingSummary = grossProfit !== null && grossProfit > 0
 			? { grossProfit, commissionAmount: Math.round(grossProfit * commissionRate) }
 			: undefined;
+		await safeUpdateExistingProperties(notion, projectPage, {
+			ステータス: { kind: "select", value: "🏆 成約" },
+			成約日: { kind: "date", value: todayDateJST() },
+			...(closingSummary
+				? { "🎉 クラッカー画面": { kind: "text" as const, value: buildClosingCelebrationUrl(projectName, closingSummary.grossProfit) } }
+				: {}),
+		});
 		let linked = false;
 		try {
 			linked = await linkClosingToMonthlyPerformanceRecord(
@@ -27396,6 +27399,7 @@ async function processClosingReport(
 	await safeUpdateExistingProperties(notion, projectPage, {
 		ステータス: { kind: "select", value: "🏆 成約" },
 		成約日: { kind: "date", value: todayDateJST() },
+		"🎉 クラッカー画面": { kind: "text", value: buildClosingCelebrationUrl(projectName, grossProfit) },
 	});
 	const syncedDeals = await syncRelatedDealsToClosed(projectPageId, notion);
 
@@ -27770,8 +27774,11 @@ function buildClosingFanfareMessage({
 }
 
 function buildClosingCelebrationComment(projectName: string, grossProfit: number): string {
-	const celebrationUrl = `https://effulgent-pie-bed871.netlify.app/wajo_deal_closed_v4?add=${grossProfit}&deal=${encodeURIComponent(projectName)}&mode=modern`;
-	return `🎊 ${projectName} 成約おめでとうございます！\nクラッカー画面を開く → ${celebrationUrl}`;
+	return `🎊 ${projectName} 成約おめでとうございます！\nクラッカー画面を開く → ${buildClosingCelebrationUrl(projectName, grossProfit)}`;
+}
+
+function buildClosingCelebrationUrl(projectName: string, grossProfit: number): string {
+	return `https://effulgent-pie-bed871.netlify.app/wajo_deal_closed_v4?add=${grossProfit}&deal=${encodeURIComponent(projectName)}&mode=modern`;
 }
 
 async function appendClosingFanfareCallout(
