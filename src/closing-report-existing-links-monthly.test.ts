@@ -5,11 +5,15 @@ const queries: Array<Record<string, unknown>> = [];
 const updates: Array<Record<string, unknown>> = [];
 const creates: Array<Record<string, unknown>> = [];
 
+const CLOSING_REPORT_DATA_SOURCE_ID = "8d5a506b-59b8-4e50-bc77-d5412774048d";
+const DEAL_DATA_SOURCE_ID = "7838db8a-907a-4c61-b062-109f8278b2c9";
+const SALES_PERFORMANCE_DATA_SOURCE_ID = "e67ec5d5-90d3-4118-9788-976a6f5c94a1";
+
 const notion = {
 	dataSources: {
 		query: async (args: Record<string, unknown>) => {
 			queries.push(args);
-			if (queries.length === 1) {
+			if (args.data_source_id === CLOSING_REPORT_DATA_SOURCE_ID) {
 				return {
 					results: [{
 						id: "closing-existing",
@@ -19,16 +23,31 @@ const notion = {
 					}],
 				};
 			}
-			return {
-				results: [{
-					id: "performance-1",
-					properties: {
-						関連成約: {
-							type: "relation",
-							relation: [],
+			if (args.data_source_id === DEAL_DATA_SOURCE_ID) {
+				return {
+					results: [{
+						id: "deal-1",
+						properties: {
+							商談ステータス: { type: "select", select: { name: "商談中" } },
 						},
-					},
-				}],
+					}],
+				};
+			}
+			if (args.data_source_id === SALES_PERFORMANCE_DATA_SOURCE_ID) {
+				return {
+					results: [{
+						id: "performance-1",
+						properties: {
+							関連成約: {
+								type: "relation",
+								relation: [],
+							},
+						},
+					}],
+				};
+			}
+			return {
+				results: [],
 			};
 		},
 	},
@@ -47,6 +66,7 @@ const notion = {
 				仕入れ担当: { type: "people", people: [] },
 				関連企業: { type: "relation", relation: [{ id: "company-1" }] },
 				ステータス: { type: "select", select: { name: "🏆 成約" } },
+				成約日: { type: "date", date: null },
 			},
 		}),
 		update: async (args: Record<string, unknown>) => {
@@ -73,7 +93,25 @@ async function main() {
 	assert.equal(result.action, "already-exists-linked");
 	assert.equal(result.closingPageId, "closing-existing");
 	assert.equal(creates.length, 0, "既存成約がある場合は成約報告を重複作成しない");
-	assert.deepEqual(updates[0], {
+	const projectStatusUpdate = updates.find((update) => update.page_id === "project-1");
+	assert.ok(projectStatusUpdate, "既存成約報告がある場合でも案件ステータスは成約へ補修する");
+	assert.equal(
+		((projectStatusUpdate.properties as { ステータス: { select: { name: string } } }).ステータス.select.name),
+		"🏆 成約",
+	);
+	assert.equal(
+		((projectStatusUpdate.properties as { 成約日: { date: { start: string } } }).成約日.date.start).length,
+		10,
+	);
+	const dealStatusUpdate = updates.find((update) => update.page_id === "deal-1");
+	assert.deepEqual(dealStatusUpdate, {
+		page_id: "deal-1",
+		properties: {
+			商談ステータス: { select: { name: "成約" } },
+		},
+	});
+	const monthlyLinkUpdate = updates.find((update) => update.page_id === "performance-1");
+	assert.deepEqual(monthlyLinkUpdate, {
 		page_id: "performance-1",
 		properties: {
 			関連成約: {

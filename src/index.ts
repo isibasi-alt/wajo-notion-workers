@@ -27137,6 +27137,11 @@ async function processClosingReport(
 				message,
 			};
 		}
+		await safeUpdateExistingProperties(notion, projectPage, {
+			ステータス: { kind: "select", value: "🏆 成約" },
+			成約日: { kind: "date", value: todayDateJST() },
+		});
+		const syncedDeals = await syncRelatedDealsToClosed(projectPageId, notion);
 		const dealSalesPersonIds = personIdsFromProperty(projectProperties["担当営業ユーザー"]);
 		const salesPersonIds = dealSalesPersonIds.length > 0
 			? dealSalesPersonIds
@@ -27161,12 +27166,14 @@ async function processClosingReport(
 		} catch (error) {
 			console.error("existing closing monthly link repair error:", String(error));
 		}
+		const message = linked
+			? `この案件の成約報告は既に存在します（ID: ${existingId}）。重複作成せず、案件ステータスを「🏆 成約」へ補修し、月次成績への紐付けを確認しました。関連商談 ${syncedDeals.updatedCount} 件を成約へ同期しました。`
+			: `この案件の成約報告は既に存在します（ID: ${existingId}）。重複作成せず、案件ステータスを「🏆 成約」へ補修しました。関連商談 ${syncedDeals.updatedCount} 件を成約へ同期しました。月次成績への紐付けは未確認です。`;
+		await createPageComment(notion, projectPage.id, message);
 		return {
 			action: linked ? "already-exists-linked" : "already-exists",
 			closingPageId: existingId,
-			message: linked
-				? `この案件の成約報告は既に存在します（ID: ${existingId}）。重複作成せず、月次成績への紐付けを確認しました。`
-				: `この案件の成約報告は既に存在します（ID: ${existingId}）。重複作成を防ぎました。`,
+			message,
 		};
 	}
 
