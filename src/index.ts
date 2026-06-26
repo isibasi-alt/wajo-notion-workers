@@ -4608,10 +4608,11 @@ worker.webhook("processInquiryProjectCreationWebhook", {
 });
 
 worker.webhook("processBrokerCaseCreationWebhook", {
-	title: "WAJO ブローカー紹介を案件化Webhook",
+	title: "WAJO ブローカー紹介 案件化Webhook",
 	description:
-		"社外顧問DBの「🤝 紹介を案件化する」ボタンから起動。ブローカーから具体案件を受け取った時点で案件管理DBへ紹介案件を作成します。",
+		"社外顧問DBの「紹介を案件化する」ボタンから起動。案件管理DBへ紹介案件を作成し、社外顧問DBと紐付けます。",
 	execute: async (events, { notion }) => {
+		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
 		for (const event of events) {
 			const body = coerceWebhookBodyRecord(event.body);
 			const brokerPageId = extractBrokerPageIdFromWebhook(body);
@@ -4631,8 +4632,9 @@ worker.webhook("processBrokerCaseCreationWebhook", {
 worker.webhook("processBrokerCustodyRegisterWebhook", {
 	title: "WAJO ブローカー預かり登録Webhook",
 	description:
-		"社外顧問DBの「📦 ブローカー預かり登録」ボタンから起動。案件化前のブローカー預かり状態を更新し、追跡タスクを作成します。",
+		"社外顧問DBの「ブローカー預かり登録」ボタンから起動。預かり状態を更新し、追跡タスクを作成または更新します。",
 	execute: async (events, { notion }) => {
+		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
 		for (const event of events) {
 			const body = coerceWebhookBodyRecord(event.body);
 			const brokerPageId = extractBrokerPageIdFromWebhook(body);
@@ -4641,9 +4643,11 @@ worker.webhook("processBrokerCustodyRegisterWebhook", {
 					"brokerPageId / advisorPageId / pageId / entity.id のいずれからも社外顧問ページIDを特定できませんでした。",
 				);
 			}
+			const rawCustodyStatus =
+				body.status ?? body.custodyStatus ?? body.custody_status ?? body["預かりステータス"];
 			await processBrokerCustodyRegister(brokerPageId, notion as unknown as NotionClient, {
 				triggerUserId: extractTriggerUserIdFromWebhook(body),
-				status: extractCustodyStatusFromWebhook(body),
+				status: typeof rawCustodyStatus === "string" ? rawCustodyStatus : undefined,
 				memo: extractCustodyMemoFromWebhook(body),
 			});
 		}
@@ -5276,8 +5280,8 @@ worker.webhook("processLandCaseWebhook", {
 	description:
 		"土地情報DBのページIDを受け取り、案件管理DBに土地案件を作成します。既存関連案件がある場合は重複作成しません。",
 	execute: async (events, { notion }) => {
+		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
 		for (const event of events) {
-			verifyWebhookSecret(event.headers, event.body);
 			const body = event.body as Record<string, unknown>;
 			const landPageId =
 				extractWebhookLandPageId(body) ??

@@ -25,6 +25,9 @@ for (const name of [
 	"processMeetingDealLinkWebhook",
 	"processMeetingTasksWebhook",
 	"processMeetingKnowledgeWebhook",
+	"processLandCaseWebhook",
+	"processBrokerCaseCreationWebhook",
+	"processBrokerCustodyRegisterWebhook",
 ]) {
 	assert.doesNotMatch(
 		bodyForWebhook(name),
