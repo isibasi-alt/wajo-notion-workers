@@ -4651,6 +4651,36 @@ worker.webhook("processInquiryProjectCreationWebhook", {
 	},
 });
 
+worker.webhook("processBrokerActionWebhook", {
+	title: "WAJO ブローカー案件化/預かりWebhook",
+	description:
+		"社外顧問DBのボタンから起動。action=case なら紹介案件化、action=custody ならブローカー預かり登録を実行します。capability上限を避けるため1本のWebhookに集約しています。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = coerceWebhookBodyRecord(event.body);
+			const brokerPageId = extractBrokerPageIdFromWebhook(body);
+			if (!brokerPageId) {
+				throw new Error(
+					"brokerPageId / advisorPageId / pageId / entity.id のいずれからも社外顧問ページIDを特定できませんでした。",
+				);
+			}
+			const action = extractBrokerActionFromWebhook(body);
+			if (action === "case") {
+				await processBrokerCaseCreation(brokerPageId, notion as unknown as NotionClient, {
+					triggerUserId: extractTriggerUserIdFromWebhook(body),
+					caseMemo: extractCustodyMemoFromWebhook(body),
+				});
+				continue;
+			}
+			await processBrokerCustodyRegister(brokerPageId, notion as unknown as NotionClient, {
+				triggerUserId: extractTriggerUserIdFromWebhook(body),
+				status: extractCustodyStatusFromWebhook(body),
+				memo: extractCustodyMemoFromWebhook(body),
+			});
+		}
+	},
+});
+
 worker.webhook("processProjectDealStartWebhook", {
 	title: "WAJO 案件 商談化Webhook",
 	description:
@@ -26984,6 +27014,328 @@ function buildInquiryProjectName(inquiryTitle: string): string {
 	return (clean || `問い合わせ案件 ${todayDateJST()}`).slice(0, 1800);
 }
 
+
+// ===== 社外顧問DB → 案件化/預かり（ブローカー4方向の新入口）=====
+type BrokerActionKind = "case" | "custody";
+
+type BrokerCaseOptions = {
+	triggerUserId?: string;
+	dryRun?: boolean;
+	caseMemo?: string;
+};
+
+type BrokerCustodyOptions = {
+	triggerUserId?: string;
+	dryRun?: boolean;
+	status?: string;
+	memo?: string;
+};
+
+type BrokerCaseCreationResult = {
+	brokerPageId: string;
+	action: "created-project" | "skipped-existing" | "dry-run";
+	projectId: string | null;
+	message: string;
+};
+
+type BrokerCustodyRegisterResult = {
+	brokerPageId: string;
+	action: "registered" | "dry-run";
+	taskPageId: string | null;
+	message: string;
+};
+
+const BROKER_CUSTODY_STATUSES = new Set([
+	"資料待ち",
+	"連絡待ち",
+	"契約書待ち",
+	"見積待ち",
+	"現地確認待ち",
+	"その他",
+]);
+
+function normalizeBrokerCustodyStatus(value: string | undefined): string {
+	const clean = (value ?? "").trim();
+	return BROKER_CUSTODY_STATUSES.has(clean) ? clean : "資料待ち";
+}
+
+function addDaysDateString(dateText: string, days: number): string {
+	const date = new Date(`${dateText}T00:00:00+09:00`);
+	date.setDate(date.getDate() + days);
+	return date.toISOString().slice(0, 10);
+}
+
+function extractBrokerPageIdFromWebhook(body: Record<string, unknown>): string | undefined {
+	return firstString(
+		body.brokerPageId,
+		body.broker_page_id,
+		body.advisorPageId,
+		body.advisor_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "brokerPageId"]),
+		readNestedString(body, ["data", "advisorPageId"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+function extractBrokerActionFromWebhook(body: Record<string, unknown>): BrokerActionKind {
+	const value = firstString(
+		body.action,
+		body.brokerAction,
+		body.broker_action,
+		readNestedString(body, ["data", "action"]),
+		readNestedString(body, ["data", "brokerAction"]),
+		readNestedString(body, ["properties", "action"]),
+		readNestedString(body, ["properties", "brokerAction"]),
+	)?.toLowerCase();
+	if (value && /case|案件化|紹介/.test(value)) return "case";
+	return "custody";
+}
+
+function extractCustodyStatusFromWebhook(body: Record<string, unknown>): string | undefined {
+	return firstString(
+		bodyString(body["預かりステータス"]),
+		bodyString(body.custodyStatus),
+		bodyString(body.custody_status),
+		readNestedString(body, ["data", "預かりステータス"]),
+		readNestedString(body, ["data", "custodyStatus"]),
+		readNestedString(body, ["properties", "預かりステータス"]),
+	);
+}
+
+function extractCustodyMemoFromWebhook(body: Record<string, unknown>): string | undefined {
+	return firstString(
+		bodyString(body["預かりメモ"]),
+		bodyString(body.memo),
+		bodyString(body.custodyMemo),
+		bodyString(body.custody_memo),
+		readNestedString(body, ["data", "預かりメモ"]),
+		readNestedString(body, ["data", "memo"]),
+		readNestedString(body, ["properties", "預かりメモ"]),
+	);
+}
+
+function brokerAdvisorName(page: Page): string {
+	return readGenericPageTitle(page) || text(page.properties?.["顧問名"]) || "社外顧問";
+}
+
+function brokerAssignedUserIds(page: Page, triggerUserId?: string): string[] {
+	return uniqueStrings([
+		...personIdsFromProperty(page.properties?.["担当営業ユーザー"]),
+		...personIdsFromProperty(page.properties?.["預かり担当"]),
+		...(triggerUserId ? [triggerUserId] : []),
+	]).slice(0, 5);
+}
+
+async function findBrokerProjectsCreatedToday(
+	notion: NotionClient,
+	brokerPageId: string,
+	today: string,
+): Promise<Page[]> {
+	try {
+		const response = await notion.dataSources.query({
+			data_source_id: PROJECT_DATA_SOURCE_ID,
+			page_size: 5,
+			filter: {
+				and: [
+					{ property: "紹介ブローカー", relation: { contains: brokerPageId } },
+					{ property: "作成日", date: { equals: today } },
+				],
+			},
+		});
+		return response.results ?? [];
+	} catch (error) {
+		console.log("broker project duplicate lookup skipped", String(error));
+		return [];
+	}
+}
+
+function buildBrokerCaseMemo(brokerName: string, caseMemo: string): string {
+	return [
+		"社外顧問DBからWorker紹介案件化。",
+		`紹介元: ${brokerName}`,
+		caseMemo ? `起点メモ: ${caseMemo}` : "起点メモ: 未入力。対象物・売買条件・価格・所有者/決裁者を確認してください。",
+		"案件DBには具体案件だけを作る。ブローカー預かりや匂いだけの段階は社外顧問DBで追跡する。",
+	].join("\n");
+}
+
+async function processBrokerCaseCreation(
+	brokerPageId: string,
+	notion: NotionClient,
+	options: BrokerCaseOptions = {},
+): Promise<BrokerCaseCreationResult> {
+	const brokerPage = await notion.pages.retrieve({ page_id: brokerPageId });
+	const brokerName = brokerAdvisorName(brokerPage);
+	const today = todayDateJST();
+	const existing = await findBrokerProjectsCreatedToday(notion, brokerPageId, today);
+	if (existing.length > 0) {
+		const existingProject = existing[0]!;
+		if (!options.dryRun) {
+			await createPageComment(
+				notion,
+				brokerPageId,
+				`⚠️ 本日中に既に紹介案件が作成されています（案件ID: ${existingProject.id}）。重複作成を止めました。`,
+			);
+		}
+		return {
+			brokerPageId,
+			action: "skipped-existing",
+			projectId: existingProject.id,
+			message: "本日中の重複紹介案件作成を止めました。",
+		};
+	}
+	const assignedUserIds = brokerAssignedUserIds(brokerPage, options.triggerUserId);
+	const memo = buildBrokerCaseMemo(brokerName, options.caseMemo ?? text(brokerPage.properties?.["預かりメモ"]));
+	if (options.dryRun) {
+		return {
+			brokerPageId,
+			action: "dry-run",
+			projectId: null,
+			message: `dry-run: 案件DBへ「[紹介] ${brokerName} 起点案件」を作成できます。Notionへは書き込みません。`,
+		};
+	}
+	const projectProperties: Record<string, unknown> = {
+		案件名: title(`[紹介] ${brokerName} 起点案件`),
+		ステータス: select("🔴 情報収集中"),
+		獲得ソース: select("紹介"),
+		仕入れ元区分: select("ブローカー"),
+		作成日: { date: { start: today } },
+		最終アクション日: { date: { start: today } },
+		紹介ブローカー: relation(brokerPageId),
+		案件詳細: richText(memo),
+		情報ソース: richText("社外顧問DB / Worker紹介案件化"),
+		確認待ち内容: richText("対象物、売買条件、価格、所有者/決裁者、必要資料を確認してください。"),
+		営業サマリー: richText("ブローカー紹介起点で案件化。具体条件は情報収集中。"),
+		次の一手: richText("対象物・売買条件・価格・所有者/決裁者を確認し、案件名を実態に合わせて修正する。"),
+	};
+	if (assignedUserIds.length > 0) {
+		projectProperties["担当営業ユーザー"] = {
+			people: assignedUserIds.map((id) => ({ object: "user", id })),
+		};
+	}
+	const created = await createProjectRecord(notion, projectProperties);
+	await safeUpdateExistingProperties(notion, brokerPage, {
+		預かりステータス: { kind: "select", value: "待機なし" },
+		預かり最終アクション日: { kind: "date", value: today },
+		預かりメモ: {
+			kind: "text",
+			value: [
+				text(brokerPage.properties?.["預かりメモ"]),
+				`【案件化】${today} 紹介案件として案件DBへ作成: ${created.id}`,
+			].filter(Boolean).join("\n"),
+		},
+	});
+	await createPageComment(
+		notion,
+		brokerPageId,
+		`🤝 紹介案件を作成しました。案件ID: ${created.id}\n次に確認すること: 対象物、売買条件、価格、所有者/決裁者、必要資料。`,
+	).catch(() => {});
+	await notifySalesTeam(
+		notion,
+		created.id,
+		`🤝 紹介案件を作成しました: ${brokerName} 起点\n対象物・売買条件・価格・所有者/決裁者を確認してください。`,
+	).catch(() => {});
+	return {
+		brokerPageId,
+		action: "created-project",
+		projectId: created.id,
+		message: `紹介案件を作成しました（${brokerName} / ${created.id}）。`,
+	};
+}
+
+async function processBrokerCustodyRegister(
+	brokerPageId: string,
+	notion: NotionClient,
+	options: BrokerCustodyOptions = {},
+): Promise<BrokerCustodyRegisterResult> {
+	const brokerPage = await notion.pages.retrieve({ page_id: brokerPageId });
+	const brokerName = brokerAdvisorName(brokerPage);
+	const status = normalizeBrokerCustodyStatus(options.status);
+	const memo = (options.memo ?? "").trim();
+	const today = todayDateJST();
+	const dueDate = addDaysDateString(today, 14);
+	if (options.dryRun) {
+		return {
+			brokerPageId,
+			action: "dry-run",
+			taskPageId: null,
+			message: `dry-run: 社外顧問DBを「${status}」で預かり登録し、追跡タスクを作成できます。Notionへは書き込みません。`,
+		};
+	}
+	await safeUpdateExistingProperties(notion, brokerPage, {
+		預かりステータス: { kind: "select", value: status },
+		預かり開始日: { kind: "date", value: today },
+		預かり最終アクション日: { kind: "date", value: today },
+		預かりメモ: {
+			kind: "text",
+			value: [
+				memo || text(brokerPage.properties?.["預かりメモ"]),
+				`【預かり登録】${today} ${status} / 期限目安 ${dueDate}`,
+			].filter(Boolean).join("\n"),
+		},
+	});
+	let taskPageId: string | null = null;
+	try {
+		const createdTask = await notion.pages.create({
+			parent: { data_source_id: TEAM_TRACKER_DATA_SOURCE_ID },
+			properties: {
+				タスク名: title(`[預かり追跡] ${brokerName} / ${status}`),
+			},
+		});
+		taskPageId = createdTask.id;
+		const taskPage = await notion.pages.retrieve({ page_id: createdTask.id });
+		const assignedUserIds = brokerAssignedUserIds(brokerPage, options.triggerUserId);
+		const taskMemo = [
+			`社外顧問DBのブローカー預かり追跡タスク。`,
+			`対象: ${brokerName}`,
+			`預かりステータス: ${status}`,
+			memo ? `メモ: ${memo}` : "メモ: 未入力。次回接触で、何を待っているかを確認する。",
+			`社外顧問ページID: ${brokerPageId}`,
+		].join("\n");
+		const patches: Record<string, SafePatch> = {
+			概要: { kind: "text", value: taskMemo },
+			"説明⚠️まず入力": { kind: "text", value: taskMemo },
+			ステータス: { kind: "select", value: "未着手" },
+			優先順位: { kind: "select", value: "中" },
+			タスクタイプ: { kind: "multi_select", values: ["確認・調査"] },
+			期限: { kind: "date", value: dueDate },
+		};
+		if (assignedUserIds.length > 0) {
+			patches["タスク担当者"] = { kind: "people", ids: assignedUserIds };
+			patches["担当者"] = { kind: "people", ids: assignedUserIds };
+		}
+		await safeUpdateExistingProperties(notion, taskPage, patches);
+	} catch (error) {
+		console.log("broker custody task create skipped", String(error));
+	}
+	await createPageComment(
+		notion,
+		brokerPageId,
+		[
+			`📦 ブローカー預かり登録: ${brokerName}`,
+			`ステータス: ${status}`,
+			memo ? `メモ: ${memo}` : "",
+			`期限目安: ${dueDate}`,
+			taskPageId ? `追跡タスクID: ${taskPageId}` : "追跡タスク作成はスキップ。社外顧問DBの預かり状態は更新済み。",
+		].filter(Boolean).join("\n"),
+	).catch(() => {});
+	return {
+		brokerPageId,
+		action: "registered",
+		taskPageId,
+		message: `ブローカー預かり登録を行いました（${brokerName} / ${status}）。`,
+	};
+}
+
 // ===== 案件 → 商談（「商談をする」ボタン）=====
 type ProjectDealStartResult = {
 	projectPageId: string;
@@ -27226,6 +27578,8 @@ export { processInquiryAssignOwner as processInquiryAssignOwnerForTest };
 export { processInquiryEmailIntake as processInquiryEmailIntakeForTest };
 export { processInquiryProjectCreation as processInquiryProjectCreationForTest };
 export { processProjectDealStart as processProjectDealStartForTest };
+export { processBrokerCaseCreation as processBrokerCaseCreationForTest };
+export { processBrokerCustodyRegister as processBrokerCustodyRegisterForTest };
 export { processBusinessCard as processBusinessCardForTest };
 export { processCompanyResearch as processCompanyResearchForTest };
 export { processInquiryCompanyLink as processInquiryCompanyLinkForTest };
