@@ -12095,6 +12095,11 @@ function buildMeetingKnowledgeMaterial(
 		text(properties["議事内容"]),
 		text(properties["決定事項"]),
 		text(properties["アクション項目"]),
+		text(properties["良かった点"]),
+		text(properties["改善ポイント"]),
+		text(properties["次回確認事項"]),
+		text(properties["AI率直フィードバック"]),
+		text(properties["ミーティングの次の一手"]),
 		blockText,
 	]
 		.filter(Boolean)
@@ -12135,6 +12140,11 @@ function buildMeetingKnowledgeSource(
 		["議事内容", text(properties["議事内容"])],
 		["決定事項", text(properties["決定事項"])],
 		["アクション項目", text(properties["アクション項目"])],
+		["良かった点", text(properties["良かった点"])],
+		["改善ポイント", text(properties["改善ポイント"])],
+		["次回確認事項", text(properties["次回確認事項"])],
+		["AI率直フィードバック", text(properties["AI率直フィードバック"])],
+		["ミーティングの次の一手", text(properties["ミーティングの次の一手"])],
 		["本文", blockText],
 	]
 		.filter(([, value]) => value)
@@ -12301,7 +12311,7 @@ async function createKnowledgePageFromMeeting(
 		使いどころ: { kind: "text", value: input.candidate.usage },
 		根拠メモ: {
 			kind: "text",
-			value: `Worker会議ナレッジ化: ${new Date().toISOString()}\n会議: ${input.titleText}\n会議種別: ${input.meetingType}\n外部AIは未使用。会議DB内の要約/議事内容/決定事項/アクション項目/本文から抽出。`,
+			value: `Worker会議ナレッジ化: ${new Date().toISOString()}\n会議: ${input.titleText}\n会議種別: ${input.meetingType}\n外部AIは未使用。会議DB内の要約/議事内容/決定事項/アクション項目/良かった点/改善ポイント/次回確認事項/AI率直フィードバック/ミーティングの次の一手/本文から抽出。`,
 		},
 		推奨トーク: { kind: "text", value: input.candidate.recommendedTalk },
 		AI候補度: { kind: "select", value: input.candidate.candidateLevel },

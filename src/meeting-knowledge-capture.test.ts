@@ -85,6 +85,26 @@ const weakTestMeetingPageProperties = {
 	関連商談: relation([]),
 };
 
+const currentFieldMeetingPageProperties = {
+	ミーティング名: title("【検証用ダミー｜佐伯】6月第2週 営業会議"),
+	ミーティング種別: select("営業ミーティング"),
+	要約: richText(""),
+	議事内容: richText(""),
+	決定事項: richText(""),
+	アクション項目: richText(""),
+	良かった点: richText("佐伯の試算先行トークが具体的で再現性がある。"),
+	改善ポイント: richText("価格を後出しにするだけでなく、相手の比較軸を先に確認する。"),
+	次回確認事項: richText("南紀ファームの補助金採択スケジュールを確認する。"),
+	AI率直フィードバック: richText("低圧案件では、価格提示前に試算と保証条件を分けて説明する手順を共有する価値がある。"),
+	ミーティングの次の一手: richText("営業トークとしてチームへ横展開する。"),
+	ナレッジ化ステータス: select("未判定"),
+	ナレッジ化メモ: richText(""),
+	ナレッジ化依頼日: date(),
+	ナレッジ種別: select("営業トーク"),
+	関連企業: relation([]),
+	関連商談: relation([]),
+};
+
 async function main() {
 	const creates: Array<Record<string, unknown>> = [];
 	const updates: Array<Record<string, unknown>> = [];
@@ -98,6 +118,9 @@ async function main() {
 				}
 				if (page_id === "meeting-weak") {
 					return { id: page_id, properties: weakTestMeetingPageProperties };
+				}
+				if (page_id === "meeting-current-fields") {
+					return { id: page_id, properties: currentFieldMeetingPageProperties };
 				}
 				return { id: page_id, properties: knowledgePageProperties };
 			},
@@ -167,6 +190,7 @@ async function main() {
 	assert.deepEqual((knowledgePatch.元商談 as { relation: Array<{ id: string }> }).relation, [{ id: "deal-1" }]);
 	assert.equal((knowledgePatch.公開範囲 as { select: { name: string } }).select.name, "全員");
 	assert.match(JSON.stringify(knowledgePatch.根拠メモ), /会議種別: .*営業/);
+	assert.match(JSON.stringify(knowledgePatch.根拠メモ), /良かった点/);
 
 	const meetingUpdate = updates.find((entry) => entry.page_id === "meeting-1")!;
 	const meetingPatch = meetingUpdate.properties as Record<string, unknown>;
@@ -207,6 +231,14 @@ async function main() {
 	assert.equal(weak.action, "dry-run");
 	assert.equal(weak.candidates, 0);
 	assert.match(weak.message, /材料が不足/);
+
+	const currentFields = await processMeetingKnowledgeForTest(
+		{ meetingPageId: "meeting-current-fields", dryRun: true },
+		notion as never,
+	);
+	assert.equal(currentFields.action, "dry-run");
+	assert.equal(currentFields.candidates, 1);
+	assert.match(currentFields.message, /試算先行|比較軸|営業トーク/);
 }
 
 main().catch((error) => {
