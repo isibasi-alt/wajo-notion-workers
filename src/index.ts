@@ -27214,6 +27214,7 @@ async function processClosingReport(
 		ステータス: { kind: "select", value: "🏆 成約" },
 		成約日: { kind: "date", value: todayDateJST() },
 	});
+	const syncedDeals = await syncRelatedDealsToClosed(projectPageId, notion);
 
 	// 5. 成約報告ページ作成
 	// 注意: 旧「承認ステータス: 成約」の書き込みは削除した(2026-06-13)。
@@ -27241,6 +27242,9 @@ async function processClosingReport(
 	}
 	if (relatedCompanyIds.length > 0) {
 		properties["関連企業"] = { relation: relatedCompanyIds.map((id) => ({ id })) };
+	}
+	if (syncedDeals.dealIds.length > 0) {
+		properties["関連商談"] = relationIds(syncedDeals.dealIds);
 	}
 	const relatedLandIds = uniqueStrings([
 		...relationIdsFromProperty(projectPage.properties?.["関連土地情報"]),
@@ -27417,7 +27421,27 @@ async function processClosingReport(
 	return {
 		action: "created",
 		closingPageId: created.id,
-		message: `成約報告を登録しました（ID: ${created.id}）。粗利 ${formatYen(grossProfit)}、歩合見込 ${formatYen(commissionAmount)} を月次成績へ反映し、AIフィードバック（勝因・学び・ナレッジ化候補）も生成しました。`,
+		message: `成約報告を登録しました（ID: ${created.id}）。粗利 ${formatYen(grossProfit)}、歩合見込 ${formatYen(commissionAmount)} を月次成績へ反映し、関連商談 ${syncedDeals.updatedCount} 件を成約へ同期し、AIフィードバック（勝因・学び・ナレッジ化候補）も生成しました。`,
+	};
+}
+
+async function syncRelatedDealsToClosed(
+	projectPageId: string,
+	notion: NotionClient,
+): Promise<{ dealIds: string[]; updatedCount: number }> {
+	const relatedDeals = await findDealsByProject(notion, projectPageId);
+	let updated = 0;
+	for (const deal of relatedDeals) {
+		const currentStatus = text(deal.properties?.["商談ステータス"]);
+		if (currentStatus === "成約") continue;
+		await safeUpdateExistingProperties(notion, deal, {
+			商談ステータス: { kind: "select", value: "成約" },
+		});
+		updated += 1;
+	}
+	return {
+		dealIds: relatedDeals.map((deal) => deal.id),
+		updatedCount: updated,
 	};
 }
 
