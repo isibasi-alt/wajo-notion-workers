@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
 	processBrokerCaseCreationForTest,
 	processBrokerCustodyRegisterForTest,
@@ -76,6 +77,11 @@ function taskPage(id: string) {
 }
 
 async function main() {
+	const indexSource = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+	assert.match(indexSource, /worker\.webhook\("processBrokerActionWebhook"/);
+	assert.doesNotMatch(indexSource, /worker\.webhook\("processBrokerCaseCreationWebhook"/);
+	assert.doesNotMatch(indexSource, /worker\.webhook\("processBrokerCustodyRegisterWebhook"/);
+
 	const updates: Array<Record<string, unknown>> = [];
 	const creates: Array<Record<string, unknown>> = [];
 	const comments: Array<Record<string, unknown>> = [];
