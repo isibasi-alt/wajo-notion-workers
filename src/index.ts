@@ -4607,12 +4607,11 @@ worker.webhook("processInquiryProjectCreationWebhook", {
 	},
 });
 
-worker.webhook("processBrokerCaseCreationWebhook", {
-	title: "WAJO ブローカー紹介 案件化Webhook",
+worker.webhook("processBrokerActionWebhook", {
+	title: "WAJO ブローカー紹介/預かりWebhook",
 	description:
-		"社外顧問DBの「紹介を案件化する」ボタンから起動。案件管理DBへ紹介案件を作成し、社外顧問DBと紐付けます。",
+		"社外顧問DBのブローカー操作ボタンから起動。action=case なら紹介を案件化し、action=custody または未指定ならブローカー預かり登録を行います。capability上限回避のため1本Webhookで分岐します。",
 	execute: async (events, { notion }) => {
-		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
 		for (const event of events) {
 			const body = coerceWebhookBodyRecord(event.body);
 			const brokerPageId = extractBrokerPageIdFromWebhook(body);
@@ -4621,32 +4620,35 @@ worker.webhook("processBrokerCaseCreationWebhook", {
 					"brokerPageId / advisorPageId / pageId / entity.id のいずれからも社外顧問ページIDを特定できませんでした。",
 				);
 			}
-			await processBrokerCaseCreation(brokerPageId, notion as unknown as NotionClient, {
-				triggerUserId: extractTriggerUserIdFromWebhook(body),
-				caseMemo: extractCustodyMemoFromWebhook(body),
-			});
-		}
-	},
-});
-
-worker.webhook("processBrokerCustodyRegisterWebhook", {
-	title: "WAJO ブローカー預かり登録Webhook",
-	description:
-		"社外顧問DBの「ブローカー預かり登録」ボタンから起動。預かり状態を更新し、追跡タスクを作成または更新します。",
-	execute: async (events, { notion }) => {
-		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
-		for (const event of events) {
-			const body = coerceWebhookBodyRecord(event.body);
-			const brokerPageId = extractBrokerPageIdFromWebhook(body);
-			if (!brokerPageId) {
-				throw new Error(
-					"brokerPageId / advisorPageId / pageId / entity.id のいずれからも社外顧問ページIDを特定できませんでした。",
-				);
+			const actionSource = [
+				body.action,
+				body.brokerAction,
+				body.broker_action,
+				body.mode,
+				body.type,
+				body.actionLabel,
+				body.buttonName,
+				body.name,
+			]
+				.filter((value): value is string => typeof value === "string")
+				.join(" ")
+				.toLowerCase();
+			const triggerUserId = extractTriggerUserIdFromWebhook(body);
+			if (
+				actionSource.includes("case") ||
+				actionSource.includes("案件") ||
+				actionSource.includes("紹介")
+			) {
+				await processBrokerCaseCreation(brokerPageId, notion as unknown as NotionClient, {
+					triggerUserId,
+					caseMemo: extractCustodyMemoFromWebhook(body),
+				});
+				continue;
 			}
 			const rawCustodyStatus =
 				body.status ?? body.custodyStatus ?? body.custody_status ?? body["預かりステータス"];
 			await processBrokerCustodyRegister(brokerPageId, notion as unknown as NotionClient, {
-				triggerUserId: extractTriggerUserIdFromWebhook(body),
+				triggerUserId,
 				status: typeof rawCustodyStatus === "string" ? rawCustodyStatus : undefined,
 				memo: extractCustodyMemoFromWebhook(body),
 			});
