@@ -17823,7 +17823,6 @@ async function createProjectFromLand(
 		案件名: title(projectName),
 		ステータス: select("🔴 情報収集中"),
 		獲得ソース: select("土地情報"),
-		獲得元区分: select("土地情報"),
 		仕入れ元区分: select("土地情報"),
 		対象物種別: select("土地"),
 		案件種別: select(inferProjectTypeFromLand(land)),
