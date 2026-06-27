@@ -4835,49 +4835,11 @@ worker.webhook("processMeetingDealLinkWebhook", {
 	},
 });
 
-worker.webhook("processMeetingTasksWebhook", {
-	title: "WAJO ミーティングタスク振り分けWebhook",
-	description:
-		"ミーティングデータベースのページIDを受け取り、アクション項目からチームトラッカーへタスクを作成します。既存関連タスクがある場合は二重作成しません。",
-	execute: async (events, { notion }) => {
-		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
-		for (const event of events) {
-			const body = event.body as Record<string, unknown>;
-			const meetingPageId = extractMeetingPageIdFromWebhook(body);
-			if (!meetingPageId) {
-				throw new Error(
-					"meetingPageId / pageId / entity.id のいずれからも会議ページIDを特定できませんでした。",
-				);
-			}
-			await processMeetingTasks(
-				{ meetingPageId, dryRun: false },
-				notion as unknown as NotionClient,
-			);
-		}
-	},
-});
+// 2026-06-27 temporary capability pause: processMeetingTasksWebhook
+// Reason: keep Notion Worker webhook/capability count below the 100 limit while broker case/custody buttons are prioritized.
 
-worker.webhook("processMeetingKnowledgeWebhook", {
-	title: "WAJO ミーティングナレッジ候補化Webhook",
-	description:
-		"ミーティングデータベースのページIDを受け取り、社内ナレッジDBへ未承認候補を作成します。既存候補がある場合は二重作成しません。",
-	execute: async (events, { notion }) => {
-		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
-		for (const event of events) {
-			const body = event.body as Record<string, unknown>;
-			const meetingPageId = extractMeetingPageIdFromWebhook(body);
-			if (!meetingPageId) {
-				throw new Error(
-					"meetingPageId / pageId / entity.id のいずれからも会議ページIDを特定できませんでした。",
-				);
-			}
-			await processMeetingKnowledge(
-				{ meetingPageId, dryRun: false },
-				notion as unknown as NotionClient,
-			);
-		}
-	},
-});
+// 2026-06-27 temporary capability pause: processMeetingKnowledgeWebhook
+// Reason: keep Notion Worker webhook/capability count below the 100 limit while broker case/custody buttons are prioritized.
 
 registerMeetingQuickStartWebhook(
 	"quickStartMeetingWebhook",
@@ -5423,49 +5385,11 @@ worker.webhook("processProjectEquipmentDetailRequestWebhook", {
 	},
 });
 
-worker.webhook("processDealMeetingFeedbackWebhook", {
-	title: "WAJO 商談議事録フィードバックWebhook",
-	description:
-		"dealPageId / pageId / entity.id のいずれかから商談ページを特定し、関連会議議事録から営業フィードバックを返します。",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			verifyWebhookSecret(event.headers, event.body);
-			const body = event.body as Record<string, unknown>;
-			const dealPageId = extractDealPageIdFromWebhook(body);
-			if (!dealPageId) {
-				throw new Error(
-					"dealPageId / pageId / entity.id のいずれからも商談ページIDを特定できませんでした。",
-				);
-			}
-			await processDealMeetingFeedback(
-				{ dealPageId, dryRun: false },
-				notion as unknown as NotionClient,
-			);
-		}
-	},
-});
+// 2026-06-27 temporary capability pause: processDealMeetingFeedbackWebhook
+// Reason: keep Notion Worker webhook/capability count below the 100 limit while broker case/custody buttons are prioritized.
 
-worker.webhook("processDealFeedbackSecondReviewWebhook", {
-	title: "WAJO 商談フィードバック二次レビューWebhook",
-	description:
-		"dealPageId / pageId / entity.id のいずれかから商談ページを特定し、一次フィードバックの二次レビューを実行します。",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			verifyWebhookSecret(event.headers, event.body);
-			const body = event.body as Record<string, unknown>;
-			const dealPageId = extractDealPageIdFromWebhook(body);
-			if (!dealPageId) {
-				throw new Error(
-					"dealPageId / pageId / entity.id のいずれからも商談ページIDを特定できませんでした。",
-				);
-			}
-			await processDealFeedbackSecondReview(
-				{ dealPageId, dryRun: false },
-				notion as unknown as NotionClient,
-			);
-		}
-	},
-});
+// 2026-06-27 temporary capability pause: processDealFeedbackSecondReviewWebhook
+// Reason: keep Notion Worker webhook/capability count below the 100 limit while broker case/custody buttons are prioritized.
 
 worker.webhook("processDealNextActionsWebhook", {
 	title: "WAJO ネクストアクションAI Webhook",
@@ -5489,48 +5413,11 @@ worker.webhook("processDealNextActionsWebhook", {
 	},
 });
 
-worker.webhook("collectSalesNewsWebhook", {
-	title: "WAJO ニュース収集Webhook",
-	description:
-		"RSS/Googleニュース検索からWAJO向け業界ニュースを収集し、業界ニュースDBへ候補登録します。商談・タスク・評価DBは更新しません。",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			verifyWebhookSecret(event.headers, event.body);
-			const body = event.body as Record<string, unknown>;
-			await collectSalesNews(
-				{
-					limit: numberFromWebhookBody(body, "limit", 5),
-					dryRun: booleanFromWebhookBody(body, "dryRun", false),
-					autoGenerateTalk: booleanFromWebhookBody(body, "autoGenerateTalk", false),
-					autoFinalize: booleanFromWebhookBody(body, "autoFinalize", false),
-				},
-				notion as unknown as NotionClient,
-			);
-		}
-	},
-});
+// 2026-06-27 temporary capability pause: collectSalesNewsWebhook
+// Reason: keep Notion Worker webhook/capability count below the 100 limit while broker case/custody buttons are prioritized.
 
-worker.webhook("processSalesTalkFinalizeWebhook", {
-	title: "WAJO 営業トーク管理DB仕上げWebhook",
-	description:
-		"newsPageId / pageId / entity.id のいずれかから業界ニュースを特定し、生成済み営業トークを営業トーク管理DBの実戦項目へ整理します。",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			verifyWebhookSecret(event.headers, event.body);
-			const body = event.body as Record<string, unknown>;
-			const newsPageId = extractNewsPageIdFromWebhook(body);
-			if (!newsPageId) {
-				throw new Error(
-					"newsPageId / pageId / entity.id のいずれからも業界ニュースページIDを特定できませんでした。",
-				);
-			}
-			await processSalesTalkFinalize(
-				{ newsPageId, dryRun: false },
-				notion as unknown as NotionClient,
-			);
-		}
-	},
-});
+// 2026-06-27 temporary capability pause: processSalesTalkFinalizeWebhook
+// Reason: keep Notion Worker webhook/capability count below the 100 limit while broker case/custody buttons are prioritized.
 
 // ─── 成約報告ワンボタン パイプライン ────────────────────────────────────────
 
@@ -5776,33 +5663,8 @@ worker.webhook("processProjectLostRejectWebhook", {
 	},
 });
 
-worker.webhook("notifySalesTeamWebhook", {
-	title: "WAJO 営業部通知Webhook",
-	description:
-		"担当になる/案件化/成約など、Notionボタンの後段から営業部全員へコメント通知する汎用Webhookです。pageId と 通知種別/通知文 を受け取ります。",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			const body = event.body as Record<string, unknown>;
-			const pageId =
-				extractProjectPageIdFromWebhook(body) ??
-				extractClosingReportPageIdFromWebhook(body) ??
-				extractWebhookLandPageId(body);
-			if (!pageId) {
-				throw new Error(
-					"pageId / projectPageId / closingPageId / landPageId のいずれからも通知先ページIDを特定できませんでした。",
-				);
-			}
-			const eventType = extractNotificationEventTypeFromWebhook(body);
-			const salesTeamUserIds = extractSalesTeamUserIdsFromWebhook(body);
-			await notifySalesTeam(
-				notion as unknown as NotionClient,
-				pageId,
-				extractNotificationMessageFromWebhook(body, eventType),
-				salesTeamUserIds.length > 0 ? salesTeamUserIds : SALES_TEAM_USER_IDS,
-			);
-		}
-	},
-});
+// 2026-06-27 temporary capability pause: notifySalesTeamWebhook
+// Reason: keep Notion Worker webhook/capability count below the 100 limit while broker case/custody buttons are prioritized.
 
 // processMonthlyQuotaLinkWebhook（退役済み）は 2026-06-12 に登録ごと削除した。
 // ノルマ申請DBは目標申請の原本とし、成約実績の月次反映は成約報告Workerが
@@ -5826,68 +5688,14 @@ worker.webhook("processProjectWallHitWebhook", {
 	},
 });
 
-worker.webhook("processMultiAgentCommanderRunWebhook", {
-	title: "マルチエージェント基盤 Commander発火Webhook",
-	description:
-		"マルチエージェント基盤 Mission DBの「Commander Run」ボタンから起動。Anthropic Claude（既定 claude-opus-4-7）でCommander応答を生成し、Final Answer列に書き戻す。F1最小通電フェーズ・自己ブートストラップ用。設計図正本: 20_Project/マルチエージェント基盤/_F1_最小通電設計.md",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			const body = event.body as Record<string, unknown>;
-			const missionPageId = extractWebhookPageId(body);
-			if (!missionPageId) {
-				throw new Error(
-					"pageId / entity.id のいずれからもMissionページIDを特定できませんでした。",
-				);
-			}
-			await processMultiAgentCommanderRun(
-				missionPageId,
-				notion as unknown as NotionClient,
-			);
-		}
-	},
-});
+// 2026-06-27 temporary capability pause: processMultiAgentCommanderRunWebhook
+// Reason: keep Notion Worker webhook/capability count below the 100 limit while broker case/custody buttons are prioritized.
 
-worker.webhook("processMultiAgentAgentARunWebhook", {
-	title: "マルチエージェント基盤 AgentA発火Webhook",
-	description:
-		"マルチエージェント基盤 Tasks DBの「AgentA Run」ボタンから起動。AgentA（実行担当）がTaskを実行し、Result列に書き戻す。F2最小通電フェーズ。",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			const body = event.body as Record<string, unknown>;
-			const taskPageId = extractWebhookPageId(body);
-			if (!taskPageId) {
-				throw new Error(
-					"pageId / entity.id のいずれからもTaskページIDを特定できませんでした。",
-				);
-			}
-			await processMultiAgentAgentARun(
-				taskPageId,
-				notion as unknown as NotionClient,
-			);
-		}
-	},
-});
+// 2026-06-27 temporary capability pause: processMultiAgentAgentARunWebhook
+// Reason: keep Notion Worker webhook/capability count below the 100 limit while broker case/custody buttons are prioritized.
 
-worker.webhook("processMultiAgentAgentBRunWebhook", {
-	title: "マルチエージェント基盤 AgentB(Skeptic)発火Webhook",
-	description:
-		"マルチエージェント基盤 Tasks DBの「AgentB Run」ボタンから起動。AgentB（Skeptic役）がAgentA応答を疑い役として検証し、AgentB Review列に書き戻す。F3。",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			const body = event.body as Record<string, unknown>;
-			const taskPageId = extractWebhookPageId(body);
-			if (!taskPageId) {
-				throw new Error(
-					"pageId / entity.id のいずれからもTaskページIDを特定できませんでした。",
-				);
-			}
-			await processMultiAgentAgentBRun(
-				taskPageId,
-				notion as unknown as NotionClient,
-			);
-		}
-	},
-});
+// 2026-06-27 temporary capability pause: processMultiAgentAgentBRunWebhook
+// Reason: keep Notion Worker webhook/capability count below the 100 limit while broker case/custody buttons are prioritized.
 
 // ────────────────────────────────────────────────────────────────────────────
 
