@@ -5,11 +5,6 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-	extractShoutaMeetingPrepFields,
-	generateInspectedShoutaBrief,
-	type ShoutaInput,
-} from "./shouta-brief";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 import {
 	evaluateLandTreasure,
@@ -2391,8 +2386,7 @@ type MeetingPrepResult = {
 		| "created-report"
 		| "dry-run"
 		| "skipped-fresh"
-		| "updated-shouta-fields"
-		| "skipped-worker-shouta";
+		| "skipped-existing-report";
 	message: string;
 };
 
@@ -14310,107 +14304,6 @@ function stringArray(value: unknown): string[] {
 		.slice(0, 8);
 }
 
-// 商太(3体目=とどめの参謀)への入力を、企業ページの実データから組む(純関数)。
-// hits=当てる弾(Aが集めた出典つきの動き)。knowledge=和上側にしか無い手がかり(社内情報)。
-// 空の物は渡さない=商太の鉄則「データに無い事は創作しない」を入力側でも守る。
-function buildShoutaInput(
-	companyName: string,
-	properties: Record<string, unknown>,
-): ShoutaInput {
-	const pick = (name: string) => text(properties[name]).trim();
-	const hits: string[] = [];
-	if (pick("直近ニュース")) hits.push(`直近の動き: ${pick("直近ニュース")}`);
-	if (pick("経営陣")) hits.push(`経営陣: ${pick("経営陣")}`);
-	const knowledgeLines: string[] = [];
-	if (pick("成約へのポイント"))
-		knowledgeLines.push(`成約へのポイント: ${pick("成約へのポイント")}`);
-	if (pick("問い合わせ要約"))
-		knowledgeLines.push(`問い合わせ要約: ${pick("問い合わせ要約")}`);
-	const dealType = pick("売買区分");
-	if (dealType && dealType !== "不明") knowledgeLines.push(`売買区分: ${dealType}`);
-	const dossierLines: string[] = [];
-	if (pick("企業サマリー")) dossierLines.push(pick("企業サマリー"));
-	if (pick("営業切り口")) dossierLines.push(pick("営業切り口"));
-	if (pick("和上解決策適合")) dossierLines.push(pick("和上解決策適合"));
-	if (pick("現在課題仮説")) dossierLines.push(`現在課題仮説: ${pick("現在課題仮説")}`);
-	if (pick("将来課題仮説")) dossierLines.push(`将来課題仮説: ${pick("将来課題仮説")}`);
-	if (pick("想定決裁者")) dossierLines.push(`想定決裁者: ${pick("想定決裁者")}`);
-	if (pick("想定反論・懸念"))
-		dossierLines.push(`想定反論・懸念: ${pick("想定反論・懸念")}`);
-	if (pick("初回トーク方針"))
-		knowledgeLines.push(`初回トーク方針: ${pick("初回トーク方針")}`);
-	return {
-		companyName,
-		contact:
-			pick("面談相手（名前・役職）") || pick("問い合わせ担当者名") || undefined,
-		hits,
-		renewableXray: pick("再エネ接点シグナル") || undefined,
-		dossier: dossierLines.length > 0 ? dossierLines.join("\n") : undefined,
-		knowledge: knowledgeLines.length > 0 ? knowledgeLines.join("\n") : undefined,
-	};
-}
-export { buildShoutaInput as buildShoutaInputForTest };
-
-const SHOUTA_MEETING_PREP_SOURCE_FIELDS = [
-	"企業プロフィール",
-	"3C分析",
-	"商談仮説",
-	"ヒアリングリスト",
-	"注意点・リスク",
-] as const;
-
-function buildMeetingPrepReportContext(
-	properties: Record<string, unknown>,
-): string {
-	const lines = SHOUTA_MEETING_PREP_SOURCE_FIELDS
-		.map((name) => {
-			const value = text(properties[name]).trim();
-			return value ? `${name}: ${value}` : "";
-		})
-		.filter(Boolean);
-	return lines.length > 0
-		? `【商談前準備レポート既存5欄(ABC/準備材料)】\n${lines.join("\n")}`
-		: "";
-}
-export { buildMeetingPrepReportContext as buildMeetingPrepReportContextForTest };
-
-function buildGeneratedMeetingPrepContext(prep: MeetingPrepReport | null): string {
-	if (!prep) return "";
-	const lines = [
-		["企業プロフィール", prep.profile],
-		["3C分析", prep.threeC],
-		["商談仮説", prep.hypothesis],
-		["ヒアリングリスト", prep.questions],
-		["注意点・リスク", prep.risks],
-	]
-		.map(([name, value]) => `${name}: ${String(value ?? "").trim()}`)
-		.filter((line) => !line.endsWith(": ") && !line.endsWith(":"));
-	return lines.length > 0
-		? `【今回生成した商談前準備5欄(商太の下ごしらえ)】\n${lines.join("\n")}`
-		: "";
-}
-
-function appendShoutaDossier(input: ShoutaInput, value: string): void {
-	const body = value.trim();
-	if (!body) return;
-	input.dossier = [input.dossier, body].filter(Boolean).join("\n\n");
-}
-
-function appendMeetingPrepPriorityHits(
-	input: ShoutaInput,
-	properties: Record<string, unknown>,
-): void {
-	const pick = (name: string) => text(properties[name]).trim();
-	const priorityHits = [
-		pick("商談仮説") ? `既存5欄 商談仮説: ${pick("商談仮説")}` : "",
-		pick("3C分析") ? `既存5欄 3C急所: ${pick("3C分析")}` : "",
-		pick("ヒアリングリスト") ? `既存5欄 聞くべき論点: ${pick("ヒアリングリスト")}` : "",
-		pick("注意点・リスク") ? `既存5欄 注意点: ${pick("注意点・リスク")}` : "",
-	].filter(Boolean);
-	if (priorityHits.length === 0) return;
-	input.hits = [...(input.hits ?? []), ...priorityHits.slice(0, 4)];
-}
-
 async function processMeetingPrepReport(
 	input: MeetingPrepInput,
 	notion: NotionClient,
@@ -14422,7 +14315,6 @@ async function processMeetingPrepReport(
 	// 1社1枚の解決はenrich(Gemini課金)より前に行う(検品指摘: ゲートの前に課金が走っていた)
 	const report = await resolveMeetingPrepReport(notion, baseCompany, input.reportPageId);
 	const reportIsBlank = !report || isBlankMeetingPrepReport(report);
-	const reportHasShoutaFields = hasShoutaMeetingPrepFields(report);
 	const reportLastEdited = String(
 		(report as unknown as Record<string, unknown> | null)?.last_edited_time ?? "",
 	);
@@ -14437,13 +14329,12 @@ async function processMeetingPrepReport(
 		!report ||
 		reportIsBlank ||
 		Boolean(input.force) ||
-		Boolean(report && !reportIsBlank && reportHasShoutaFields && !reportIsFresh);
+		Boolean(report && !reportIsBlank && !reportIsFresh);
 
 	// 鮮度ゲート(連打防止・1社1枚): 中身のある既存レポートが新しい間は再生成しない。
-	// ただし、商太5欄が未反映の既存レポートは、既存5欄を触らず商太欄だけ補完する。
 	// 会社の情報は決算等が動かない限り大きく変わらない=同内容の量産はコストと見た目の両方で損。
 	// enrich/LLMより前に止めるので、このreturnは完全無料。
-	if (report && !reportIsBlank && reportHasShoutaFields && !input.force && !input.dryRun) {
+	if (report && !reportIsBlank && !input.force && !input.dryRun) {
 		if (reportIsFresh) {
 			return {
 				companyId: baseCompany.page.id,
@@ -14503,11 +14394,10 @@ async function processMeetingPrepReport(
 	if (shouldWritePrepFields && !reportIsBlank) {
 		await archiveAllPageBodyBlocks(notion, targetReport.id);
 	}
-	// 2026-06-29 方針修正:
-	// 商太の本文生成はWorkerでは行わない。大ちゃんがメンテナンスできるNotionカスタムエージェント側へ寄せる。
-	// Workerは商談前準備レポートの土台(既存5欄・relation)までを扱い、商太5欄を自動生成・自動上書きしない。
+	// Workerは商談前準備レポートの土台(既存5欄・relation)までを扱う。
+	// 営業トーク本文や商太5欄の生成は、Workerでは行わない。
 	if (finalPrep) {
-		await appendMeetingPrepReportBody(notion, targetReport.id, company, finalPrep, "");
+		await appendMeetingPrepReportBody(notion, targetReport.id, company, finalPrep);
 	}
 
 	if (!shouldWritePrepFields) {
@@ -14515,10 +14405,11 @@ async function processMeetingPrepReport(
 			companyId: company.page.id,
 			reportId: targetReport.id,
 			reportUrl: targetReport.url ?? null,
-			action: "skipped-worker-shouta",
-			message: "Worker商太は停止中です。既存レポートと商太5欄は維持し、商太本文生成はNotionカスタムエージェント側で実行してください。",
+			action: "skipped-existing-report",
+			message: "既存の商談前準備レポートを維持しました。Workerでは商太5欄・営業トーク本文を生成しません。",
 		};
 	}
+
 	return {
 		companyId: company.page.id,
 		reportId: targetReport.id,
@@ -14526,9 +14417,9 @@ async function processMeetingPrepReport(
 		action: report ? "updated-report" : "created-report",
 		message: quality?.ready
 			? report
-				? "商談準備レポートの空欄を補完し、準備完了にしました。Worker商太は停止中のため、商太5欄は自動生成していません。"
-				: "商談準備レポートを新規作成し、準備完了にしました。Worker商太は停止中のため、商太5欄は自動生成していません。"
-			: "商談準備レポートを作成/補完しましたが、根拠不足または企業別情報不足のため準備中で止めました。Worker商太は停止中です。",
+				? "商談準備レポートの空欄を補完し、準備完了にしました。営業トーク本文はWorkerでは生成していません。"
+				: "商談準備レポートを新規作成し、準備完了にしました。営業トーク本文はWorkerでは生成していません。"
+			: "商談準備レポートを作成/補完しましたが、根拠不足または企業別情報不足のため準備中で止めました。営業トーク本文はWorkerでは生成していません。",
 	};
 }
 
@@ -23713,17 +23604,6 @@ function isBlankMeetingPrepReport(page: Page): boolean {
 	].every((name) => !text(properties[name]));
 }
 
-function hasShoutaMeetingPrepFields(page: Page | null): boolean {
-	const properties = page?.properties ?? {};
-	return [
-		"商太｜商談トーク",
-		"商太｜商談の入り方",
-		"商太｜提案ポイント",
-		"商太｜想定されるポイントと返し",
-		"商太｜最後に確認すること",
-	].every((name) => text(properties[name]).trim().length > 0);
-}
-
 function readCompany(page: Page): CompanyInfo {
 	const properties = page.properties ?? {};
 	return {
@@ -24131,21 +24011,11 @@ async function appendMeetingPrepReportBody(
 	reportId: string,
 	company: CompanyInfo,
 	prep: MeetingPrepReport,
-	shoutaBrief?: string,
 ): Promise<void> {
 	if (!notion.blocks?.children?.append) return;
-	// 商太ブリーフは紙面ブロック(検品判定=コールアウト/▼=見出し/つかみ=引用)で組む
-	const briefBlocks = shoutaBrief?.trim() ? shoutaBriefToBlocks(shoutaBrief) : [];
 	await notion.blocks.children.append({
 		block_id: reportId,
 		children: [
-			...(briefBlocks.length > 0
-				? [
-						headingBlock("商太の商談前ブリーフ(そのまま喋れる)", 2),
-						...briefBlocks,
-						dividerBlock(),
-					]
-				: []),
 			headingBlock("商談前準備サマリー", 2),
 			paragraphBlock(prep.profile),
 			headingBlock("3C分析", 2),
@@ -24159,25 +24029,6 @@ async function appendMeetingPrepReportBody(
 		],
 	});
 }
-
-async function appendShoutaBriefBody(
-	notion: NotionClient,
-	reportId: string,
-	shoutaBrief: string,
-): Promise<void> {
-	if (!notion.blocks?.children?.append) return;
-	const briefBlocks = shoutaBrief.trim() ? shoutaBriefToBlocks(shoutaBrief) : [];
-	if (briefBlocks.length === 0) return;
-	await notion.blocks.children.append({
-		block_id: reportId,
-		children: [
-			headingBlock("商太の商談前ブリーフ(そのまま喋れる)", 2),
-			...briefBlocks,
-			dividerBlock(),
-		],
-	});
-}
-
 function headingBlock(content: string, level: 1 | 2 | 3): Record<string, unknown> {
 	const type = `heading_${level}`;
 	return {
@@ -24218,16 +24069,6 @@ function dividerBlock(): Record<string, unknown> {
 	return { object: "block", type: "divider", divider: {} };
 }
 
-function quoteBlock(content: string): Record<string, unknown> {
-	return {
-		object: "block",
-		type: "quote",
-		quote: {
-			rich_text: [{ type: "text", text: { content: content.slice(0, 1900) } }],
-		},
-	};
-}
-
 // 2列の表(項目|内容)。1行目を行ヘッダにして「基本情報」を一覧化する。
 function tableBlock(rows: Array<[string, string]>): Record<string, unknown> {
 	const cell = (s: string) => [{ type: "text", text: { content: s.slice(0, 1900) } }];
@@ -24264,42 +24105,6 @@ function toggleBlock(title: string, items: string[]): Record<string, unknown> {
 		},
 	};
 }
-
-// 商太ブリーフを紙面ブロックへ(純関数)。
-// 1行目の検品判定(✅/⚠️/ℹ️)→コールアウト、▼見出し→heading_3、
-// 「つかみの一言」セクションの台詞→引用ブロック、他→段落。
-function shoutaBriefToBlocks(brief: string): Array<Record<string, unknown>> {
-	const blocks: Array<Record<string, unknown>> = [];
-	let inTsukami = false;
-	for (const raw of brief.split("\n")) {
-		const line = raw.trim();
-		if (!line) continue;
-		if (line.startsWith("✅")) {
-			blocks.push(calloutBlock(line, "✅", "green_background"));
-			continue;
-		}
-		if (line.startsWith("⚠️") || line.startsWith("⚠")) {
-			blocks.push(calloutBlock(line, "⚠️", "yellow_background"));
-			continue;
-		}
-		if (line.startsWith("ℹ️") || line.startsWith("ℹ")) {
-			blocks.push(calloutBlock(line, "ℹ️", "gray_background"));
-			continue;
-		}
-		if (line.startsWith("▼")) {
-			inTsukami = line.includes("つかみ");
-			blocks.push(headingBlock(line.replace(/^▼\s*/, "▼ "), 3));
-			continue;
-		}
-		if (inTsukami) {
-			blocks.push(quoteBlock(line));
-			continue;
-		}
-		blocks.push(paragraphBlock(line));
-	}
-	return blocks.slice(0, 70);
-}
-export { shoutaBriefToBlocks as shoutaBriefToBlocksForTest };
 
 async function findPendingCards(
 	notion: NotionClient,

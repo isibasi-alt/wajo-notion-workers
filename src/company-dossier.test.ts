@@ -3,7 +3,6 @@ import {
 	buildDossierBlocksForTest,
 	dossierBlockIdsToReplaceForTest as idsToReplace,
 	fallbackDeepResearchForTest,
-	shoutaBriefToBlocksForTest as briefBlocks,
 } from "./index";
 
 async function main() {
@@ -47,29 +46,6 @@ async function main() {
 	);
 	assert.ok(lowJson.includes("red_background"));
 
-	// ── 商太ブリーフの紙面化 ──
-	const bb = briefBlocks(
-		[
-			"⚠️ 検品AIの指摘が残っています: 誇張1件",
-			"先輩、株式会社サンプル食品いきましょう。🌞",
-			"▼ ここが急所",
-			"新工場が2026-01に稼働(出典あり)。",
-			"▼ つかみの一言",
-			"「新工場の電気代、月いくら増えました？」",
-			"▼ 次の一手",
-			"電気代の実額を聞く。",
-		].join("\n"),
-	);
-	const bbTypes = bb.map((b) => (b as { type: string }).type);
-	const bbJson = JSON.stringify(bb);
-	assert.equal(bbTypes[0], "callout"); // 検品判定はコールアウト
-	assert.ok(bbJson.includes("yellow_background"));
-	assert.ok(bbTypes.includes("heading_3")); // ▼は見出し
-	assert.ok(bbTypes.includes("quote")); // つかみの台詞は引用
-	assert.ok(bbJson.includes("月いくら増えました"));
-	// つかみセクションを抜けたら段落に戻る
-	const lastBlock = bb[bb.length - 1] as { type: string };
-	assert.equal(lastBlock.type, "paragraph");
 
 	// ── 旧ドシエ置き換えロジック(再実行で本文が複製しない) ──
 	const h1 = (id: string, text: string) => ({ id, type: "heading_1", text });
