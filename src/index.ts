@@ -16942,16 +16942,23 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 	}
 	const curtailmentScenario = readCurtailmentScenario(properties);
 	const curtailmentRate = curtailmentScenario === "抑制あり"
-		? Math.max(0, readFirstNumberByAliases(properties, [
-			"出力抑制率",
-			"抑制率",
-			"出力制御率",
-			"想定抑制率",
-		]) ?? 0)
+		? Math.max(0, Math.min(
+			readFirstNumberByAliases(properties, [
+				"出力抑制率",
+				"抑制率",
+				"出力制御率",
+				"想定抑制率",
+			]) ?? 0,
+			100,
+		))
 		: 0;
 	const annualIncome =
 		baseAnnualIncome !== null
-			? roundTo(baseAnnualIncome * (1 - Math.min(curtailmentRate, 100) / 100), 0)
+			? roundTo(
+				baseAnnualIncome
+				* (1 - Math.max(0, Math.min(curtailmentRate, 100)) / 100),
+				0,
+			)
 			: null;
 	const runningCostInput = readRunningCostInput(properties);
 	const runningCost = runningCostInput.total ?? 0;
@@ -17068,7 +17075,7 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 	const annualNetIncome = roundTo((annualIncome as number) - runningCost, 0);
 	const investmentBase = isGridBattery ? (purchaseCost as number) : (salePrice as number);
 	const expectedYield =
-		investmentBase > 0 && annualNetIncome > 0
+		investmentBase > 0
 			? roundTo((annualNetIncome / investmentBase) * 100, 2)
 			: null;
 	const paybackYears =
@@ -17223,7 +17230,7 @@ function buildFinanceSimulation(input: {
 		"ローン年数",
 	]);
 	const annualDebtService = calculateAnnualDebtService(loanAmount, interestRate, loanYears);
-	const annualSystemDepreciation = roundTo(systemPrice / 17, 0);
+	const annualSystemDepreciation = roundTo(systemPrice * 0.059, 0);
 	const annualRightsDepreciation = roundTo(rightsPrice / 5, 0);
 	const annualDepreciation = annualSystemDepreciation + annualRightsDepreciation;
 	const depreciationBase = pretaxProfit !== null
