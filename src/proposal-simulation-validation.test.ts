@@ -246,11 +246,11 @@ async function main() {
 	assert.equal(readyWithFinance.financeSimulation?.landPrice, 20000000);
 	assert.equal(readyWithFinance.financeSimulation?.rightsPrice, 35000000);
 	assert.equal(readyWithFinance.financeSimulation?.systemPrice, 65000000);
-	assert.equal(readyWithFinance.financeSimulation?.annualDepreciation, 10823529);
-	assert.equal(readyWithFinance.financeSimulation?.taxBenefit, 3247059);
+	assert.equal(readyWithFinance.financeSimulation?.annualDepreciation, 10835000);
+	assert.equal(readyWithFinance.financeSimulation?.taxBenefit, 3250500);
 	assert.equal(readyWithFinance.financeSimulation?.timingRank, "S");
 	assert.match(readyWithFinance.summaryLines.join("\n"), /購入タイミング判定: S/);
-	assert.match(readyWithFinance.summaryLines.join("\n"), /年間税効果: ¥3,247,059/);
+	assert.match(readyWithFinance.summaryLines.join("\n"), /年間税効果: ¥3,250,500/);
 	assert.match(readyWithFinance.summaryLines.join("\n"), /商品構成: 金額入力/);
 
 	const readyWithCompositionRatios = evaluateProposalSimulationDraftForTest({
@@ -271,8 +271,8 @@ async function main() {
 	assert.equal(readyWithCompositionRatios.financeSimulation?.landRatio, 20);
 	assert.equal(readyWithCompositionRatios.financeSimulation?.systemRatio, 50);
 	assert.equal(readyWithCompositionRatios.financeSimulation?.rightsRatio, 30);
-	assert.equal(readyWithCompositionRatios.financeSimulation?.annualDepreciation, 10729412);
-	assert.equal(readyWithCompositionRatios.financeSimulation?.taxBenefit, 3218824);
+	assert.equal(readyWithCompositionRatios.financeSimulation?.annualDepreciation, 10740000);
+	assert.equal(readyWithCompositionRatios.financeSimulation?.taxBenefit, 3222000);
 	assert.match(readyWithCompositionRatios.summaryLines.join("\n"), /構成比: 土地 20% \/ システム 50% \/ 権利代 30%/);
 	assert.match(readyWithCompositionRatios.summaryLines.join("\n"), /営業設計: 権利代比率を上げると5年償却部分が増え/);
 	assert.match(readyWithCompositionRatios.pageTwoLines.join("\n"), /商品構成: 比率入力/);
