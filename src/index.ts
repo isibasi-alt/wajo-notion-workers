@@ -2448,6 +2448,8 @@ type LandInfo = {
 	substationDistanceKm: number | null;
 	latitude: number | null;
 	longitude: number | null;
+	caseStatus: string;
+	relatedProjectIds: string[];
 };
 
 type ProjectInfo = {
@@ -19907,6 +19909,8 @@ function readLand(page: Page): LandInfo {
 			numberValue(properties["Longitude"]) ??
 			placeCoordinate(properties["GPS情報"], "lon") ??
 			numberFromText(text(properties["経度"]) || text(properties["longitude"])),
+		caseStatus: text(properties["案件化状態"]),
+		relatedProjectIds: relationIdsFromProperty(properties["関連案件"]),
 	};
 }
 
@@ -22131,13 +22135,16 @@ function chooseRoadRating(road: string): string {
 	return "要確認";
 }
 
+function shouldPreserveLandCaseStatus(land: LandInfo): boolean {
+	return land.caseStatus === "案件化済" || land.relatedProjectIds.length > 0;
+}
+
 async function markLandProcessing(
 	notion: NotionClient,
 	land: LandInfo,
 ): Promise<void> {
-	await safeUpdateExistingProperties(notion, land.page, {
+	const patches: Record<string, SafePatch> = {
 		処理ステータス: { kind: "select", value: "解析開始" },
-		案件化状態: { kind: "select", value: "未案件化" },
 		AIアクションバケット: { kind: "select", value: "継続監視" },
 		一次AI受付メモ: {
 			kind: "text",
@@ -22148,7 +22155,11 @@ async function markLandProcessing(
 			kind: "text",
 			value: "Notion Workerが土地詳細評価を開始。",
 		},
-	});
+	};
+	if (!shouldPreserveLandCaseStatus(land)) {
+		patches.案件化状態 = { kind: "select", value: "未案件化" };
+	}
+	await safeUpdateExistingProperties(notion, land.page, patches);
 }
 
 async function markLandNeedsReview(
@@ -22158,7 +22169,6 @@ async function markLandNeedsReview(
 ): Promise<void> {
 	const patches: Record<string, SafePatch> = {
 		処理ステータス: { kind: "select", value: "要確認" },
-		案件化状態: { kind: "select", value: "未案件化" },
 		AIアクションバケット: { kind: "select", value: "継続監視" },
 		総合評価: { kind: "select", value: evaluation.overallGrade },
 		AI総合スコア: { kind: "number", value: evaluation.score },
@@ -22177,6 +22187,9 @@ async function markLandNeedsReview(
 		Webhook引き継ぎステータス: { kind: "select", value: "要確認で停止" },
 		Webhook引き継ぎメモ: { kind: "text", value: evaluation.reviewMemo },
 	};
+	if (!shouldPreserveLandCaseStatus(land)) {
+		patches.案件化状態 = { kind: "select", value: "未案件化" };
+	}
 	if (
 		evaluation.shouldPatchSubstationDistance !== false &&
 		evaluation.nearestSubstationDistanceKm !== undefined &&
@@ -22195,16 +22208,19 @@ async function markLandFailure(
 	land: LandInfo,
 	message: string,
 ): Promise<void> {
-	await safeUpdateExistingProperties(notion, land.page, {
+	const patches: Record<string, SafePatch> = {
 		処理ステータス: { kind: "select", value: "要確認" },
-		案件化状態: { kind: "select", value: "未案件化" },
 		AIアクションバケット: { kind: "select", value: "継続監視" },
 		一次AI受付メモ: { kind: "text", value: `土地Worker処理失敗: ${message}` },
 		案件化メモ: { kind: "text", value: `土地Worker処理失敗: ${message}` },
 		設計上の弱点: { kind: "text", value: `土地Worker処理失敗: ${message}` },
 		Webhook引き継ぎステータス: { kind: "select", value: "引き継ぎ失敗" },
 		Webhook引き継ぎメモ: { kind: "text", value: `土地Worker処理失敗: ${message}` },
-	});
+	};
+	if (!shouldPreserveLandCaseStatus(land)) {
+		patches.案件化状態 = { kind: "select", value: "未案件化" };
+	}
+	await safeUpdateExistingProperties(notion, land.page, patches);
 }
 
 async function writeLandEvaluation(
@@ -22214,7 +22230,6 @@ async function writeLandEvaluation(
 ): Promise<void> {
 	const patches: Record<string, SafePatch> = {
 		処理ステータス: { kind: "select", value: "完了" },
-		案件化状態: { kind: "select", value: evaluation.caseStatus },
 		AIアクションバケット: { kind: "select", value: evaluation.actionBucket },
 		総合評価: { kind: "select", value: evaluation.overallGrade },
 		AI総合スコア: { kind: "number", value: evaluation.score },
@@ -22246,6 +22261,9 @@ async function writeLandEvaluation(
 		},
 		設計上の弱点: { kind: "text", value: evaluation.reviewMemo },
 	};
+	if (!shouldPreserveLandCaseStatus(land)) {
+		patches.案件化状態 = { kind: "select", value: evaluation.caseStatus };
+	}
 
 	const farmlandStatus = land.farmland.trim();
 	if (farmlandStatus) {

@@ -21,8 +21,8 @@ function dateProp() {
 	return { type: "date", date: null };
 }
 
-function relationProp() {
-	return { type: "relation", relation: [] };
+function relationProp(ids: string[] = []) {
+	return { type: "relation", relation: ids.map((id) => ({ id })) };
 }
 
 function highValueLandPage() {
@@ -96,6 +96,20 @@ function highValueLandPageWithoutExactCoordinatesButWithDistance() {
 			...properties,
 			土地名称: titleProp("【TDD】距離入力済みでもGSI候補は取得する"),
 			所在地: richTextProp("岐阜県土岐市土岐津町"),
+		},
+	};
+}
+
+function linkedCaseLandPage() {
+	const page = highValueLandPage();
+	return {
+		...page,
+		id: "land-linked-case-1",
+		properties: {
+			...page.properties,
+			土地名称: titleProp("【TDD】案件化済み土地は詳細評価で戻さない"),
+			案件化状態: selectProp("案件化済"),
+			関連案件: relationProp(["project-linked-1"]),
 		},
 	};
 }
@@ -238,6 +252,28 @@ async function main() {
 	const learningLog = createdPages[0]!.properties as Record<string, unknown>;
 	assert.match(JSON.stringify(learningLog.判定根拠), /2AI/);
 	assert.match(JSON.stringify(learningLog.判定根拠), /SABC/);
+
+	activePage = linkedCaseLandPage();
+	const linkedCaseUpdateStart = updates.length;
+	const linkedCaseResult = await processLandEvaluationForTest(
+		{ pageId: "land-linked-case-1", dryRun: false },
+		notion as never,
+	);
+	assert.equal(linkedCaseResult.action, "evaluated");
+	const linkedCaseUpdates = updates.slice(linkedCaseUpdateStart);
+	assert.ok(linkedCaseUpdates.length >= 2);
+	for (const update of linkedCaseUpdates) {
+		const properties = update.properties as Record<string, unknown>;
+		assert.equal(
+			"案件化状態" in properties,
+			false,
+			"案件化済み/関連案件ありの土地は詳細評価で案件化状態を上書きしない",
+		);
+	}
+	assert.deepEqual(
+		(linkedCaseUpdates.at(-1)?.properties as Record<string, unknown>).処理ステータス,
+		{ select: { name: "完了" } },
+	);
 
 	activePage = nearSubstationButBlockedPage();
 	const blockedResult = await processLandEvaluationForTest(

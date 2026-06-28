@@ -23,8 +23,6 @@ for (const name of [
 	"processMeetingMemoFormatWebhook",
 	"processMeetingFeedbackWebhook",
 	"processMeetingDealLinkWebhook",
-	"processMeetingTasksWebhook",
-	"processMeetingKnowledgeWebhook",
 	"processLandCaseWebhook",
 	"processBrokerActionWebhook",
 ]) {
