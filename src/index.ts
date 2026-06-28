@@ -5094,8 +5094,11 @@ async function gatherHitomiSourceData(
 	await appendBlocksIfAny(notion, materialPageId, children);
 }
 
-worker.webhook("processHitomiEvalChainWebhook", {
-	title: "WAJO 人見さん月次評価 6体自動連鎖Webhook",
+// 【待避 2026-06-28】Notion AI版のA〜Fチェーンに一本化したため、旧Worker版の自動連鎖をここで無効化する。
+// Webhook名を変えることで旧URLにはハンドラが無くなり、ボタンが叩いても旧チェーンは発火しない（二重評価の防止）。
+// 戻すときは、名前を "processHitomiEvalChainWebhook" に戻して再デプロイする。関数本体(runHitomiEvalChain等)は削除せず温存。
+worker.webhook("processHitomiEvalChainWebhook_RETIRED_20260628", {
+	title: "【待避】WAJO 人見さん月次評価 6体自動連鎖Webhook（Notion AI版へ一本化のため無効）",
 	description:
 		"月次評価レコードのページIDを受け取り、A→B→C→D→C再→D再→E→F の6体エージェントを自動連鎖で実行し各結果をページへ追記します。最終確定はグループ長。",
 	execute: async (events, { notion }) => {
