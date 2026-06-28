@@ -5,7 +5,6 @@ import {
 	normalizeCardRoutingForTest as routing,
 	parseBusinessCardOcrForTest as parse,
 	readBusinessCardByIdRunOptionsForTest as byIdRunOptions,
-	readBusinessCardResearchWebhookRunOptionsForTest as researchWebhookRunOptions,
 	readBusinessCardRunOptionsForTest as runOptions,
 	readPendingBusinessCardsRunOptionsForTest as pendingRunOptions,
 } from "./index";
@@ -159,15 +158,25 @@ async function main() {
 		autoCreateMeetingPrepReport: false,
 		registerExternalAdvisor: false,
 	});
+	assert.deepEqual(runOptions({ mode: "link", engagementIntent: "active", deepResearch: true }), {
+		routing: "company",
+		engagementIntent: "save-only",
+		deepResearch: false,
+		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: false,
+	});
+	assert.deepEqual(runOptions({ mode: "research", engagementIntent: "名刺だけ保存" }), {
+		routing: "company",
+		engagementIntent: "active",
+		deepResearch: true,
+		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: false,
+	});
 	assert.deepEqual(byIdRunOptions(), {
 		deepResearch: true,
 		autoCreateMeetingPrepReport: false,
 	});
 	assert.deepEqual(pendingRunOptions(), {
-		deepResearch: true,
-		autoCreateMeetingPrepReport: false,
-	});
-	assert.deepEqual(researchWebhookRunOptions(), {
 		deepResearch: true,
 		autoCreateMeetingPrepReport: false,
 	});

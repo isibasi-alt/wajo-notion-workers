@@ -3740,27 +3740,9 @@ worker.tool("backfillCustomerContactLogDisplays", {
 	},
 });
 
-worker.tool("cleanInquiryTitles", {
-	title: "WAJO 問い合わせタイトル整形",
-	description:
-		"問い合わせDBの件名を、分類コード・相手・売買区分が分かる短い表示名に整えます。元のメール件名は元メール件名へ残します。",
-	schema: j.object({
-		limit: j.number().describe("処理する最大件数。通常は50程度"),
-		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
-	}),
-	outputSchema: j.object({
-		action: j.string(),
-		checked: j.number(),
-		updated: j.number(),
-		message: j.string(),
-	}),
-	execute: async ({ limit, dryRun }, { notion }) => {
-		return cleanInquiryTitles(
-			{ limit, dryRun },
-			notion as unknown as NotionClient,
-		);
-	},
-});
+// 2026-06-28 capability退避: cleanInquiryTitles
+// assignInquiryReceptionNumbers が受付番号付与と問い合わせタイトル整形を包含するため、
+// cleanInquiryTitles はWorker capabilityとして公開しない。関数本体は保守用に残す。
 
 worker.tool("assignInquiryReceptionNumbers", {
 	title: "WAJO 問い合わせ受付番号付与",
@@ -4436,12 +4418,13 @@ worker.tool("processBusinessCardImage", {
 worker.webhook("processBusinessCardWebhook", {
 	title: "WAJO 名刺処理Webhook",
 	description:
-		"外部サービスやNotion webhookから名刺処理を起動します。body.pageId があれば1件処理、なければ未処理を拾います。activeでも商談準備レポートは自動作成せず、企業マスター高密度化までに止めます。",
+		"外部サービスやNotion webhookから名刺処理を起動します。body.pageId があれば1件処理、なければ未処理を拾います。mode=link/researchで旧Link/Research用途も受けます。",
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			verifyWebhookSecret(event.headers, event.body);
 			const body = coerceWebhookBodyRecord(event.body);
 			const runOptions = readBusinessCardRunOptions(body);
+			const force = shouldForceBusinessCardRun(body);
 			const pageId = readBusinessCardWebhookPageId(body);
 			if (runOptions.registerExternalAdvisor && !pageId) {
 				throw new Error("registerExternalAdvisor=true は単一の pageId 指定時だけ使用できます。");
@@ -4458,6 +4441,7 @@ worker.webhook("processBusinessCardWebhook", {
 						engagementIntent: runOptions.engagementIntent,
 						dryRun: false,
 						deepResearch: runOptions.deepResearch,
+						force,
 						autoCreateMeetingPrepReport: runOptions.autoCreateMeetingPrepReport,
 						registerExternalAdvisor: runOptions.registerExternalAdvisor,
 					},
@@ -4475,6 +4459,7 @@ worker.webhook("processBusinessCardWebhook", {
 						engagementIntent: runOptions.engagementIntent,
 						dryRun: false,
 						deepResearch: runOptions.deepResearch,
+						force,
 						autoCreateMeetingPrepReport: runOptions.autoCreateMeetingPrepReport,
 					},
 					notion as unknown as NotionClient,
@@ -4484,57 +4469,8 @@ worker.webhook("processBusinessCardWebhook", {
 	},
 });
 
-worker.webhook("processBusinessCardLinkWebhook", {
-	title: "WAJO 名刺連携のみWebhook",
-	description:
-		"名刺管理DB上の単一名刺を、外部調査・企業マスター高密度化なしで企業連携まで実行します。",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			verifyWebhookSecret(event.headers, event.body);
-			const body = coerceWebhookBodyRecord(event.body);
-			const pageId = readBusinessCardWebhookPageId(body);
-			if (!pageId) {
-				throw new Error("pageId / page_id / entity.id のいずれからも名刺ページIDを特定できませんでした。");
-			}
-			await processBusinessCard(
-				{
-					pageId,
-					dryRun: false,
-					deepResearch: false,
-					autoCreateMeetingPrepReport: false,
-				},
-				notion as unknown as NotionClient,
-			);
-		}
-	},
-});
-
-worker.webhook("processBusinessCardResearchWebhook", {
-	title: "WAJO 名刺調査Webhook",
-	description:
-		"名刺管理DB上の単一名刺を、第1段階の調査入口として外部調査・企業マスター高密度化まで実行します。商談準備レポートは自動作成しません。",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			verifyWebhookSecret(event.headers, event.body);
-			const body = coerceWebhookBodyRecord(event.body);
-			const pageId = readBusinessCardWebhookPageId(body);
-			if (!pageId) {
-				throw new Error("pageId / page_id / entity.id のいずれからも名刺ページIDを特定できませんでした。");
-			}
-			const runOptions = readBusinessCardResearchWebhookRunOptions();
-			await processBusinessCard(
-				{
-					pageId,
-					dryRun: false,
-					deepResearch: runOptions.deepResearch,
-					autoCreateMeetingPrepReport: runOptions.autoCreateMeetingPrepReport,
-					force: true,
-				},
-				notion as unknown as NotionClient,
-			);
-		}
-	},
-});
+// 2026-06-28 capability退避: processBusinessCardLinkWebhook / processBusinessCardResearchWebhook
+// processBusinessCardWebhook に mode=link / mode=research と force を寄せたため、旧2本は公開しない。
 
 worker.webhook("processInquiryCompanyLinkWebhook", {
 	title: "WAJO お問い合わせ→企業連携Webhook",
@@ -6136,6 +6072,9 @@ function readBusinessCardRunOptions(body: unknown): {
 	registerExternalAdvisor: boolean;
 } {
 	const record = coerceWebhookBodyRecord(body);
+	const mode = normalizeBusinessCardMode(
+		firstString(record.mode, record.action, record.cardMode, record["処理モード"]),
+	);
 	const routing = normalizeCardRouting(
 		firstString(
 			record.routing,
@@ -6171,6 +6110,24 @@ function readBusinessCardRunOptions(body: unknown): {
 			registerExternalAdvisor,
 		};
 	}
+	if (mode === "link") {
+		return {
+			routing: "company",
+			engagementIntent: "save-only",
+			deepResearch: false,
+			autoCreateMeetingPrepReport: false,
+			registerExternalAdvisor,
+		};
+	}
+	if (mode === "research") {
+		return {
+			routing: "company",
+			engagementIntent: "active",
+			deepResearch: true,
+			autoCreateMeetingPrepReport: false,
+			registerExternalAdvisor,
+		};
+	}
 	if (engagement === "save-only" || routing !== "company") {
 		return {
 			routing,
@@ -6189,6 +6146,29 @@ function readBusinessCardRunOptions(body: unknown): {
 		autoCreateMeetingPrepReport: false,
 		registerExternalAdvisor,
 	};
+}
+
+function normalizeBusinessCardMode(value: string | undefined): "default" | "link" | "research" {
+	if (!value) return "default";
+	const normalized = value.trim().toLowerCase();
+	if (["link", "links", "company-link", "company_link", "紐付け", "リンク", "企業紐付け"].includes(normalized)) {
+		return "link";
+	}
+	if (["research", "deep-research", "deep_research", "調査", "企業調査", "再調査"].includes(normalized)) {
+		return "research";
+	}
+	return "default";
+}
+
+function shouldForceBusinessCardRun(body: unknown): boolean {
+	const record = coerceWebhookBodyRecord(body);
+	const mode = normalizeBusinessCardMode(
+		firstString(record.mode, record.action, record.cardMode, record["処理モード"]),
+	);
+	return (
+		mode === "research" ||
+		booleanFlag(record.force, record.reprocess, record.retry, record["再実行"], record["強制実行"])
+	);
 }
 
 function booleanFlag(...values: unknown[]): boolean {
@@ -6221,17 +6201,6 @@ function readPendingBusinessCardsRunOptions(): {
 	return { deepResearch: true, autoCreateMeetingPrepReport: false };
 }
 export { readPendingBusinessCardsRunOptions as readPendingBusinessCardsRunOptionsForTest };
-
-function readBusinessCardResearchWebhookRunOptions(): {
-	deepResearch: boolean;
-	autoCreateMeetingPrepReport: boolean;
-} {
-	return { deepResearch: true, autoCreateMeetingPrepReport: false };
-}
-export {
-	readBusinessCardResearchWebhookRunOptions as readBusinessCardResearchWebhookRunOptionsForTest,
-};
-
 
 async function callOpenAIBusinessCardOcr(imageDataUrl: string): Promise<BusinessCardOcr> {
 	const apiKey = process.env.OPENAI_API_KEY || process.env.WAJO_OPENAI_API_KEY;
