@@ -4773,11 +4773,49 @@ worker.webhook("processMeetingDealLinkWebhook", {
 	},
 });
 
-// 2026-06-27 temporary capability pause: processMeetingTasksWebhook
-// Reason: keep Notion Worker webhook/capability count below the 100 limit while broker case/custody buttons are prioritized.
+worker.webhook("processMeetingTasksWebhook", {
+	title: "WAJO ミーティングタスク振り分けWebhook",
+	description:
+		"ミーティングデータベースのページIDを受け取り、アクション項目からチームトラッカーへタスクを作成します。関連ミーティングで既存タスクを確認し、二重作成を防ぎます。",
+	execute: async (events, { notion }) => {
+		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const meetingPageId = extractMeetingPageIdFromWebhook(body);
+			if (!meetingPageId) {
+				throw new Error(
+					"meetingPageId / pageId / entity.id のいずれからも会議ページIDを特定できませんでした。",
+				);
+			}
+			await processMeetingTasks(
+				{ meetingPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
 
-// 2026-06-27 temporary capability pause: processMeetingKnowledgeWebhook
-// Reason: keep Notion Worker webhook/capability count below the 100 limit while broker case/custody buttons are prioritized.
+worker.webhook("processMeetingKnowledgeWebhook", {
+	title: "WAJO ミーティングナレッジ候補化Webhook",
+	description:
+		"ミーティングデータベースのページIDを受け取り、社内ナレッジDBへ未承認候補を作成します。既存の元ミーティングrelationで二重作成を防ぎます。",
+	execute: async (events, { notion }) => {
+		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const meetingPageId = extractMeetingPageIdFromWebhook(body);
+			if (!meetingPageId) {
+				throw new Error(
+					"meetingPageId / pageId / entity.id のいずれからも会議ページIDを特定できませんでした。",
+				);
+			}
+			await processMeetingKnowledge(
+				{ meetingPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
 
 registerMeetingQuickStartWebhook(
 	"quickStartMeetingWebhook",
@@ -5904,8 +5942,8 @@ async function processBusinessCard(
 				companyName: card.companyName,
 				message: shouldDeepResearch
 					? meetingPrepSummary
-						? `新規企業を作成し、企業情報と3Cを返却しました。${meetingPrepSummary}`
-						: "新規企業を作成し、企業情報と3Cを返却しました。"
+						? `新規企業を作成し、企業マスター高密度化を実行しました。調査結果は企業調査ステータスを確認してください。${meetingPrepSummary}`
+						: "新規企業を作成し、企業マスター高密度化を実行しました。調査結果は企業調査ステータスを確認してください。"
 					: "新規企業を作成し、名刺と連携しました。営業判断=名刺だけ保存のため、外部調査・企業マスター高密度化は未実行です。",
 			};
 	} catch (error) {

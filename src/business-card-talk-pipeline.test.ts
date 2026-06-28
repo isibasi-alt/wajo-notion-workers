@@ -678,7 +678,7 @@ async function main() {
 	assert.ok(advisorPublicResearchUpdate);
 	assert.match(
 		richTextFromPatch(advisorPublicResearchUpdate!.properties?.["判定根拠メモ"]),
-		/【公開Web調査 2026-06-26】/,
+		/【公開Web調査 \d{4}-\d{2}-\d{2}】/,
 	);
 	assert.match(
 		richTextFromPatch(advisorPublicResearchUpdate!.properties?.["判定根拠メモ"]),
@@ -987,7 +987,8 @@ async function main() {
 		assert.ok(closingPatch);
 		assert.equal(hasStrikethroughText(closingPatch), true);
 		const aiMemo = richTextFromPatch(companyUpdate!.properties?.["企業AI受付メモ"]);
-		assert.match(aiMemo, /商太/);
+		assert.match(aiMemo, /企業マスター高密度化/);
+		assert.doesNotMatch(aiMemo, /商太: researchCompanyDeep/);
 		assert.match(aiMemo, /二重リサーチなし/);
 		assert.match(aiMemo, /公式調査くん（公式調査くん相当）/);
 		assert.match(aiMemo, /営業材料くん（営業材料くん相当）/);
