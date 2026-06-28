@@ -10508,7 +10508,7 @@ function buildCompanyResearchAuditMemo(input: {
 		externalSignals.map((element) => element.targetProperty),
 	);
 	return [
-		`${today} 商太: researchCompanyDeepで外部調査を1回だけ実行し、公式調査くん/営業材料くんへ素材を分配。二重リサーチなし。`,
+		`${today} 企業マスター高密度化: researchCompanyDeepで外部調査を1回だけ実行し、公式調査くん/営業材料くんへ素材を分配。二重リサーチなし。`,
 		`${today} 公式調査くん（公式調査くん相当）: ${officialFactNames.length ? `${officialFactNames.join("、")}を公式ファクトとして分類。` : "公式ファクトは追加取得なし。"}`,
 		`${today} 営業材料くん（営業材料くん相当）: ${externalSignalNames.length ? `${externalSignalNames.join("、")}を外部シグナルとして分類。` : "外部シグナルは追加取得なし。"}`,
 		`${today} 反映くん（反映くん相当）: 公式事実、公式SNS、役員SNS、LinkedIn、口コミ、求人・従業員レビュー、要確認を分離。既存値は上書きせず、必要時のみ取り消し線付き履歴で追記。`,
