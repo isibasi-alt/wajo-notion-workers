@@ -5134,6 +5134,30 @@ worker.webhook("processDailyReportLogWebhook", {
 	},
 });
 
+worker.webhook("enforceDailyReportDisciplineWebhook", {
+	title: "WAJO WANiPO日報 題名強制・土日アーカイブWebhook",
+	description:
+		"日報DBの題名を「M/D（曜）担当者名 日報」へ強制上書きし、土日の日報をアーカイブします。単一ページIDが取れればそのページのみ強制(題名/土日)、取れなければ最新50件のバルク・ドライランを返します。実消去は既定では走りません。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const dailyReportPageId = extractDailyReportPageIdFromWebhook(body);
+			const result = dailyReportPageId
+				? await enforceDailyReportDisciplineForPage(
+						dailyReportPageId,
+						notion as unknown as NotionClient,
+						false,
+					)
+				: await enforceDailyReportDiscipline(
+						{ limit: 50, dryRun: true },
+						notion as unknown as NotionClient,
+					);
+			console.log("enforceDailyReportDiscipline", JSON.stringify(result));
+		}
+	},
+});
+
 worker.webhook("processLandEvaluationWebhook", {
 	title: "WAJO 土地詳細評価Webhook",
 	description:
@@ -17330,6 +17354,232 @@ function readDailyReport(page: Page): DailyReportInfo {
 	};
 }
 
+// ─── ワニポ日報 決定論的強制執行 ─────────────────────────────────────────────
+// ワニポ(Notion AIエージェント)の従順さに頼らず、コード側で日報DBの題名と
+// 土日アーカイブを固定する。死守DB(7f394672/7838db8a)は触らない。新プロパティは作らない。
+
+type DailyReportDisciplineAction =
+	| "updated-title"
+	| "already-correct"
+	| "archived"
+	| "already-archived"
+	| "skipped";
+
+type DailyReportDisciplineSample = {
+	pageId: string;
+	before: string;
+	after: string;
+	action: DailyReportDisciplineAction;
+};
+
+type DailyReportDisciplineResult = {
+	dryRun: boolean;
+	checked: number;
+	samples: DailyReportDisciplineSample[];
+	updatedTitles: number;
+	archived: number;
+	skipped: number;
+	message: string;
+};
+
+const DAILY_REPORT_WEEKDAY_CHARS = ["日", "月", "火", "水", "木", "金", "土"];
+
+/** 日付文字列(YYYY-MM-DD等)の曜日1文字を返す。TZずれを避けるためUTC固定・日付のみで計算。 */
+function dailyReportWeekdayChar(dateStr: string): string {
+	const match = /(\d{4})-(\d{1,2})-(\d{1,2})/.exec(dateStr ?? "");
+	if (!match) return "";
+	const [, yyyy, mm, dd] = match;
+	const parsed = new Date(
+		`${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}T00:00:00Z`,
+	);
+	const day = parsed.getUTCDay();
+	if (!Number.isFinite(day)) return "";
+	return DAILY_REPORT_WEEKDAY_CHARS[day] ?? "";
+}
+
+/** 規定の題名「M/D（曜）担当者名 日報」。月日は先頭ゼロなし。名前空なら「M/D（曜）日報」。 */
+function buildDailyReportCanonicalTitle(dateStr: string, assigneeName: string): string {
+	const match = /(\d{4})-(\d{1,2})-(\d{1,2})/.exec(dateStr ?? "");
+	if (!match) return "";
+	const [, , mm, dd] = match;
+	const month = String(Number(mm));
+	const day = String(Number(dd));
+	const weekday = dailyReportWeekdayChar(dateStr);
+	const head = `${month}/${day}（${weekday}）`;
+	const name = (assigneeName ?? "").trim();
+	return name ? `${head}${name} 日報` : `${head}日報`;
+}
+
+/** 土(6)or日(0)なら true。 */
+function isWeekendDailyReport(dateStr: string): boolean {
+	const weekday = dailyReportWeekdayChar(dateStr);
+	return weekday === "土" || weekday === "日";
+}
+
+/**
+ * 担当営業ユーザー(people)の表示名を解決する。people[0].name を優先。
+ * 名前が無ければ users.retrieve で補完(任意APIのため存在時のみ)。最終的に無ければ ""。
+ */
+async function resolveDailyReportAssigneeName(
+	page: Page,
+	notion: NotionClient,
+): Promise<string> {
+	const properties = page.properties ?? {};
+	// people[0].name を直読み(personLabelsFromProperty は name 欠落時に id へフォールバック
+	// するため、ここでは name のみを採用して id を名前と誤認しないようにする)。
+	const directName = personNamesFromProperty(properties["担当営業ユーザー"])[0];
+	if (directName) return directName;
+
+	const ids = personIdsFromProperty(properties["担当営業ユーザー"]);
+	const firstId = ids[0];
+	if (!firstId) return "";
+
+	const usersApi = (notion as unknown as {
+		users?: { retrieve?: (args: Record<string, unknown>) => Promise<unknown> };
+	}).users;
+	if (!usersApi?.retrieve) return "";
+	try {
+		const user = await usersApi.retrieve({ user_id: firstId });
+		const name = firstString((user as Record<string, unknown>)?.name);
+		return name ?? "";
+	} catch (error) {
+		console.log("daily report assignee resolve skipped", firstId, String(error).slice(0, 120));
+		return "";
+	}
+}
+
+/** ページが Notion でアーカイブ済みか。Page型に archived は無いため安全に読む。 */
+function isPageArchived(page: Page): boolean {
+	const record = page as unknown as Record<string, unknown>;
+	return record.archived === true || record.in_trash === true;
+}
+
+/** 単一ページに対し題名強制と土日アーカイブを実行(または dryRun で計画のみ)。 */
+async function enforceDailyReportPage(
+	page: Page,
+	notion: NotionClient,
+	dryRun: boolean,
+): Promise<DailyReportDisciplineSample> {
+	const report = readDailyReport(page);
+	const before = report.title;
+
+	// TEST/SAMPLE・日付無しはスキップ(理由付き)
+	if (!report.date) {
+		return { pageId: page.id, before, after: before, action: "skipped" };
+	}
+	if (isInternalTestOrAuditText(before) || /SAMPLE/i.test(before)) {
+		return { pageId: page.id, before, after: before, action: "skipped" };
+	}
+
+	// 土日 → アーカイブ
+	if (isWeekendDailyReport(report.date)) {
+		if (isPageArchived(page)) {
+			return { pageId: page.id, before, after: before, action: "already-archived" };
+		}
+		if (dryRun) {
+			return { pageId: page.id, before, after: "(archive)", action: "archived" };
+		}
+		await notion.pages.update({ page_id: page.id, archived: true });
+		return { pageId: page.id, before, after: "(archived)", action: "archived" };
+	}
+
+	// 平日 → 規定題名へ強制上書き(冪等)
+	const assigneeName = await resolveDailyReportAssigneeName(page, notion);
+	const desired = buildDailyReportCanonicalTitle(report.date, assigneeName);
+	if (!desired) {
+		return { pageId: page.id, before, after: before, action: "skipped" };
+	}
+	if (before === desired) {
+		return { pageId: page.id, before, after: desired, action: "already-correct" };
+	}
+	if (dryRun) {
+		return { pageId: page.id, before, after: desired, action: "updated-title" };
+	}
+	// タイトルプロパティへ書き込み(`タイトル`が無く`日報名`が title型ならそちらへ反映)
+	await safeUpdateExistingProperties(notion, page, {
+		タイトル: { kind: "text", value: desired },
+		日報名: { kind: "text", value: desired },
+	});
+	return { pageId: page.id, before, after: desired, action: "updated-title" };
+}
+
+/**
+ * 日報DBをバルク走査し、題名強制と土日アーカイブを決定論的に実行する。
+ * dryRun は既定 true(安全側)。
+ */
+async function enforceDailyReportDiscipline(
+	input: { limit?: number; dryRun?: boolean },
+	notion: NotionClient,
+): Promise<DailyReportDisciplineResult> {
+	const dryRun = input.dryRun !== false;
+	const limit = normalizeBulkLimit(input.limit ?? 50);
+	const response = await notion.dataSources.query({
+		data_source_id: DAILY_REPORT_DATA_SOURCE_ID,
+		page_size: limit,
+		sorts: [{ property: "日付", direction: "descending" }],
+	});
+	const pages = (response.results ?? []) as Page[];
+
+	const samples: DailyReportDisciplineSample[] = [];
+	let updatedTitles = 0;
+	let archived = 0;
+	let skipped = 0;
+
+	for (const page of pages) {
+		const sample = await enforceDailyReportPage(page, notion, dryRun);
+		if (sample.action === "updated-title") updatedTitles += 1;
+		else if (sample.action === "archived") archived += 1;
+		else if (sample.action === "skipped") skipped += 1;
+		if (
+			samples.length < 10 &&
+			sample.action !== "already-correct" &&
+			sample.action !== "already-archived"
+		) {
+			samples.push(sample);
+		}
+	}
+
+	const mode = dryRun ? "ドライラン(書込なし)" : "実行";
+	return {
+		dryRun,
+		checked: pages.length,
+		samples,
+		updatedTitles,
+		archived,
+		skipped,
+		message: `日報 ${pages.length} 件を確認【${mode}】。題名上書き ${updatedTitles} 件 / 土日アーカイブ ${archived} 件 / スキップ ${skipped} 件。`,
+	};
+}
+
+/** 単一ページに対する強制(webhook用)。ページを取得して enforceDailyReportPage を回す。 */
+async function enforceDailyReportDisciplineForPage(
+	pageId: string,
+	notion: NotionClient,
+	dryRun: boolean,
+): Promise<DailyReportDisciplineResult> {
+	const page = await notion.pages.retrieve({ page_id: pageId });
+	const sample = await enforceDailyReportPage(page, notion, dryRun);
+	const mode = dryRun ? "ドライラン(書込なし)" : "実行";
+	return {
+		dryRun,
+		checked: 1,
+		samples: [sample],
+		updatedTitles: sample.action === "updated-title" ? 1 : 0,
+		archived: sample.action === "archived" ? 1 : 0,
+		skipped: sample.action === "skipped" ? 1 : 0,
+		message: `日報1件を強制【${mode}】: ${sample.before} -> ${sample.after} (${sample.action})`,
+	};
+}
+
+export {
+	dailyReportWeekdayChar as dailyReportWeekdayCharForTest,
+	buildDailyReportCanonicalTitle as buildDailyReportCanonicalTitleForTest,
+	isWeekendDailyReport as isWeekendDailyReportForTest,
+	resolveDailyReportAssigneeName as resolveDailyReportAssigneeNameForTest,
+	enforceDailyReportDiscipline as enforceDailyReportDisciplineForTest,
+	enforceDailyReportPage as enforceDailyReportPageForTest,
+};
+
 function buildDailyReportReceiptFeedback(report: DailyReportInfo): string {
 	return [
 		report.todaySummary ? `【今日の要約】\n${report.todaySummary}` : "",
@@ -26000,6 +26250,20 @@ function personLabelsFromProperty(property: unknown): string[] {
 				return firstString(person.name, person.id) ?? "";
 			})
 			.filter(Boolean);
+}
+
+/** people プロパティから name のみを取り出す(id へはフォールバックしない)。 */
+function personNamesFromProperty(property: unknown): string[] {
+	if (!property || typeof property !== "object") return [];
+	const prop = property as Record<string, unknown>;
+	if (!Array.isArray(prop.people)) return [];
+	return prop.people
+		.map((item) => {
+			if (!item || typeof item !== "object") return "";
+			const person = item as Record<string, unknown>;
+			return typeof person.name === "string" ? person.name : "";
+		})
+		.filter(Boolean);
 }
 
 function dateStartFromProperty(property: unknown): string {
