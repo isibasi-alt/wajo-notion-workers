@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { buildShoutaInputForTest as build } from "./index";
+import { extractShoutaMeetingPrepFields } from "./shouta-brief";
 
 // 商太への入力組み立ての契約:
 // - Aの実データ(直近ニュース/再エネ接点シグナル/サマリー等)を弾・透視・ドシエに振り分ける
@@ -53,6 +54,56 @@ async function main() {
 	{
 		const i = build("株式会社レンラク", { 問い合わせ担当者名: rt("佐藤 次郎") });
 		assert.equal(i.contact, "佐藤 次郎");
+	}
+
+	// 5) 商太ブリーフは、商談前準備レポートDBの商太5欄へ分解できる
+	{
+		const fields = extractShoutaMeetingPrepFields(
+			[
+				"✅ 検品AI通過（生成1回）",
+				"先輩、株式会社サンプル食品いきましょう。🌞",
+				"▼ 商談トーク",
+				"まず新工場稼働の話から入り、電気代の確認へ進めます。",
+				"▼ 商談の入り方",
+				"「新工場の電気代、想定より上がっていませんか？」",
+				"▼ 提案ポイント",
+				"自家消費太陽光と蓄電池を、設備更新の一部として整理する。",
+				"▼ 想定されるポイントと返し",
+				"まだ早い → 今日は判断材料の整理だけで大丈夫です。",
+				"▼ 最後に確認すること",
+				"次回、電気使用量と設備更新予定を確認する。",
+			].join("\n"),
+		);
+		assert.ok(fields.talk.includes("株式会社サンプル食品"));
+		assert.doesNotMatch(fields.talk, /検品AI通過/);
+		assert.ok(fields.opening.includes("新工場の電気代"));
+		assert.ok(fields.proposalPoints.includes("自家消費太陽光"));
+		assert.ok(fields.responses.includes("判断材料"));
+		assert.ok(fields.finalCheck.includes("電気使用量"));
+	}
+
+	// 6) 旧商太フォーマットも、互換的に5欄へ逃がす
+	{
+		const fields = extractShoutaMeetingPrepFields(
+			[
+				"先輩、株式会社旧形式いきましょう。🌞",
+				"▼ ここが急所",
+				"採用強化が出ています。",
+				"▼ つかみの一言",
+				"「施工体制、今増やしてますよね？」",
+				"▼ 刺さる質問",
+				"施工管理は内製ですか、外注ですか？",
+				"▼ 反論が来たら",
+				"情報収集だけ → 比較表だけ置いて帰ります。",
+				"▼ 次の一手",
+				"採用背景を聞く。",
+			].join("\n"),
+		);
+		assert.ok(fields.opening.includes("施工体制"));
+		assert.ok(fields.proposalPoints.includes("ここが急所"));
+		assert.ok(fields.proposalPoints.includes("刺さる質問"));
+		assert.ok(fields.responses.includes("比較表"));
+		assert.ok(fields.finalCheck.includes("採用背景"));
 	}
 
 	console.log("OK shouta-input");

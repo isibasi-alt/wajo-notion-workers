@@ -1,6 +1,6 @@
 // 商太（ショウタ）= 3体目AI「とどめの参謀」のトーク生成モジュール。
 // 入力: 企業の構造化情報（名刺 + 再エネ丸裸 + 任意でAの深掘りドシエ + 社内ナレッジ要点）
-// 出力: 営業がそのまま喋れる「商談前ブリーフ」テキスト。
+// 出力: 営業がそのまま喋れる「商談前ブリーフ」テキストと、商談前準備レポートDBの商太5欄。
 // 人格定義の正本: docs/assets/shouta/SHOUTA_PERSONA.md
 // LLM: SHOUTA_MODEL > OPENAI_MODEL > 既定gpt-4o（クオリティ優先・大ちゃん方針2026-06-11）。キー無なら呼ばずにフォールバック。
 // 検品AI(4体目=門番): 商太の出力を別プロンプトで審査し、不合格なら指摘を渡して書き直させる。
@@ -28,11 +28,11 @@ const SHOUTA_SYSTEM = `あなたは「商太（ショウタ）」。和上ホー
 出力フォーマット（厳守）:
 先輩、【会社名】いきましょう。🌞
 
-▼ ここが急所（丸裸の要点・出典つき）
-▼ つかみの一言（そのまま言える台詞・必ず具体数字を含める）
-▼ 刺さる質問（2〜3個・事業の具体に踏み込む）
-▼ 反論が来たら（想定反論→返し）
-▼ 次の一手（今日やる1アクション）`;
+▼ 商談トーク（営業がそのまま話せる本編。相手に話す順番で書く）
+▼ 商談の入り方（最初の一言。必ず当てる弾を1つ入れる）
+▼ 提案ポイント（和上が何を提案すべきか。相手の具体事情に接続する）
+▼ 想定されるポイントと返し（懸念・質問・反応 → 返答）
+▼ 最後に確認すること（次アクションに進むための確認事項）`;
 
 function buildUserPrompt(i: ShoutaInput): string {
   const parts = [`会社名: ${i.companyName}`];
@@ -48,7 +48,104 @@ function buildUserPrompt(i: ShoutaInput): string {
 export { buildUserPrompt as buildShoutaUserPromptForTest };
 
 function fallbackBrief(i: ShoutaInput): string {
-  return `先輩、${i.companyName}いきましょう。🌞\n\n（※LLM未接続のため簡易版です）\n▼ ここが急所\n${i.renewableXray || "丸裸データ待ち"}\n▼ 次の一手\nまず公開情報で実在と再エネ接点を確認 → 無料で出口/自家消費の簡易査定を1枚。`;
+  return `先輩、${i.companyName}いきましょう。🌞\n\n（※LLM未接続のため簡易版です）\n▼ 商談トーク\nまず公開情報で実在と再エネ接点を確認し、和上が見られる出口・自家消費・蓄電池の論点を1枚に整理します。\n▼ 商談の入り方\n「御社の再エネ接点を一度こちらで整理してきました。まず事実確認だけさせてください。」\n▼ 提案ポイント\n${i.renewableXray || "再エネ接点データ待ち。無理に提案へ寄せず、確認から入る。"}\n▼ 想定されるポイントと返し\n「まだ検討段階です」→「大丈夫です。今日は売り込みではなく、判断材料の整理だけさせてください。」\n▼ 最後に確認すること\n電気代、保有設備、土地、売却/購入意向、次回確認者を聞く。`;
+}
+
+export type ShoutaMeetingPrepFields = {
+  talk: string;
+  opening: string;
+  proposalPoints: string;
+  responses: string;
+  finalCheck: string;
+};
+
+function isInspectionLine(line: string): boolean {
+  return (
+    line.startsWith("✅") ||
+    line.startsWith("⚠️") ||
+    line.startsWith("⚠") ||
+    line.startsWith("ℹ️") ||
+    line.startsWith("ℹ")
+  );
+}
+
+function normalizeHeading(line: string): string | null {
+  if (!line.startsWith("▼")) return null;
+  return line
+    .replace(/^▼\s*/, "")
+    .replace(/[（(].*$/, "")
+    .trim();
+}
+
+function extractSections(brief: string): {
+  cleaned: string;
+  sections: Map<string, string>;
+} {
+  const sections = new Map<string, string[]>();
+  const cleanedLines: string[] = [];
+  let current = "商談トーク";
+  for (const raw of String(brief ?? "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || isInspectionLine(line)) continue;
+    cleanedLines.push(line);
+    const heading = normalizeHeading(line);
+    if (heading) {
+      current = heading;
+      if (!sections.has(current)) sections.set(current, []);
+      continue;
+    }
+    if (!sections.has(current)) sections.set(current, []);
+    sections.get(current)?.push(line);
+  }
+  return {
+    cleaned: cleanedLines.join("\n").trim(),
+    sections: new Map(
+      [...sections.entries()].map(([key, lines]) => [key, lines.join("\n").trim()]),
+    ),
+  };
+}
+
+function firstSection(
+  sections: Map<string, string>,
+  names: string[],
+): string {
+  for (const name of names) {
+    const value = sections.get(name)?.trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+function joinedSections(
+  sections: Map<string, string>,
+  names: string[],
+): string {
+  return names
+    .map((name) => {
+      const value = sections.get(name)?.trim();
+      return value ? `【${name}】\n${value}` : "";
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+export function extractShoutaMeetingPrepFields(
+  brief: string,
+): ShoutaMeetingPrepFields {
+  const { cleaned, sections } = extractSections(brief);
+  const proposalPoints =
+    joinedSections(sections, ["提案ポイント"]) ||
+    joinedSections(sections, ["ここが急所", "刺さる質問"]);
+  return {
+    talk: cleaned,
+    opening: firstSection(sections, ["商談の入り方", "つかみの一言"]),
+    proposalPoints,
+    responses: firstSection(sections, [
+      "想定されるポイントと返し",
+      "反論が来たら",
+    ]),
+    finalCheck: firstSection(sections, ["最後に確認すること", "次の一手"]),
+  };
 }
 
 // 利用可能なLLMプロバイダを自動選択（OpenAI系→Perplexity）。

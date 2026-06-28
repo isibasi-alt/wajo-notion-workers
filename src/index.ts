@@ -5,7 +5,11 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { generateInspectedShoutaBrief, type ShoutaInput } from "./shouta-brief";
+import {
+	extractShoutaMeetingPrepFields,
+	generateInspectedShoutaBrief,
+	type ShoutaInput,
+} from "./shouta-brief";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 import {
 	evaluateLandTreasure,
@@ -14429,6 +14433,19 @@ async function processMeetingPrepReport(
 			shoutaBrief = `${verdictLine}\n${result.brief}`;
 		}
 		briefWritten = shoutaBrief.trim().length > 0;
+		if (briefWritten) {
+			const fields = extractShoutaMeetingPrepFields(shoutaBrief);
+			await notion.pages.update({
+				page_id: targetReport.id,
+				properties: {
+					"商太｜商談トーク": richText(fields.talk),
+					"商太｜商談の入り方": richText(fields.opening),
+					"商太｜提案ポイント": richText(fields.proposalPoints),
+					"商太｜想定されるポイントと返し": richText(fields.responses),
+					"商太｜最後に確認すること": richText(fields.finalCheck),
+				},
+			});
+		}
 		await appendMeetingPrepReportBody(
 			notion,
 			targetReport.id,
