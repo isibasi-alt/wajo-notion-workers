@@ -2166,6 +2166,12 @@ type ProjectProposalRequestInput = {
 	dryRun?: boolean;
 };
 
+type ProjectDocumentSource = {
+	sourcePageId: string;
+	projectPage: Page;
+	sourceEquipmentPage: Page | null;
+};
+
 type ProjectDocumentRequestKind = "proposal" | "resident";
 
 type ProjectDocumentRequestConfig = {
@@ -2363,7 +2369,12 @@ type MeetingPrepResult = {
 	companyId: string;
 	reportId: string | null;
 	reportUrl: string | null;
-	action: "updated-report" | "created-report" | "dry-run" | "skipped-fresh";
+	action:
+		| "updated-report"
+		| "created-report"
+		| "dry-run"
+		| "skipped-fresh"
+		| "updated-shouta-fields";
 	message: string;
 };
 
@@ -14333,41 +14344,42 @@ async function processMeetingPrepReport(
 	// 1社1枚の解決はenrich(Gemini課金)より前に行う(検品指摘: ゲートの前に課金が走っていた)
 	const report = await resolveMeetingPrepReport(notion, baseCompany, input.reportPageId);
 	const reportIsBlank = !report || isBlankMeetingPrepReport(report);
+	const reportHasShoutaFields = hasShoutaMeetingPrepFields(report);
+	const reportLastEdited = String(
+		(report as unknown as Record<string, unknown> | null)?.last_edited_time ?? "",
+	);
+	const refreshDays = Number(process.env.REPORT_REFRESH_DAYS) || 30;
+	const reportIsFresh = Boolean(
+		report &&
+			!reportIsBlank &&
+			reportLastEdited &&
+			isTdbSurveyFresh(reportLastEdited, new Date().toISOString(), refreshDays),
+	);
+	const shouldWritePrepFields =
+		!report ||
+		reportIsBlank ||
+		Boolean(input.force) ||
+		Boolean(report && !reportIsBlank && reportHasShoutaFields && !reportIsFresh);
 
 	// 鮮度ゲート(連打防止・1社1枚): 中身のある既存レポートが新しい間は再生成しない。
+	// ただし、商太5欄が未反映の既存レポートは、既存5欄を触らず商太欄だけ補完する。
 	// 会社の情報は決算等が動かない限り大きく変わらない=同内容の量産はコストと見た目の両方で損。
 	// enrich/LLMより前に止めるので、このreturnは完全無料。
-	if (report && !reportIsBlank && !input.force && !input.dryRun) {
-		const lastEdited = String(
-			(report as unknown as Record<string, unknown>).last_edited_time ?? "",
-		);
-		const refreshDays = Number(process.env.REPORT_REFRESH_DAYS) || 30;
-		if (
-			lastEdited &&
-			isTdbSurveyFresh(lastEdited, new Date().toISOString(), refreshDays)
-		) {
+	if (report && !reportIsBlank && reportHasShoutaFields && !input.force && !input.dryRun) {
+		if (reportIsFresh) {
 			return {
 				companyId: baseCompany.page.id,
 				reportId: report.id,
 				reportUrl: report.url ?? null,
 				action: "skipped-fresh",
-				message: `商談準備レポートは作成済みです（最終更新 ${lastEdited.slice(0, 10)}）。会社の情報が大きく動くまで、もう少しタイミングを待ってください。決算発表や大きなニュースの後に再実行すると新しい中身になります（どうしても今作り直す場合は force 指定）。`,
+				message: `商談準備レポートは作成済みです（最終更新 ${reportLastEdited.slice(0, 10)}）。会社の情報が大きく動くまで、もう少しタイミングを待ってください。決算発表や大きなニュースの後に再実行すると新しい中身になります（どうしても今作り直す場合は force 指定）。`,
 			};
 		}
 	}
 
-	// ゲート通過後にだけ補完(Gemini)を行う
-	const company = await enrichCompanyForMeetingPrep(baseCompany);
-	const prep = await buildMeetingPrepReportWithAI(company);
-	const quality = assessMeetingPrepQuality(company, prep);
-	const finalPrep = {
-		...prep,
-		risks: withMeetingPrepQualityMemo(prep.risks, quality),
-	};
-
 	if (input.dryRun) {
 		return {
-			companyId: company.page.id,
+			companyId: baseCompany.page.id,
 			reportId: report?.id ?? null,
 			reportUrl: report?.url ?? null,
 			action: "dry-run",
@@ -14377,29 +14389,40 @@ async function processMeetingPrepReport(
 		};
 	}
 
+	const company = baseCompany;
 	const targetReport =
 		report ??
 		(await createMeetingPrepReportPage(notion, company, "Workerが企業ページから新規作成。"));
 
-	await notion.pages.update({
-		page_id: targetReport.id,
-		properties: {
-			"企業名（商談日）": title(company.name || "商談準備レポート"),
-			対象企業: relation(company.page.id),
-			売買区分: select(company.dealType || "未設定"),
-			ステータス: select(quality.ready ? "準備完了" : "準備中"),
-			企業プロフィール: richText(finalPrep.profile),
-			"3C分析": richText(finalPrep.threeC),
-			商談仮説: richText(finalPrep.hypothesis),
-			ヒアリングリスト: richText(finalPrep.questions),
-			"注意点・リスク": richText(finalPrep.risks),
-		},
-	});
+	let finalPrep: MeetingPrepReport | null = null;
+	let quality: MeetingPrepQuality | null = null;
+	if (shouldWritePrepFields) {
+		const prep = await buildMeetingPrepReportWithAI(company);
+		quality = assessMeetingPrepQuality(company, prep);
+		finalPrep = {
+			...prep,
+			risks: withMeetingPrepQualityMemo(prep.risks, quality),
+		};
+		await notion.pages.update({
+			page_id: targetReport.id,
+			properties: {
+				"企業名（商談日）": title(company.name || "商談準備レポート"),
+				対象企業: relation(company.page.id),
+				売買区分: select(company.dealType || "未設定"),
+				ステータス: select(quality.ready ? "準備完了" : "準備中"),
+				企業プロフィール: richText(finalPrep.profile),
+				"3C分析": richText(finalPrep.threeC),
+				商談仮説: richText(finalPrep.hypothesis),
+				ヒアリングリスト: richText(finalPrep.questions),
+				"注意点・リスク": richText(finalPrep.risks),
+			},
+		});
+	}
 	await addMeetingPrepRelationToCompany(notion, company.page.id, targetReport.id);
 
 	// 本文: 既存レポートの作り直し(鮮度切れ/force)の場合は旧本文をアーカイブしてから書く。
 	// 1社1枚ルール=本文も常に最新1セットだけ(重ね書きで縦に伸びない)。
-	if (!reportIsBlank) {
+	if (shouldWritePrepFields && !reportIsBlank) {
 		await archiveAllPageBodyBlocks(notion, targetReport.id);
 	}
 	// 商太ブリーフ: 材料(A実データ/和上の手がかり)がゼロの時は呼ばない=数字の創作圧力をかけない。
@@ -14449,22 +14472,37 @@ async function processMeetingPrepReport(
 				},
 			});
 		}
-		await appendMeetingPrepReportBody(
-			notion,
-			targetReport.id,
-			company,
-			finalPrep,
-			shoutaBrief,
-		);
+		if (finalPrep) {
+			await appendMeetingPrepReportBody(
+				notion,
+				targetReport.id,
+				company,
+				finalPrep,
+				shoutaBrief,
+			);
+		} else if (shoutaBrief.trim()) {
+			await appendShoutaBriefBody(notion, targetReport.id, shoutaBrief);
+		}
 	}
 
 	const briefNote = briefWritten ? "(商太ブリーフ付き)" : "";
+	if (!shouldWritePrepFields) {
+		return {
+			companyId: company.page.id,
+			reportId: targetReport.id,
+			reportUrl: targetReport.url ?? null,
+			action: "updated-shouta-fields",
+			message: briefWritten
+				? "既存の商談前準備レポートを維持し、商太5欄だけを補完しました。"
+				: "既存の商談前準備レポートは維持しましたが、商太材料が不足しているため商太5欄は補完していません。",
+		};
+	}
 	return {
 		companyId: company.page.id,
 		reportId: targetReport.id,
 		reportUrl: targetReport.url ?? null,
 		action: report ? "updated-report" : "created-report",
-		message: quality.ready
+		message: quality?.ready
 			? report
 				? `商談準備レポートの空欄を補完し、準備完了にしました${briefNote}。`
 				: `商談準備レポートを新規作成し、準備完了にしました${briefNote}。`
@@ -14945,8 +14983,11 @@ async function processProjectDocumentRequest(
 	kind: ProjectDocumentRequestKind,
 ): Promise<ProjectDocumentRequestResult> {
 	const config = PROJECT_DOCUMENT_REQUEST_CONFIGS[kind];
-	const projectPage = await notion.pages.retrieve({ page_id: input.projectPageId });
-	const equipmentPage = await retrieveProjectEquipmentDetailPage(notion, projectPage);
+	const source = await resolveProjectDocumentSource(notion, input.projectPageId);
+	const projectPage = source.projectPage;
+	const equipmentPage =
+		(await retrieveProjectEquipmentDetailPage(notion, projectPage)) ??
+		source.sourceEquipmentPage;
 	const documentSourcePage = mergeProjectWithEquipmentDetail(projectPage, equipmentPage);
 	const projectName = readGenericPageTitle(projectPage) || "案件";
 	const readiness = evaluateProjectDocumentRequestReadiness(documentSourcePage, kind);
@@ -15058,6 +15099,41 @@ function evaluateProjectDocumentRequestReadiness(
 		missingField: draft.missingField,
 		nextRequiredFields: draft.nextRequiredFields,
 		prefillProperties: buildResidentRequestPrefillProperties(projectPage),
+	};
+}
+
+async function resolveProjectDocumentSource(
+	notion: NotionClient,
+	pageId: string,
+): Promise<ProjectDocumentSource> {
+	const sourcePage = await notion.pages.retrieve({ page_id: pageId });
+	const parentDataSourceId = ((sourcePage as { parent?: { data_source_id?: string } }).parent)?.data_source_id;
+	const properties = sourcePage.properties ?? {};
+	const looksLikeEquipmentPage =
+		parentDataSourceId === POWER_PLANT_EQUIPMENT_DATA_SOURCE_ID ||
+		(!properties["案件名"] && Boolean(properties["設備詳細名"]));
+
+	if (!looksLikeEquipmentPage) {
+		return {
+			sourcePageId: sourcePage.id,
+			projectPage: sourcePage,
+			sourceEquipmentPage: null,
+		};
+	}
+
+	const relatedProjectIds = relationIdsFromProperty(properties["関連案件"]);
+	const equipmentName = readGenericPageTitle(sourcePage) || sourcePage.id;
+	if (relatedProjectIds.length !== 1) {
+		throw new Error(
+			`設備詳細「${equipmentName}」の関連案件が${relatedProjectIds.length}件のため、シミュレーション依頼を作成できません。関連案件を1件だけ設定してください。`,
+		);
+	}
+
+	const projectPage = await notion.pages.retrieve({ page_id: relatedProjectIds[0]! });
+	return {
+		sourcePageId: sourcePage.id,
+		projectPage,
+		sourceEquipmentPage: sourcePage,
 	};
 }
 
@@ -22701,6 +22777,17 @@ function isBlankMeetingPrepReport(page: Page): boolean {
 	].every((name) => !text(properties[name]));
 }
 
+function hasShoutaMeetingPrepFields(page: Page | null): boolean {
+	const properties = page?.properties ?? {};
+	return [
+		"商太｜商談トーク",
+		"商太｜商談の入り方",
+		"商太｜提案ポイント",
+		"商太｜想定されるポイントと返し",
+		"商太｜最後に確認すること",
+	].every((name) => text(properties[name]).trim().length > 0);
+}
+
 function readCompany(page: Page): CompanyInfo {
 	const properties = page.properties ?? {};
 	return {
@@ -23133,6 +23220,24 @@ async function appendMeetingPrepReportBody(
 			paragraphBlock(prep.questions),
 			headingBlock("注意点・リスク", 2),
 			paragraphBlock(prep.risks),
+		],
+	});
+}
+
+async function appendShoutaBriefBody(
+	notion: NotionClient,
+	reportId: string,
+	shoutaBrief: string,
+): Promise<void> {
+	if (!notion.blocks?.children?.append) return;
+	const briefBlocks = shoutaBrief.trim() ? shoutaBriefToBlocks(shoutaBrief) : [];
+	if (briefBlocks.length === 0) return;
+	await notion.blocks.children.append({
+		block_id: reportId,
+		children: [
+			headingBlock("商太の商談前ブリーフ(そのまま喋れる)", 2),
+			...briefBlocks,
+			dividerBlock(),
 		],
 	});
 }

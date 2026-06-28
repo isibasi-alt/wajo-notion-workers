@@ -289,6 +289,26 @@ async function main() {
 		"Jinko Solar",
 	);
 
+	const equipmentPageButtonCase = makeNotion();
+	const fromEquipmentPageButton = await processProjectProposalRequestForTest(
+		{ projectPageId: "equipment-1", dryRun: false },
+		equipmentPageButtonCase.notion as never,
+	);
+
+	assert.equal(fromEquipmentPageButton.action, "created");
+	assert.equal(fromEquipmentPageButton.projectPageId, "project-1");
+	assert.equal(fromEquipmentPageButton.requestPageId, "request-created-1");
+	const fromEquipmentPageButtonProps = equipmentPageButtonCase.creates[0]!
+		.properties as Record<string, unknown>;
+	assert.deepEqual(
+		(fromEquipmentPageButtonProps.関連案件 as { relation: Array<{ id: string }> }).relation,
+		[{ id: "project-1" }],
+	);
+	assert.equal(
+		(fromEquipmentPageButtonProps.発電所名 as { rich_text: Array<{ text: { content: string } }> }).rich_text[0]!.text.content,
+		"湖南市250kW 太陽光発電所",
+	);
+
 	const { notion, creates, updates, comments, queries } = makeNotion();
 
 	const created = await processProjectProposalRequestForTest(
