@@ -138,7 +138,13 @@ async function main() {
 	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /Jinko Solar/);
 	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /連系開始日 2021-06-01/);
 	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /稼働年数/);
-	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /税制適用は事前手続き/);
+	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /残存FIT年数: 14年/);
+	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /出力抑制前提: 抑制なし/);
+	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /残存FIT期間内の総手残り: ¥562,800,000/);
+	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /土地は償却対象外です/);
+	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /システム本体は17年で償却します/);
+	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /権利代は5年で償却します/);
+	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /貴社顧問税理士/);
 	assert.match(readyWithDerivedIncome.conclusionText, /20年後の解体・廃棄費用/);
 
 	const solarPdfBytes = await buildProposalSimulationPdfBytesForTest(
@@ -194,6 +200,43 @@ async function main() {
 	assert.equal(readyWithRunningCostBreakdown.annualNetIncome, 40650000);
 	assert.match(readyWithRunningCostBreakdown.summaryLines.join("\n"), /年間維持費（ランニングコスト）: ¥2,550,000/);
 	assert.match(readyWithRunningCostBreakdown.pageTwoLines.join("\n"), /O&M費 ¥1,200,000/);
+
+	const readyWithCurtailment = evaluateProposalSimulationDraftForTest({
+		id: "proposal-2f",
+		properties: solarRequiredProps({
+			出力抑制前提: selectProp("抑制あり"),
+			出力抑制率: numberProp(10),
+		}),
+	});
+
+	assert.equal(readyWithCurtailment.annualIncome, 38880000);
+	assert.equal(readyWithCurtailment.annualNetIncome, 35880000);
+	assert.equal(readyWithCurtailment.expectedYield, 29.9);
+	assert.equal(readyWithCurtailment.fitTotalNetCashflow, 502320000);
+	assert.match(readyWithCurtailment.summaryLines.join("\n"), /出力抑制前提: 抑制あり/);
+	assert.match(readyWithCurtailment.summaryLines.join("\n"), /出力抑制率: 10%/);
+
+	const readyWithFinance = evaluateProposalSimulationDraftForTest({
+		id: "proposal-2g",
+		properties: solarRequiredProps({
+			土地代: numberProp(20000000),
+			権利代: numberProp(35000000),
+			借入額: numberProp(60000000),
+			金利: numberProp(2),
+			返済期間: numberProp(10),
+			実効税率: numberProp(30),
+			今期利益見込: numberProp(100000000),
+		}),
+	});
+
+	assert.equal(readyWithFinance.financeSimulation?.landPrice, 20000000);
+	assert.equal(readyWithFinance.financeSimulation?.rightsPrice, 35000000);
+	assert.equal(readyWithFinance.financeSimulation?.systemPrice, 65000000);
+	assert.equal(readyWithFinance.financeSimulation?.annualDepreciation, 10823529);
+	assert.equal(readyWithFinance.financeSimulation?.taxBenefit, 3247059);
+	assert.equal(readyWithFinance.financeSimulation?.timingRank, "S");
+	assert.match(readyWithFinance.summaryLines.join("\n"), /購入タイミング判定: S/);
+	assert.match(readyWithFinance.summaryLines.join("\n"), /年間税効果: ¥3,247,059/);
 
 	const individual = evaluateProposalSimulationDraftForTest({
 		id: "proposal-3",

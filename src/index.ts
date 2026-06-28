@@ -14555,6 +14555,10 @@ type ProposalSimulationDraft = {
 	salePrice: number | null;
 	purchaseCost: number | null;
 	annualIncome: number | null;
+	baseAnnualIncome: number | null;
+	fitRemainingYears: number | null;
+	curtailmentScenario: CurtailmentScenario;
+	curtailmentRate: number;
 	runningCost: number;
 	annualNetIncome: number | null;
 	solarDetails: SolarProposalDetails | null;
@@ -14566,10 +14570,38 @@ type ProposalSimulationDraft = {
 	grossProfit: number | null;
 	expectedYield: number | null;
 	paybackYears: number | null;
+	fitTotalNetCashflow: number | null;
+	financeSimulation: FinanceSimulation | null;
 	conclusionText: string;
 	summaryLines: string[];
 	pageOneLines: string[];
 	pageTwoLines: string[];
+};
+
+type CurtailmentScenario = "抑制なし" | "抑制あり";
+
+type FinanceSimulation = {
+	landPrice: number;
+	systemPrice: number;
+	rightsPrice: number;
+	systemDepreciationYears: number;
+	rightsDepreciationYears: number;
+	annualSystemDepreciation: number;
+	annualRightsDepreciation: number;
+	annualDepreciation: number;
+	effectiveTaxRate: number;
+	pretaxProfit: number | null;
+	taxBenefit: number;
+	loanAmount: number;
+	interestRate: number;
+	loanYears: number | null;
+	annualDebtService: number;
+	cashflowAfterDebt: number;
+	afterTaxCashflow: number;
+	dscr: number | null;
+	timingRank: "S" | "A" | "B" | "C";
+	timingReason: string;
+	lines: string[];
 };
 
 type RunningCostBreakdownItem = {
@@ -14826,7 +14858,7 @@ async function processProposalSimulation(
 				value: pdfExport.fileUrl,
 			});
 		}
-		if (draft.grossProfit !== null) {
+	if (draft.grossProfit !== null) {
 			setAliasPatch(
 				patches,
 				["想定粗利額", "粗利試算", "試算粗利額"],
@@ -14845,6 +14877,49 @@ async function processProposalSimulation(
 				patches,
 				["想定回収年数", "回収年数"],
 			{ kind: "number", value: draft.paybackYears },
+			);
+		}
+		if (draft.fitRemainingYears !== null) {
+			setAliasPatch(
+				patches,
+				["残存FIT年数", "残存売電期間", "残存FIT期間"],
+				{ kind: "number", value: draft.fitRemainingYears },
+			);
+		}
+		if (draft.fitTotalNetCashflow !== null) {
+			setAliasPatch(
+				patches,
+				["残存FIT総手残り", "残存FIT期間内総回収額", "FIT残存期間総手残り"],
+				{ kind: "number", value: draft.fitTotalNetCashflow },
+			);
+		}
+		if (draft.financeSimulation) {
+			setAliasPatch(
+				patches,
+				["年間償却額", "シミュレーション年間償却額"],
+				{ kind: "number", value: draft.financeSimulation.annualDepreciation },
+			);
+			setAliasPatch(
+				patches,
+				["税効果", "年間税効果", "償却税効果"],
+				{ kind: "number", value: draft.financeSimulation.taxBenefit },
+			);
+			setAliasPatch(
+				patches,
+				["税引後キャッシュフロー", "税効果後CF"],
+				{ kind: "number", value: draft.financeSimulation.afterTaxCashflow },
+			);
+			if (draft.financeSimulation.dscr !== null) {
+				setAliasPatch(
+					patches,
+					["DSCR", "返済余力倍率"],
+					{ kind: "number", value: draft.financeSimulation.dscr },
+				);
+			}
+			setAliasPatch(
+				patches,
+				["購入タイミング判定", "BS判定", "投資判定"],
+				{ kind: "select", value: draft.financeSimulation.timingRank },
 			);
 		}
 		await safeUpdateExistingProperties(notion, page, patches);
@@ -16890,7 +16965,7 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 		"FIT単価",
 		"FIP単価",
 	]);
-	let annualIncome = readFirstNumberByAliases(properties, [
+	let baseAnnualIncome = readFirstNumberByAliases(properties, [
 		"年間想定総売上",
 		"年間想定収益",
 		"年間収益",
@@ -16900,14 +16975,35 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 		"年間収入",
 		"売電収入（年）",
 	]);
-	if (annualIncome === null && monthlyGeneration !== null && unitPrice !== null) {
-		annualIncome = roundTo(monthlyGeneration * unitPrice * 12, 0);
+	if (baseAnnualIncome === null && monthlyGeneration !== null && unitPrice !== null) {
+		baseAnnualIncome = roundTo(monthlyGeneration * unitPrice * 12, 0);
 	}
+	const curtailmentScenario = readCurtailmentScenario(properties);
+	const curtailmentRate = curtailmentScenario === "抑制あり"
+		? Math.max(0, readFirstNumberByAliases(properties, [
+			"出力抑制率",
+			"抑制率",
+			"出力制御率",
+			"想定抑制率",
+		]) ?? 0)
+		: 0;
+	const annualIncome =
+		baseAnnualIncome !== null
+			? roundTo(baseAnnualIncome * (1 - Math.min(curtailmentRate, 100) / 100), 0)
+			: null;
 	const runningCostInput = readRunningCostInput(properties);
 	const runningCost = runningCostInput.total ?? 0;
 	const solarDetails = isGridBattery
 		? null
 		: buildSolarProposalDetails(properties, unitPrice);
+	const fitRemainingYears = isGridBattery
+		? readFirstNumberByAliases(properties, [
+				"残存FIT年数",
+				"残存売電期間",
+				"残り売電期間",
+				"残存FIT期間",
+		  ])
+		: solarDetails?.remainingSalesYears ?? null;
 	const sitePhotos = readImageFilesByAliases(properties, [
 		"現場写真",
 		"発電所写真",
@@ -16961,7 +17057,7 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 				{ label: "PCS容量（パワコン側kW）", value: solarDetails?.pcsCapacityKw ?? null },
 				{ label: "FIT/FIP区分", value: solarDetails?.fitFipType ?? "" },
 				{ label: "売電単価", value: solarDetails?.unitPrice ?? null },
-				{ label: "残存売電期間", value: solarDetails?.remainingSalesYears ?? null },
+				{ label: "残存FIT年数", value: fitRemainingYears },
 				{ label: "連系開始日", value: solarDetails?.gridConnectionDate ?? "" },
 				{ label: "現場写真", value: sitePhotos.length > 0 ? "あり" : "" },
 		  ];
@@ -16979,6 +17075,10 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 			salePrice,
 			purchaseCost,
 			annualIncome,
+			baseAnnualIncome,
+			fitRemainingYears,
+			curtailmentScenario,
+			curtailmentRate,
 			runningCost,
 			annualNetIncome: null,
 			solarDetails,
@@ -16990,6 +17090,8 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 			grossProfit: null,
 			expectedYield: null,
 			paybackYears: null,
+			fitTotalNetCashflow: null,
+			financeSimulation: null,
 			conclusionText: buildPlaceholderConclusionText(proposalKind),
 			summaryLines: [],
 			pageOneLines: [],
@@ -17009,6 +17111,17 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 			: null;
 	const paybackYears =
 		annualNetIncome > 0 ? roundTo(investmentBase / annualNetIncome, 2) : null;
+	const fitTotalNetCashflow =
+		fitRemainingYears !== null ? roundTo(annualNetIncome * fitRemainingYears, 0) : null;
+	const financeSimulation = isGridBattery
+		? null
+		: buildFinanceSimulation({
+				properties,
+				salePrice: salePrice as number,
+				annualNetIncome,
+				paybackYears,
+				fitRemainingYears,
+		  });
 	const annualReductionAmount = annualReductionAmountRaw ?? annualNetIncome;
 	const reductionRate = annualElectricCost && annualReductionAmount
 		? roundTo((annualReductionAmount / annualElectricCost) * 100, 1)
@@ -17029,6 +17142,12 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 		grossProfit,
 		expectedYield,
 		paybackYears,
+		baseAnnualIncome,
+		fitRemainingYears,
+		curtailmentScenario,
+		curtailmentRate,
+		fitTotalNetCashflow,
+		financeSimulation,
 		subsidyAmount,
 	});
 	const pageLines = buildTwoPageProposalLines({
@@ -17043,6 +17162,12 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 		grossProfit,
 		expectedYield,
 		paybackYears,
+		baseAnnualIncome,
+		fitRemainingYears,
+		curtailmentScenario,
+		curtailmentRate,
+		fitTotalNetCashflow,
+		financeSimulation,
 		annualReductionAmount,
 		reductionRate,
 		co2ReductionTons,
@@ -17061,6 +17186,10 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 		salePrice,
 		purchaseCost,
 		annualIncome,
+		baseAnnualIncome,
+		fitRemainingYears,
+		curtailmentScenario,
+		curtailmentRate,
 		runningCost,
 		annualNetIncome,
 		solarDetails,
@@ -17072,10 +17201,201 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 		grossProfit,
 		expectedYield,
 		paybackYears,
+		fitTotalNetCashflow,
+		financeSimulation,
 		conclusionText,
 		summaryLines,
 		pageOneLines: pageLines.pageOneLines,
 		pageTwoLines: pageLines.pageTwoLines,
+	};
+}
+
+function readCurtailmentScenario(properties: Record<string, unknown>): CurtailmentScenario {
+	const value = readFirstTextByAliases(properties, [
+		"出力抑制前提",
+		"出力抑制",
+		"出力制御前提",
+		"抑制前提",
+	]);
+	if (/あり|有|前提|かかる|抑制あり|出力制御あり/i.test(value)) return "抑制あり";
+	return "抑制なし";
+}
+
+function buildFinanceSimulation(input: {
+	properties: Record<string, unknown>;
+	salePrice: number;
+	annualNetIncome: number;
+	paybackYears: number | null;
+	fitRemainingYears: number | null;
+}): FinanceSimulation {
+	const landPrice = readFirstNumberByAliases(input.properties, [
+		"土地代",
+		"土地価格",
+		"土地取得費",
+		"土地評価額",
+	]) ?? 0;
+	const rightsPrice = readFirstNumberByAliases(input.properties, [
+		"権利代",
+		"権利金",
+		"権利取得費",
+		"設備ID権利代",
+	]) ?? 0;
+	const systemPriceInput = readFirstNumberByAliases(input.properties, [
+		"システム本体価格",
+		"設備本体価格",
+		"発電設備価格",
+		"設備価格",
+		"太陽光システム価格",
+	]);
+	const systemPrice = systemPriceInput ?? Math.max(0, input.salePrice - landPrice - rightsPrice);
+	const effectiveTaxRate = readFirstNumberByAliases(input.properties, [
+		"実効税率",
+		"法人実効税率",
+		"税率",
+	]) ?? 30;
+	const pretaxProfit = readFirstNumberByAliases(input.properties, [
+		"今期利益見込",
+		"税引前利益",
+		"課税所得見込",
+		"償却前利益",
+		"営業利益見込",
+	]);
+	const loanAmount = readFirstNumberByAliases(input.properties, [
+		"借入額",
+		"融資額",
+		"借入金額",
+		"ローン金額",
+	]) ?? 0;
+	const interestRate = readFirstNumberByAliases(input.properties, [
+		"金利",
+		"借入金利",
+		"融資金利",
+		"ローン金利",
+	]) ?? 0;
+	const loanYears = readFirstNumberByAliases(input.properties, [
+		"返済期間",
+		"融資期間",
+		"借入期間",
+		"ローン年数",
+	]);
+	const annualDebtService = calculateAnnualDebtService(loanAmount, interestRate, loanYears);
+	const annualSystemDepreciation = roundTo(systemPrice / 17, 0);
+	const annualRightsDepreciation = roundTo(rightsPrice / 5, 0);
+	const annualDepreciation = annualSystemDepreciation + annualRightsDepreciation;
+	const depreciationBase = pretaxProfit !== null
+		? Math.min(annualDepreciation, Math.max(pretaxProfit, 0))
+		: annualDepreciation;
+	const taxBenefit = roundTo(depreciationBase * (effectiveTaxRate / 100), 0);
+	const cashflowAfterDebt = roundTo(input.annualNetIncome - annualDebtService, 0);
+	const afterTaxCashflow = roundTo(cashflowAfterDebt + taxBenefit, 0);
+	const dscr = annualDebtService > 0
+		? roundTo(input.annualNetIncome / annualDebtService, 2)
+		: null;
+	const timing = judgeFinanceTiming({
+		paybackYears: input.paybackYears,
+		fitRemainingYears: input.fitRemainingYears,
+		afterTaxCashflow,
+		dscr,
+		taxBenefit,
+		annualNetIncome: input.annualNetIncome,
+	});
+	const pretaxProfitLine = pretaxProfit !== null
+		? `BS/利益前提: 今期利益見込 ${formatYen(pretaxProfit)} に対し、年間償却額 ${formatYen(annualDepreciation)} を当て込む。`
+		: "BS/利益前提: 今期利益見込が未入力のため、年間償却額を全額使える前提で税効果を表示します。";
+	const debtLine = loanAmount > 0
+		? `融資前提: 借入額 ${formatYen(loanAmount)} / 金利 ${trimTrailingZeros(interestRate)}% / 返済期間 ${loanYears ?? 0}年 / 年間返済額 ${formatYen(annualDebtService)}`
+		: "融資前提: 借入なし。返済負担なしで判定します。";
+	return {
+		landPrice,
+		systemPrice,
+		rightsPrice,
+		systemDepreciationYears: 17,
+		rightsDepreciationYears: 5,
+		annualSystemDepreciation,
+		annualRightsDepreciation,
+		annualDepreciation,
+		effectiveTaxRate,
+		pretaxProfit,
+		taxBenefit,
+		loanAmount,
+		interestRate,
+		loanYears,
+		annualDebtService,
+		cashflowAfterDebt,
+		afterTaxCashflow,
+		dscr,
+		timingRank: timing.rank,
+		timingReason: timing.reason,
+		lines: [
+			"ファイナンス・税効果シミュレーション",
+			"土地は償却対象外です。",
+			"システム本体は17年で償却します。",
+			"権利代は5年で償却します。",
+			`土地代: ${formatYen(landPrice)} / 年間償却額 ¥0`,
+			`システム本体: ${formatYen(systemPrice)} / 17年償却 / 年間償却額 ${formatYen(annualSystemDepreciation)}`,
+			`権利代: ${formatYen(rightsPrice)} / 5年償却 / 年間償却額 ${formatYen(annualRightsDepreciation)}`,
+			`年間償却額合計: ${formatYen(annualDepreciation)}`,
+			`実効税率: ${trimTrailingZeros(effectiveTaxRate)}%`,
+			`年間税効果: ${formatYen(taxBenefit)}`,
+			debtLine,
+			pretaxProfitLine,
+			`税効果後キャッシュフロー: ${formatYen(afterTaxCashflow)}`,
+			`DSCR: ${dscr !== null ? trimTrailingZeros(dscr) : "借入なし"}`,
+			`購入タイミング判定: ${timing.rank} / ${timing.reason}`,
+			"注釈: 本資料はシミュレーション資料です。実際の会計・税務処理は、貴社顧問税理士へご確認ください。",
+		],
+	};
+}
+
+function calculateAnnualDebtService(
+	loanAmount: number,
+	interestRate: number,
+	loanYears: number | null,
+): number {
+	if (loanAmount <= 0) return 0;
+	const years = loanYears && loanYears > 0 ? loanYears : 1;
+	const rate = interestRate / 100;
+	if (rate <= 0) return roundTo(loanAmount / years, 0);
+	const annualPayment = loanAmount * rate / (1 - Math.pow(1 + rate, -years));
+	return roundTo(annualPayment, 0);
+}
+
+function judgeFinanceTiming(input: {
+	paybackYears: number | null;
+	fitRemainingYears: number | null;
+	afterTaxCashflow: number;
+	dscr: number | null;
+	taxBenefit: number;
+	annualNetIncome: number;
+}): { rank: "S" | "A" | "B" | "C"; reason: string } {
+	const paybackWithinFit =
+		input.paybackYears !== null &&
+		input.fitRemainingYears !== null &&
+		input.paybackYears <= input.fitRemainingYears;
+	const dscrStrong = input.dscr === null || input.dscr >= 1.3;
+	const dscrAcceptable = input.dscr === null || input.dscr >= 1.1;
+	const taxEffectStrong = input.taxBenefit >= input.annualNetIncome * 0.08;
+	if (paybackWithinFit && input.afterTaxCashflow > 0 && dscrStrong && taxEffectStrong) {
+		return {
+			rank: "S",
+			reason: "残存FIT内で回収でき、返済余力と償却税効果が強いため、今買う理由が明確です。",
+		};
+	}
+	if (paybackWithinFit && input.afterTaxCashflow > 0 && dscrAcceptable) {
+		return {
+			rank: "A",
+			reason: "残存FIT内で回収でき、税効果後キャッシュフローもプラスです。",
+		};
+	}
+	if (input.afterTaxCashflow > 0) {
+		return {
+			rank: "B",
+			reason: "税効果後キャッシュフローはプラスですが、回収期間・返済余力・税効果のいずれかに確認余地があります。",
+		};
+	}
+	return {
+		rank: "C",
+		reason: "税効果後キャッシュフローが弱く、購入タイミングとしては再検討が必要です。",
 	};
 }
 
@@ -17235,11 +17555,17 @@ function buildProposalSummaryLines(input: {
 	salePrice: number;
 	purchaseCost: number;
 	annualIncome: number;
+	baseAnnualIncome: number | null;
+	fitRemainingYears: number | null;
+	curtailmentScenario: CurtailmentScenario;
+	curtailmentRate: number;
 	runningCost: number;
 	annualNetIncome: number;
 	grossProfit: number;
 	expectedYield: number | null;
 	paybackYears: number | null;
+	fitTotalNetCashflow: number | null;
+	financeSimulation: FinanceSimulation | null;
 	subsidyAmount: number | null;
 }): string[] {
 	const yieldText = input.expectedYield !== null ? `${input.expectedYield}%` : "算出不可";
@@ -17257,14 +17583,26 @@ function buildProposalSummaryLines(input: {
 	];
 	}
 	return [
+	"【通常営業シミュレーション】",
 	`販売価格: ${formatYen(input.salePrice)}`,
 	`仕入れ価格: ${formatYen(input.purchaseCost)}`,
+	`残存FIT年数: ${input.fitRemainingYears !== null ? `${trimTrailingZeros(input.fitRemainingYears)}年` : "未入力"}`,
+	`出力抑制前提: ${input.curtailmentScenario}`,
+	`出力抑制率: ${input.curtailmentScenario === "抑制あり" ? `${trimTrailingZeros(input.curtailmentRate)}%` : "0%"}`,
+	`抑制前年間売電収入: ${input.baseAnnualIncome !== null ? formatYen(input.baseAnnualIncome) : "未入力"}`,
 	`年間売電収入: ${formatYen(input.annualIncome)}`,
 	`年間維持費（ランニングコスト）: ${formatYen(input.runningCost)}`,
 	`年間手残り: ${formatYen(input.annualNetIncome)}`,
 	`想定粗利: ${formatYen(input.grossProfit)}`,
 	`想定利回り: ${yieldText}`,
 	`想定回収年数: ${paybackText}`,
+	`残存FIT期間内の総手残り: ${input.fitTotalNetCashflow !== null ? formatYen(input.fitTotalNetCashflow) : "算出不可"}`,
+	...(input.financeSimulation
+		? [
+				"【ファイナンス・税効果シミュレーション】",
+				...input.financeSimulation.lines,
+		  ]
+		: []),
 	];
 }
 
@@ -17275,11 +17613,17 @@ function buildTwoPageProposalLines(input: {
 	salePrice: number;
 	purchaseCost: number;
 	annualIncome: number;
+	baseAnnualIncome: number | null;
+	fitRemainingYears: number | null;
+	curtailmentScenario: CurtailmentScenario;
+	curtailmentRate: number;
 	runningCost: number;
 	annualNetIncome: number;
 	grossProfit: number;
 	expectedYield: number | null;
 	paybackYears: number | null;
+	fitTotalNetCashflow: number | null;
+	financeSimulation: FinanceSimulation | null;
 	annualReductionAmount: number | null;
 	reductionRate: number | null;
 	co2ReductionTons: number | null;
@@ -17313,8 +17657,12 @@ function buildTwoPageProposalLines(input: {
 	const revenueLine = buildSolarRevenueLine(input.solarDetails);
 	const maintenanceLine = buildMaintenanceBreakdownLine(input.runningCostBreakdown);
 	const mainMetricsLine =
-		`主要数字: 販売価格 ${formatYen(input.salePrice)} / 年間売電収入 ${formatYen(input.annualIncome)} / ` +
-		`年間維持費（ランニングコスト） ${formatYen(input.runningCost)} / 年間手残り ${formatYen(input.annualNetIncome)} / 想定利回り ${yieldText}`;
+		`通常営業シミュレーション: 販売価格 ${formatYen(input.salePrice)} / 残存FIT年数 ${input.fitRemainingYears !== null ? `${trimTrailingZeros(input.fitRemainingYears)}年` : "未入力"} / ` +
+		`出力抑制前提 ${input.curtailmentScenario}${input.curtailmentScenario === "抑制あり" ? `（${trimTrailingZeros(input.curtailmentRate)}%）` : ""} / ` +
+		`年間売電収入 ${formatYen(input.annualIncome)} / 年間手残り ${formatYen(input.annualNetIncome)} / 想定利回り ${yieldText} / 残存FIT総手残り ${input.fitTotalNetCashflow !== null ? formatYen(input.fitTotalNetCashflow) : "算出不可"}`;
+	const financeLines = input.financeSimulation?.lines ?? [
+		"ファイナンス・税効果シミュレーション: 土地/システム本体/権利代/融資/税率を入力すると、償却・税効果・DSCR・購入タイミング判定を表示します。",
+	];
 	if (input.proposalKind === "individual") {
 		return {
 			pageOneLines: nonEmptyLines([
@@ -17331,6 +17679,7 @@ function buildTwoPageProposalLines(input: {
 				revenueLine,
 				maintenanceLine,
 				`実質収支: 年間維持費（ランニングコスト） ${formatYen(input.runningCost)} を控除後、年間手残りは ${formatYen(input.annualNetIncome)}、回収年数は ${paybackText} です。`,
+				...financeLines,
 				"発電量変動、出力抑制、保険免責、設備故障、将来の廃棄費用積立を前提に、都合の良い数字だけで判断しない資料にします。",
 				"次アクション: 融資利用の有無、投資期間、相続・出口方針、毎月の手残り目線を確認します。",
 			]),
@@ -17353,6 +17702,7 @@ function buildTwoPageProposalLines(input: {
 				revenueLine,
 				maintenanceLine,
 				`経済効果: 年間手残り ${formatYen(input.annualNetIncome)} / 回収年数 ${paybackText}`,
+				...financeLines,
 				"環境価値や非化石価値の主張可否は、契約形態、証書、トラッキング、電力利用形態により変わります。",
 				"次アクション: 取引先からの要請内容、RE100等の基準、社内稟議で必要な環境指標を確認します。",
 			]),
@@ -17373,7 +17723,9 @@ function buildTwoPageProposalLines(input: {
 			revenueLine,
 			maintenanceLine,
 			`実質収支: 年間維持費（ランニングコスト） ${formatYen(input.runningCost)} を控除後、年間手残りは ${formatYen(input.annualNetIncome)}、回収年数は ${paybackText} です。`,
-			"税制適用は事前手続き、設備要件、経営力向上計画の認定、税理士・会計士確認が前提です。",
+			...financeLines,
+			"税務前提: 土地は償却対象外、システム本体は17年償却、権利代は5年償却としてシミュレーションします。",
+			"注釈: 本資料はシミュレーション資料です。実際の会計・税務処理は、貴社顧問税理士へご確認ください。",
 			"FIT/FIP、発電量、出力抑制、保険免責、将来の解体・廃棄費用積立まで開示し、社内決裁に耐える提案にします。",
 		]),
 	};
