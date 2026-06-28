@@ -2391,7 +2391,8 @@ type MeetingPrepResult = {
 		| "created-report"
 		| "dry-run"
 		| "skipped-fresh"
-		| "updated-shouta-fields";
+		| "updated-shouta-fields"
+		| "skipped-worker-shouta";
 	message: string;
 };
 
@@ -14502,84 +14503,20 @@ async function processMeetingPrepReport(
 	if (shouldWritePrepFields && !reportIsBlank) {
 		await archiveAllPageBodyBlocks(notion, targetReport.id);
 	}
-	// 商太ブリーフ: 材料(A実データ/和上の手がかり)がゼロの時は呼ばない=数字の創作圧力をかけない。
-	// クオリティ優先(2026-06-11): 企業ページ本文(Aドシエ全文)まで食わせ、検品AI(4体目)を通してから書く。
-	let briefWritten = false;
-	{
-		const shoutaInput = buildShoutaInput(
-			company.name,
-			companyPage.properties ?? {},
-		);
-		const bodyDossier = await fetchPageBlockPlainText(notion, company.page.id);
-		appendShoutaDossier(
-			shoutaInput,
-			bodyDossier.trim()
-				? `【企業ページ本文(Aドシエ全文)】
-${bodyDossier}`
-				: "",
-		);
-		const existingReportProperties =
-			(targetReport as unknown as { properties?: Record<string, unknown> })
-				.properties ?? {};
-		appendMeetingPrepPriorityHits(shoutaInput, existingReportProperties);
-		appendShoutaDossier(
-			shoutaInput,
-			buildMeetingPrepReportContext(existingReportProperties),
-		);
-		appendShoutaDossier(shoutaInput, buildGeneratedMeetingPrepContext(finalPrep));
-		const hasMaterial =
-			(shoutaInput.hits?.length ?? 0) > 0 ||
-			Boolean(shoutaInput.renewableXray) ||
-			Boolean(shoutaInput.dossier) ||
-			Boolean(shoutaInput.knowledge);
-		let shoutaBrief = "";
-		if (hasMaterial) {
-			const result = await generateInspectedShoutaBrief(shoutaInput);
-			const verdictLine = result.inspection.inspected
-				? result.inspection.pass
-					? `✅ 検品AI通過（生成${result.attempts}回）`
-					: `⚠️ 検品AIの指摘が残っています（人間確認推奨）: ${result.inspection.problems.join(" ／ ")}`
-				: `ℹ️ 未検品: ${result.inspection.problems.join(" ／ ")}`;
-			// 判定行は先頭(60行カットで消えない位置・検品レビュー反映)
-			shoutaBrief = `${verdictLine}\n${result.brief}`;
-		}
-		briefWritten = shoutaBrief.trim().length > 0;
-		if (briefWritten) {
-			const fields = extractShoutaMeetingPrepFields(shoutaBrief);
-			await notion.pages.update({
-				page_id: targetReport.id,
-				properties: {
-					"商太｜商談トーク": richText(fields.talk),
-					"商太｜商談の入り方": richText(fields.opening),
-					"商太｜提案ポイント": richText(fields.proposalPoints),
-					"商太｜想定されるポイントと返し": richText(fields.responses),
-					"商太｜最後に確認すること": richText(fields.finalCheck),
-				},
-			});
-		}
-		if (finalPrep) {
-			await appendMeetingPrepReportBody(
-				notion,
-				targetReport.id,
-				company,
-				finalPrep,
-				shoutaBrief,
-			);
-		} else if (shoutaBrief.trim()) {
-			await appendShoutaBriefBody(notion, targetReport.id, shoutaBrief);
-		}
+	// 2026-06-29 方針修正:
+	// 商太の本文生成はWorkerでは行わない。大ちゃんがメンテナンスできるNotionカスタムエージェント側へ寄せる。
+	// Workerは商談前準備レポートの土台(既存5欄・relation)までを扱い、商太5欄を自動生成・自動上書きしない。
+	if (finalPrep) {
+		await appendMeetingPrepReportBody(notion, targetReport.id, company, finalPrep, "");
 	}
 
-	const briefNote = briefWritten ? "(商太ブリーフ付き)" : "";
 	if (!shouldWritePrepFields) {
 		return {
 			companyId: company.page.id,
 			reportId: targetReport.id,
 			reportUrl: targetReport.url ?? null,
-			action: "updated-shouta-fields",
-			message: briefWritten
-				? "既存の商談前準備レポートを維持し、商太5欄だけを補完しました。"
-				: "既存の商談前準備レポートは維持しましたが、商太材料が不足しているため商太5欄は補完していません。",
+			action: "skipped-worker-shouta",
+			message: "Worker商太は停止中です。既存レポートと商太5欄は維持し、商太本文生成はNotionカスタムエージェント側で実行してください。",
 		};
 	}
 	return {
@@ -14589,9 +14526,9 @@ ${bodyDossier}`
 		action: report ? "updated-report" : "created-report",
 		message: quality?.ready
 			? report
-				? `商談準備レポートの空欄を補完し、準備完了にしました${briefNote}。`
-				: `商談準備レポートを新規作成し、準備完了にしました${briefNote}。`
-			: "商談準備レポートを作成/補完しましたが、根拠不足または企業別情報不足のため準備中で止めました。",
+				? "商談準備レポートの空欄を補完し、準備完了にしました。Worker商太は停止中のため、商太5欄は自動生成していません。"
+				: "商談準備レポートを新規作成し、準備完了にしました。Worker商太は停止中のため、商太5欄は自動生成していません。"
+			: "商談準備レポートを作成/補完しましたが、根拠不足または企業別情報不足のため準備中で止めました。Worker商太は停止中です。",
 	};
 }
 

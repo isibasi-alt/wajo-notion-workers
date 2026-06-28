@@ -18,6 +18,9 @@ const MEETING_PREP_REPORT_DATA_SOURCE_ID =
 const CREATE_TEST_REPORT =
 	process.env.SHOUTA_VERIFY_CREATE_TEST_REPORT !== "0" &&
 	!process.argv.includes("--no-create-test-report");
+const EXPECT_WORKER_SHOUTA_STOPPED =
+	process.env.SHOUTA_VERIFY_EXPECT_STOPPED === "1" ||
+	process.argv.includes("--expect-stopped");
 
 const EXISTING_FIELDS = [
 	"企業プロフィール",
@@ -179,6 +182,10 @@ function hasAll(values) {
 	return Object.values(values).every((value) => String(value).trim().length > 0);
 }
 
+function hasNone(values) {
+	return Object.values(values).every((value) => String(value).trim().length === 0);
+}
+
 function diffChanged(before, after) {
 	return Object.keys(before).filter((key) => before[key] && before[key] !== after[key]);
 }
@@ -289,6 +296,8 @@ async function main() {
 	});
 
 	const checks = {
+		workerShoutaStopped: execJson?.action === "skipped-worker-shouta",
+		shoutaFieldsEmpty: hasNone(shoutaFields),
 		shoutaFieldsUpdated: hasAll(shoutaFields),
 		existingFieldsStillPresent: hasAll(afterExistingFields),
 		existingFieldsChanged: changedExistingFields,
@@ -304,19 +313,30 @@ async function main() {
 	};
 
 	const failed = [];
-	if (!checks.shoutaFieldsUpdated) failed.push("商太5欄が全て埋まっていません");
-	if (!checks.existingFieldsStillPresent) failed.push("既存5欄に空欄があります");
-	if (checks.existingFieldsChanged.length > 0 && !FORCE) {
-		failed.push(`既存5欄が変更されています: ${checks.existingFieldsChanged.join(", ")}`);
-	}
-	if (checks.qualityMaterialHits.length < 3) {
-		failed.push(`商太出力が既存5欄の固有材料を十分に踏んでいません: ${checks.qualityMaterialHits.join(", ") || "なし"}`);
-	}
-	if (checks.openingMaterialHits.length < 1) {
-		failed.push("商談の入り方が既存5欄の固有材料を踏んでいません");
-	}
-	if (checks.genericEscapeHits.length > 0) {
-		failed.push(`商太出力に一般論逃げ表現があります: ${checks.genericEscapeHits.join(", ")}`);
+	if (EXPECT_WORKER_SHOUTA_STOPPED) {
+		if (!checks.workerShoutaStopped) {
+			failed.push(`Worker商太停止actionではありません: ${execJson?.action ?? "unknown"}`);
+		}
+		if (!checks.shoutaFieldsEmpty) failed.push("停止確認用レポートの商太5欄が空ではありません");
+		if (!checks.existingFieldsStillPresent) failed.push("既存5欄に空欄があります");
+		if (checks.existingFieldsChanged.length > 0 && !FORCE) {
+			failed.push(`既存5欄が変更されています: ${checks.existingFieldsChanged.join(", ")}`);
+		}
+	} else {
+		if (!checks.shoutaFieldsUpdated) failed.push("商太5欄が全て埋まっていません");
+		if (!checks.existingFieldsStillPresent) failed.push("既存5欄に空欄があります");
+		if (checks.existingFieldsChanged.length > 0 && !FORCE) {
+			failed.push(`既存5欄が変更されています: ${checks.existingFieldsChanged.join(", ")}`);
+		}
+		if (checks.qualityMaterialHits.length < 3) {
+			failed.push(`商太出力が既存5欄の固有材料を十分に踏んでいません: ${checks.qualityMaterialHits.join(", ") || "なし"}`);
+		}
+		if (checks.openingMaterialHits.length < 1) {
+			failed.push("商談の入り方が既存5欄の固有材料を踏んでいません");
+		}
+		if (checks.genericEscapeHits.length > 0) {
+			failed.push(`商太出力に一般論逃げ表現があります: ${checks.genericEscapeHits.join(", ")}`);
+		}
 	}
 	if (checks.forbiddenExtraRuns.length > 0) {
 		failed.push("名刺入口・企業マスター高密度化・quickStartDeal系の余計なrunがあります");
@@ -340,6 +360,7 @@ async function main() {
 			startedAt: run.startedAt,
 			endedAt: run.endedAt,
 		},
+		expectWorkerShoutaStopped: EXPECT_WORKER_SHOUTA_STOPPED,
 		checks,
 		shoutaFields,
 		shoutaFieldLengths: Object.fromEntries(
