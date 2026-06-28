@@ -14843,9 +14843,7 @@ async function processProposalSimulation(
 			);
 		}
 		await safeUpdateExistingProperties(notion, page, patches);
-		if (pdfExport.fileUrl) {
-			await updateRelatedProjectProposalPdfLink(notion, page, pdfExport.fileUrl);
-		}
+		await updateRelatedProjectProposalResult(notion, page, draft, pdfExport.fileUrl);
 		await createPageComment(
 			notion,
 			page.id,
@@ -15430,25 +15428,41 @@ function notionPropertyHasValue(property: unknown): boolean {
 	return false;
 }
 
-async function updateRelatedProjectProposalPdfLink(
+async function updateRelatedProjectProposalResult(
 	notion: NotionClient,
 	proposalPage: Page,
-	pdfUrl: string,
+	draft: ProposalSimulationDraft,
+	pdfUrl: string | null,
 ): Promise<void> {
 	const relatedProjectIds = relationIdsFromProperty(proposalPage.properties?.["関連案件"]);
 	if (relatedProjectIds.length === 0) return;
 	for (const projectPageId of relatedProjectIds) {
 		try {
 			const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
-			await safeUpdateExistingProperties(notion, projectPage, {
-				提案PDFリンク: { kind: "text", value: pdfUrl },
+			const memoLines = [
+				pdfUrl
+					? `提案PDFを作成しました。${pdfUrl}`
+					: "提案シミュレーションを作成しました。",
+				draft.grossProfit !== null
+					? `予定粗利額を販売価格 - 仕入れ価格で自動更新: ${formatYen(draft.grossProfit)}`
+					: "",
+			].filter(Boolean);
+			const patches: Record<string, SafePatch> = {
 				資料作成メモ: {
 					kind: "text",
-					value: `提案PDFを作成しました。${pdfUrl}`,
+					value: memoLines.join("\n"),
 				},
-			});
+			};
+			if (pdfUrl) {
+				patches.提案PDFリンク = { kind: "text", value: pdfUrl };
+			}
+			if (draft.grossProfit !== null) {
+				patches.予定粗利額 = { kind: "number", value: draft.grossProfit };
+				patches.予定粗利の根拠 = { kind: "select", value: "価格あり" };
+			}
+			await safeUpdateExistingProperties(notion, projectPage, patches);
 		} catch (error) {
-			console.log("related project pdf link update skipped", {
+			console.log("related project proposal result update skipped", {
 				projectPageId,
 				error: String(error),
 			});
@@ -28507,6 +28521,7 @@ export {
 	processProjectResidentDocumentRequest as processProjectResidentDocumentRequestForTest,
 };
 export { processResidentDocument as processResidentDocumentForTest };
+export { processProposalSimulation as processProposalSimulationForTest };
 export {
 	buildProposalSimulationPdfBytes as buildProposalSimulationPdfBytesForTest,
 	buildResidentDocumentPdfBytes as buildResidentDocumentPdfBytesForTest,

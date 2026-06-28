@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+	processProposalSimulationForTest,
 	processProjectProposalRequestForTest,
 	processProjectResidentDocumentRequestForTest,
 } from "./index";
@@ -51,6 +52,8 @@ function validProjectProperties() {
 		提案タイプ: selectProp("法人対象"),
 		販売価格: numberProp(22000000),
 		仕入れ価格: numberProp(19000000),
+		予定粗利額: numberProp(null),
+		予定粗利の根拠: selectProp("未確認"),
 		年間売電収入: numberProp(2090000),
 		"年間維持費（ランニングコスト）": numberProp(374000),
 		発電所名: richTextProp("湖南市250kW 太陽光発電所"),
@@ -95,6 +98,8 @@ function projectCoreOnlyProperties() {
 		提案タイプ: selectProp("法人対象"),
 		販売価格: numberProp(22000000),
 		仕入れ価格: numberProp(19000000),
+		予定粗利額: numberProp(null),
+		予定粗利の根拠: selectProp("未確認"),
 	};
 }
 
@@ -162,6 +167,30 @@ function requestPage(id: string, documentType: string) {
 		properties: {
 			案件名: titleProp(`湖南市250kW 太陽光案件｜${documentType}`),
 			資料種別: { type: "select", select: { name: documentType } },
+		},
+	};
+}
+
+function readyProposalRequestPage() {
+	return {
+		id: "request-ready-1",
+		url: "https://www.notion.so/request-ready-1",
+		properties: {
+			...validProjectProperties(),
+			案件名: titleProp("湖南市250kW 太陽光案件｜提案シミュレーション"),
+			関連案件: relationProp(["project-1"]),
+			シミュレーションステータス: selectProp("入力待ち"),
+			不足項目: richTextProp(""),
+			想定粗利額: numberProp(null),
+			想定利回り: numberProp(null),
+			想定回収年数: numberProp(null),
+			御社への結論: richTextProp(""),
+			提案タイプガイド: richTextProp(""),
+			年間償却額: numberProp(null),
+			税効果: numberProp(null),
+			税引後キャッシュフロー: numberProp(null),
+			DSCR: numberProp(null),
+			購入タイミング判定: selectProp("C"),
 		},
 	};
 }
@@ -348,13 +377,40 @@ async function main() {
 	assert.equal(queries.length, 1);
 	assert.equal(queryDocumentType(queries[0]!), "提案書");
 
-	assert.equal(updates.length, 1);
-	const projectProps = updates[0]!.properties as Record<string, unknown>;
+	const projectRelationUpdate = updates.find((update) => {
+		const properties = update.properties as Record<string, unknown>;
+		return Boolean(properties.資料作成依頼);
+	});
+	assert.ok(projectRelationUpdate);
+	const projectProps = projectRelationUpdate.properties as Record<string, unknown>;
 	assert.deepEqual(
 		(projectProps.資料作成依頼 as { relation: Array<{ id: string }> }).relation,
 		[{ id: "request-created-1" }],
 	);
 	assert.equal(comments.length, 2);
+
+	const simulationCase = makeNotion({
+		existingByDocumentType: {
+			提案書: [readyProposalRequestPage()],
+		},
+	});
+	const simulation = await processProposalSimulationForTest(
+		{ pageId: "request-ready-1", dryRun: false },
+		simulationCase.notion as never,
+	);
+	assert.equal(simulation.status, "シミュレーション準備完了");
+	assert.equal(simulation.grossProfit, 3000000);
+	const projectGrossUpdate = simulationCase.updates.find((update) => {
+		const properties = update.properties as Record<string, unknown>;
+		return Boolean(properties.予定粗利額);
+	});
+	assert.ok(projectGrossUpdate);
+	const grossProps = projectGrossUpdate.properties as Record<string, unknown>;
+	assert.equal((grossProps.予定粗利額 as { number: number }).number, 3000000);
+	assert.equal(
+		(grossProps.予定粗利の根拠 as { select: { name: string } }).select.name,
+		"価格あり",
+	);
 
 	const existingCase = makeNotion({
 		projectRequestIds: ["request-existing"],
