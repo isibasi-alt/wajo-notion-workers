@@ -17206,12 +17206,10 @@ async function processDailyReportLog(
 		report.nextMove,
 	].some((value) => value.replace(/\s/g, "").length > 0);
 
-	// ⚠️ リスク(チェックリスト1-4・2026-06-13時点の既知の穴):
-	// 「提出状態」は日報DBの生selectで、営業本人がNotion UIから直接「承認済み」を
-	// 選べてしまう(上司承認のWorker正本が存在しない)。ここを正本スタンプ方式に揃えるには
-	// 「上司承認ボタン→Worker→スタンプ列」の新設(Notion列+ボタン=大ちゃん承認待ち)が必要。
-	// LIVEの日報フローを壊さないため、当面は生select信頼+下の上司コメント必須チェックを
-	// 弱い突合として維持する(上司コメントも本人が書ける点は残存リスク)。
+	// 2026-06-29 修正済み: 日報DBに「承認・提出」(マネージャー操作のselect)を新設し、
+	// 「提出状態」はformulaで「承認・提出 = 承認 なら『承認済み』」を返す方式に変更。
+	// 営業マンには「提出状態」プロパティをビューから非表示にして触れない化したため、
+	// 営業マン本人が自己承認する穴は塞がった。Worker側はそのまま「提出状態」を読めばOK。
 	if (report.submissionStatus !== "承認済み") {
 		return {
 			dailyReportPageId: report.page.id,
