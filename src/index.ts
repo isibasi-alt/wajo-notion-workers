@@ -5341,11 +5341,38 @@ worker.webhook("processProposalSimulationWebhook", {
 					"proposalPageId / pageId / entity.id のいずれからも提案シミュレーション対象ページIDを特定できませんでした。",
 				);
 			}
+
+			const sourcePage = (await notion.pages.retrieve({ page_id: pageId })) as {
+				properties?: Record<string, unknown>;
+				parent?: { data_source_id?: string };
+			};
+			const sourceDataSourceId = sourcePage.parent?.data_source_id;
+			if (sourceDataSourceId === PROJECT_DATA_SOURCE_ID) {
+				await processProjectProposalRequest(
+					{ projectPageId: pageId, dryRun: false },
+					notion as unknown as NotionClient,
+				);
+				continue;
+			}
+			const relatedProjectIds = relationIdsFromProperty(sourcePage.properties?.["関連案件"]);
+			if (sourceDataSourceId !== PROPOSAL_REQUEST_DATA_SOURCE_ID && relatedProjectIds.length === 1) {
+				await processProjectProposalRequest(
+					{ projectPageId: relatedProjectIds[0]!, dryRun: false },
+					notion as unknown as NotionClient,
+				);
+				continue;
+			}
+
 			const result = await processProposalSimulation(
 				{ pageId, dryRun: false },
 				notion as unknown as NotionClient,
 			);
-			if (result.action === "needs-input") throw new Error(result.message);
+			if (result.action === "needs-input") {
+				console.log("proposal simulation needs input", {
+					pageId,
+					message: result.message,
+				});
+			}
 		}
 	},
 });
