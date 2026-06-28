@@ -237,6 +237,31 @@ async function main() {
 	assert.equal(readyWithFinance.financeSimulation?.timingRank, "S");
 	assert.match(readyWithFinance.summaryLines.join("\n"), /購入タイミング判定: S/);
 	assert.match(readyWithFinance.summaryLines.join("\n"), /年間税効果: ¥3,247,059/);
+	assert.match(readyWithFinance.summaryLines.join("\n"), /商品構成: 金額入力/);
+
+	const readyWithCompositionRatios = evaluateProposalSimulationDraftForTest({
+		id: "proposal-2h",
+		properties: solarRequiredProps({
+			土地比率: numberProp(20),
+			システム比率: numberProp(50),
+			権利代比率: numberProp(30),
+			実効税率: numberProp(30),
+			今期利益見込: numberProp(100000000),
+		}),
+	});
+
+	assert.equal(readyWithCompositionRatios.financeSimulation?.composition.mode, "比率入力");
+	assert.equal(readyWithCompositionRatios.financeSimulation?.landPrice, 24000000);
+	assert.equal(readyWithCompositionRatios.financeSimulation?.systemPrice, 60000000);
+	assert.equal(readyWithCompositionRatios.financeSimulation?.rightsPrice, 36000000);
+	assert.equal(readyWithCompositionRatios.financeSimulation?.landRatio, 20);
+	assert.equal(readyWithCompositionRatios.financeSimulation?.systemRatio, 50);
+	assert.equal(readyWithCompositionRatios.financeSimulation?.rightsRatio, 30);
+	assert.equal(readyWithCompositionRatios.financeSimulation?.annualDepreciation, 10729412);
+	assert.equal(readyWithCompositionRatios.financeSimulation?.taxBenefit, 3218824);
+	assert.match(readyWithCompositionRatios.summaryLines.join("\n"), /構成比: 土地 20% \/ システム 50% \/ 権利代 30%/);
+	assert.match(readyWithCompositionRatios.summaryLines.join("\n"), /営業設計: 権利代比率を上げると5年償却部分が増え/);
+	assert.match(readyWithCompositionRatios.pageTwoLines.join("\n"), /商品構成: 比率入力/);
 
 	const individual = evaluateProposalSimulationDraftForTest({
 		id: "proposal-3",

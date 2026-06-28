@@ -156,11 +156,11 @@ function select(name) {
 function createVerificationReport(companyId) {
 	const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 	const sentinel = {
-		企業プロフィール: `商太live検証用の既存欄です。企業プロフィール sentinel ${stamp}`,
-		"3C分析": `商太live検証用の既存欄です。3C分析 sentinel ${stamp}`,
-		商談仮説: `商太live検証用の既存欄です。商談仮説 sentinel ${stamp}`,
-		ヒアリングリスト: `商太live検証用の既存欄です。ヒアリングリスト sentinel ${stamp}`,
-		"注意点・リスク": `商太live検証用の既存欄です。注意点・リスク sentinel ${stamp}`,
+		企業プロフィール: `商太live品質検証用の既存欄です。九州エリアの発電所出口整理を相談する想定。検証ID ${stamp}`,
+		"3C分析": `顧客はFIT満了後の売電単価低下とPCS更新タイミングを気にしている。競合は売却査定だけで、蓄電池併設の話が薄い。検証ID ${stamp}`,
+		商談仮説: `初回は売却を迫らず、出口の選択肢（継続保有、売却、蓄電池併設）を比較表で整理する。検証ID ${stamp}`,
+		ヒアリングリスト: `FIT満了年、PCS更新時期、発電所一覧、売却希望時期、電力契約を確認する。検証ID ${stamp}`,
+		"注意点・リスク": `断定せず、まず発電所一覧と電力契約を確認する。一般論だけで入らない。検証ID ${stamp}`,
 	};
 	return createPage({
 		parent: { data_source_id: MEETING_PREP_REPORT_DATA_SOURCE_ID },
@@ -181,6 +181,40 @@ function hasAll(values) {
 
 function diffChanged(before, after) {
 	return Object.keys(before).filter((key) => before[key] && before[key] !== after[key]);
+}
+
+const QUALITY_MATERIAL_TOKENS = [
+	"FIT満了",
+	"PCS更新",
+	"蓄電池併設",
+	"出口",
+	"発電所一覧",
+	"電力契約",
+	"継続保有",
+	"売却希望時期",
+];
+const GENERIC_ESCAPE_PATTERNS = [
+	/具体的なニーズを確認/,
+	/再エネの可能性を広げ/,
+	/まずは情報交換/,
+	/御社の課題を教えてください/,
+	/社名から/,
+	/可能性が高いとお見受け/,
+	/どんなプロジェクトに注力/,
+];
+
+function qualityHits(shoutaFields) {
+	const text = Object.values(shoutaFields).join("\n");
+	return QUALITY_MATERIAL_TOKENS.filter((token) => text.includes(token));
+}
+
+function genericEscapes(shoutaFields) {
+	const text = Object.values(shoutaFields).join("\n");
+	return GENERIC_ESCAPE_PATTERNS.filter((pattern) => pattern.test(text)).map((pattern) => String(pattern));
+}
+
+function openingQualityHits(shoutaFields) {
+	return QUALITY_MATERIAL_TOKENS.filter((token) => String(shoutaFields["商太｜商談の入り方"] ?? "").includes(token));
 }
 
 function latestTargetRunAfter(runList, beforeStartedAt, beforeIds) {
@@ -258,6 +292,9 @@ async function main() {
 		shoutaFieldsUpdated: hasAll(shoutaFields),
 		existingFieldsStillPresent: hasAll(afterExistingFields),
 		existingFieldsChanged: changedExistingFields,
+		qualityMaterialHits: qualityHits(shoutaFields),
+		openingMaterialHits: openingQualityHits(shoutaFields),
+		genericEscapeHits: genericEscapes(shoutaFields),
 		forbiddenExtraRuns: extraRuns.map((item) => ({
 			runId: item.runId,
 			name: item.name,
@@ -271,6 +308,15 @@ async function main() {
 	if (!checks.existingFieldsStillPresent) failed.push("既存5欄に空欄があります");
 	if (checks.existingFieldsChanged.length > 0 && !FORCE) {
 		failed.push(`既存5欄が変更されています: ${checks.existingFieldsChanged.join(", ")}`);
+	}
+	if (checks.qualityMaterialHits.length < 3) {
+		failed.push(`商太出力が既存5欄の固有材料を十分に踏んでいません: ${checks.qualityMaterialHits.join(", ") || "なし"}`);
+	}
+	if (checks.openingMaterialHits.length < 1) {
+		failed.push("商談の入り方が既存5欄の固有材料を踏んでいません");
+	}
+	if (checks.genericEscapeHits.length > 0) {
+		failed.push(`商太出力に一般論逃げ表現があります: ${checks.genericEscapeHits.join(", ")}`);
 	}
 	if (checks.forbiddenExtraRuns.length > 0) {
 		failed.push("名刺入口・企業マスター高密度化・quickStartDeal系の余計なrunがあります");
@@ -295,6 +341,7 @@ async function main() {
 			endedAt: run.endedAt,
 		},
 		checks,
+		shoutaFields,
 		shoutaFieldLengths: Object.fromEntries(
 			Object.entries(shoutaFields).map(([key, value]) => [key, value.length]),
 		),

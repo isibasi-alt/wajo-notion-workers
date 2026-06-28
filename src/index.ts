@@ -14395,6 +14395,21 @@ function appendShoutaDossier(input: ShoutaInput, value: string): void {
 	input.dossier = [input.dossier, body].filter(Boolean).join("\n\n");
 }
 
+function appendMeetingPrepPriorityHits(
+	input: ShoutaInput,
+	properties: Record<string, unknown>,
+): void {
+	const pick = (name: string) => text(properties[name]).trim();
+	const priorityHits = [
+		pick("商談仮説") ? `既存5欄 商談仮説: ${pick("商談仮説")}` : "",
+		pick("3C分析") ? `既存5欄 3C急所: ${pick("3C分析")}` : "",
+		pick("ヒアリングリスト") ? `既存5欄 聞くべき論点: ${pick("ヒアリングリスト")}` : "",
+		pick("注意点・リスク") ? `既存5欄 注意点: ${pick("注意点・リスク")}` : "",
+	].filter(Boolean);
+	if (priorityHits.length === 0) return;
+	input.hits = [...(input.hits ?? []), ...priorityHits.slice(0, 4)];
+}
+
 async function processMeetingPrepReport(
 	input: MeetingPrepInput,
 	notion: NotionClient,
@@ -14503,12 +14518,13 @@ async function processMeetingPrepReport(
 ${bodyDossier}`
 				: "",
 		);
+		const existingReportProperties =
+			(targetReport as unknown as { properties?: Record<string, unknown> })
+				.properties ?? {};
+		appendMeetingPrepPriorityHits(shoutaInput, existingReportProperties);
 		appendShoutaDossier(
 			shoutaInput,
-			buildMeetingPrepReportContext(
-				(targetReport as unknown as { properties?: Record<string, unknown> })
-					.properties ?? {},
-			),
+			buildMeetingPrepReportContext(existingReportProperties),
 		);
 		appendShoutaDossier(shoutaInput, buildGeneratedMeetingPrepContext(finalPrep));
 		const hasMaterial =
@@ -14632,10 +14648,34 @@ type ProposalSimulationDraft = {
 
 type CurtailmentScenario = "抑制なし" | "抑制あり";
 
-type FinanceSimulation = {
+type ProductComposition = {
+	mode: "金額入力" | "比率入力" | "標準補完";
 	landPrice: number;
 	systemPrice: number;
 	rightsPrice: number;
+	landRatio: number;
+	systemRatio: number;
+	rightsRatio: number;
+	componentTotal: number;
+	componentBalanceDifference: number;
+	strategyLines: string[];
+};
+
+function formatFinanceSignedYen(value: number): string {
+	if (value === 0) return "¥0";
+	const sign = value > 0 ? "+" : "-";
+	return `${sign}${formatYen(Math.abs(value))}`;
+}
+
+type FinanceSimulation = {
+	composition: ProductComposition;
+	landPrice: number;
+	systemPrice: number;
+	rightsPrice: number;
+	landRatio: number;
+	systemRatio: number;
+	rightsRatio: number;
+	componentBalanceDifference: number;
 	systemDepreciationYears: number;
 	rightsDepreciationYears: number;
 	annualSystemDepreciation: number;
@@ -17308,26 +17348,8 @@ function buildFinanceSimulation(input: {
 	paybackYears: number | null;
 	fitRemainingYears: number | null;
 }): FinanceSimulation {
-	const landPrice = readFirstNumberByAliases(input.properties, [
-		"土地代",
-		"土地価格",
-		"土地取得費",
-		"土地評価額",
-	]) ?? 0;
-	const rightsPrice = readFirstNumberByAliases(input.properties, [
-		"権利代",
-		"権利金",
-		"権利取得費",
-		"設備ID権利代",
-	]) ?? 0;
-	const systemPriceInput = readFirstNumberByAliases(input.properties, [
-		"システム本体価格",
-		"設備本体価格",
-		"発電設備価格",
-		"設備価格",
-		"太陽光システム価格",
-	]);
-	const systemPrice = systemPriceInput ?? Math.max(0, input.salePrice - landPrice - rightsPrice);
+	const composition = buildProductComposition(input.properties, input.salePrice);
+	const { landPrice, systemPrice, rightsPrice } = composition;
 	const effectiveTaxRate = readFirstNumberByAliases(input.properties, [
 		"実効税率",
 		"法人実効税率",
@@ -17386,9 +17408,14 @@ function buildFinanceSimulation(input: {
 		? `融資前提: 借入額 ${formatYen(loanAmount)} / 金利 ${trimTrailingZeros(interestRate)}% / 返済期間 ${loanYears ?? 0}年 / 年間返済額 ${formatYen(annualDebtService)}`
 		: "融資前提: 借入なし。返済負担なしで判定します。";
 	return {
+		composition,
 		landPrice,
 		systemPrice,
 		rightsPrice,
+		landRatio: composition.landRatio,
+		systemRatio: composition.systemRatio,
+		rightsRatio: composition.rightsRatio,
+		componentBalanceDifference: composition.componentBalanceDifference,
 		systemDepreciationYears: 17,
 		rightsDepreciationYears: 5,
 		annualSystemDepreciation,
@@ -17408,6 +17435,9 @@ function buildFinanceSimulation(input: {
 		timingReason: timing.reason,
 		lines: [
 			"ファイナンス・税効果シミュレーション",
+			`商品構成: ${composition.mode}`,
+			`構成比: 土地 ${trimTrailingZeros(composition.landRatio)}% / システム ${trimTrailingZeros(composition.systemRatio)}% / 権利代 ${trimTrailingZeros(composition.rightsRatio)}%`,
+			`構成合計: ${formatYen(composition.componentTotal)} / 販売価格との差額 ${formatFinanceSignedYen(composition.componentBalanceDifference)}`,
 			"土地は償却対象外です。",
 			"システム本体は17年で償却します。",
 			"権利代は5年で償却します。",
@@ -17422,9 +17452,143 @@ function buildFinanceSimulation(input: {
 			`税効果後キャッシュフロー: ${formatYen(afterTaxCashflow)}`,
 			`DSCR: ${dscr !== null ? trimTrailingZeros(dscr) : "借入なし"}`,
 			`購入タイミング判定: ${timing.rank} / ${timing.reason}`,
+			...composition.strategyLines,
 			"注釈: 本資料はシミュレーション資料です。実際の会計・税務処理は、貴社顧問税理士へご確認ください。",
 		],
 	};
+}
+
+function buildProductComposition(
+	properties: Record<string, unknown>,
+	salePrice: number,
+): ProductComposition {
+	const ratioInput = readProductCompositionRatios(properties);
+	if (ratioInput) {
+		const landPrice = roundTo(salePrice * ratioInput.landRatio / 100, 0);
+		const systemPrice = roundTo(salePrice * ratioInput.systemRatio / 100, 0);
+		const rightsPrice = Math.max(0, salePrice - landPrice - systemPrice);
+		return buildProductCompositionResult({
+			mode: "比率入力",
+			salePrice,
+			landPrice,
+			systemPrice,
+			rightsPrice,
+		});
+	}
+	const landPrice = readFirstNumberByAliases(properties, [
+		"土地代",
+		"土地価格",
+		"土地取得費",
+		"土地評価額",
+	]) ?? 0;
+	const rightsPrice = readFirstNumberByAliases(properties, [
+		"権利代",
+		"権利金",
+		"権利取得費",
+		"設備ID権利代",
+	]) ?? 0;
+	const systemPriceInput = readFirstNumberByAliases(properties, [
+		"システム本体価格",
+		"設備本体価格",
+		"発電設備価格",
+		"設備価格",
+		"太陽光システム価格",
+	]);
+	const systemPrice = systemPriceInput ?? Math.max(0, salePrice - landPrice - rightsPrice);
+	return buildProductCompositionResult({
+		mode: systemPriceInput !== null || landPrice > 0 || rightsPrice > 0 ? "金額入力" : "標準補完",
+		salePrice,
+		landPrice,
+		systemPrice,
+		rightsPrice,
+	});
+}
+
+function readProductCompositionRatios(properties: Record<string, unknown>): {
+	landRatio: number;
+	systemRatio: number;
+	rightsRatio: number;
+} | null {
+	const land = readFirstNumberByAliases(properties, [
+		"土地比率",
+		"土地構成比",
+		"土地代比率",
+		"土地割合",
+	]);
+	const system = readFirstNumberByAliases(properties, [
+		"システム比率",
+		"システム構成比",
+		"システム本体比率",
+		"設備比率",
+		"設備構成比",
+	]);
+	const rights = readFirstNumberByAliases(properties, [
+		"権利代比率",
+		"権利構成比",
+		"権利比率",
+		"権利代割合",
+	]);
+	if (land === null || system === null || rights === null) return null;
+	const values = [land, system, rights].map((value) => Math.max(0, value));
+	const sum = values.reduce((total, value) => total + value, 0);
+	if (sum <= 0) return null;
+	return {
+		landRatio: roundTo(values[0]! / sum * 100, 2),
+		systemRatio: roundTo(values[1]! / sum * 100, 2),
+		rightsRatio: roundTo(values[2]! / sum * 100, 2),
+	};
+}
+
+function buildProductCompositionResult(input: {
+	mode: ProductComposition["mode"];
+	salePrice: number;
+	landPrice: number;
+	systemPrice: number;
+	rightsPrice: number;
+}): ProductComposition {
+	const componentTotal = roundTo(input.landPrice + input.systemPrice + input.rightsPrice, 0);
+	const componentBalanceDifference = roundTo(componentTotal - input.salePrice, 0);
+	const ratioBase = input.salePrice > 0 ? input.salePrice : componentTotal;
+	const landRatio = ratioBase > 0 ? roundTo(input.landPrice / ratioBase * 100, 2) : 0;
+	const systemRatio = ratioBase > 0 ? roundTo(input.systemPrice / ratioBase * 100, 2) : 0;
+	const rightsRatio = ratioBase > 0 ? roundTo(input.rightsPrice / ratioBase * 100, 2) : 0;
+	return {
+		mode: input.mode,
+		landPrice: input.landPrice,
+		systemPrice: input.systemPrice,
+		rightsPrice: input.rightsPrice,
+		landRatio,
+		systemRatio,
+		rightsRatio,
+		componentTotal,
+		componentBalanceDifference,
+		strategyLines: buildProductCompositionStrategyLines({
+			landRatio,
+			systemRatio,
+			rightsRatio,
+			componentBalanceDifference,
+		}),
+	};
+}
+
+function buildProductCompositionStrategyLines(input: {
+	landRatio: number;
+	systemRatio: number;
+	rightsRatio: number;
+	componentBalanceDifference: number;
+}): string[] {
+	const lines = [
+		"営業設計: 土地代・システム代・権利代の配分を変えることで、顧客の利益状況に合わせた提案にできます。",
+		"営業設計: 権利代比率を上げると5年償却部分が増え、初期5年の税効果を強められます。",
+		"営業設計: 保守的に見せたい企業には、土地・システム比率を厚くして資産構成の説明を優先します。",
+	];
+	if (input.componentBalanceDifference !== 0) {
+		lines.push("確認事項: 構成合計と販売価格に差額があります。提出前に土地代・システム代・権利代の合計を確認してください。");
+	}
+	if (input.rightsRatio >= 35) {
+		lines.push("判定メモ: 権利代比率が高めです。税効果訴求は強い一方、契約書・会計処理の説明根拠を厚くしてください。");
+	}
+	return lines;
 }
 
 function calculateAnnualDebtService(
