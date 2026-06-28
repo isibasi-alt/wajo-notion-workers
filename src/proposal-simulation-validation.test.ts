@@ -201,6 +201,20 @@ async function main() {
 	assert.match(readyWithRunningCostBreakdown.summaryLines.join("\n"), /年間維持費（ランニングコスト）: ¥2,550,000/);
 	assert.match(readyWithRunningCostBreakdown.pageTwoLines.join("\n"), /O&M費 ¥1,200,000/);
 
+	const solarTitleOnly = evaluateProposalSimulationDraftForTest({
+		id: "proposal-2d2",
+		properties: {
+			案件名: titleProp("太陽光案件A（FIT）"),
+			提案タイプ: richTextProp(""),
+			販売価格: numberProp(120000000),
+			仕入れ価格: numberProp(100000000),
+			"想定年間売電収入": numberProp(24000000),
+		},
+	});
+
+	assert.equal(solarTitleOnly.proposalKind, "corporate");
+	assert.match(solarTitleOnly.proposalTitle, /法人オーナー/);
+
 	const readyWithCurtailment = evaluateProposalSimulationDraftForTest({
 		id: "proposal-2f",
 		properties: solarRequiredProps({

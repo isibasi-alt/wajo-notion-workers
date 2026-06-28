@@ -17104,6 +17104,8 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 			"対象者",
 			"顧客タイプ",
 			"AI案件種別",
+			"案件種別",
+			"提案種別",
 		]),
 		titleLabel,
 	);
@@ -17857,10 +17859,17 @@ function calculateOperationYearsLabel(dateLabel: string, now = new Date()): stri
 }
 
 function inferProposalKind(rawValue: string, titleLabel: string): ProposalKind {
-	const value = `${rawValue} ${titleLabel}`;
-	if (/蓄電池|系統|BESS|電力貯蔵/i.test(value)) return "gridBattery";
-	if (/個人|投資家|私的年金|資産形成/.test(value)) return "individual";
-	if (/環境|ESG|脱炭素|SDGs|実業|非化石/.test(value)) return "esg";
+	const fromRaw = `${rawValue ?? ""}`;
+	const fromTitle = `${titleLabel ?? ""}`;
+	const rawValueHitGrid = /蓄電池|BESS|電力貯蔵/i.test(fromRaw);
+	const titleHitGrid = /蓄電池|BESS|電力貯蔵/i.test(fromTitle);
+	if (rawValueHitGrid) return "gridBattery";
+	if (/個人|投資家|私的年金|資産形成/.test(fromRaw)) return "individual";
+	if (/環境|ESG|脱炭素|SDGs|実業|非化石/.test(fromRaw)) return "esg";
+	if (/法人|太陽光|FIT|FIP|個人/.test(fromRaw)) return "corporate";
+	if (titleHitGrid) return "gridBattery";
+	if (/個人|投資家|私的年金|資産形成/.test(fromTitle)) return "individual";
+	if (/環境|ESG|脱炭素|SDGs|実業|非化石/.test(fromTitle)) return "esg";
 	return "corporate";
 }
 
