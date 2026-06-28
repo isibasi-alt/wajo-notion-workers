@@ -12,6 +12,12 @@ const FORCE =
 const CAPABILITY = "processMeetingPrepReportByCompanyId";
 const TARGET_RUN_NAME = `tool:${CAPABILITY}`;
 const NOTION_VERSION = "2026-03-11";
+const MEETING_PREP_REPORT_DATA_SOURCE_ID =
+	process.env.MEETING_PREP_REPORT_DATA_SOURCE_ID ||
+	"8db2bce8-66ab-428b-9fcb-4a36b9646922";
+const CREATE_TEST_REPORT =
+	process.env.SHOUTA_VERIFY_CREATE_TEST_REPORT !== "0" &&
+	!process.argv.includes("--no-create-test-report");
 
 const EXISTING_FIELDS = [
 	"企業プロフィール",
@@ -88,6 +94,19 @@ function page(pageId) {
 	return ntnJson(["api", `/v1/pages/${pageId}`, "--notion-version", NOTION_VERSION]);
 }
 
+function createPage(body) {
+	return ntnJson([
+		"api",
+		"/v1/pages",
+		"--notion-version",
+		NOTION_VERSION,
+		"--method",
+		"POST",
+		"--data",
+		JSON.stringify(body),
+	]);
+}
+
 function runs() {
 	return ntnJson(["workers", "runs", "list", WORKER_ID, "--json"]);
 }
@@ -118,8 +137,42 @@ function readFields(pageObject, fields) {
 	return Object.fromEntries(fields.map((name) => [name, plainText(props[name]).trim()]));
 }
 
-function nonEmptyEntries(values) {
-	return Object.entries(values).filter(([, value]) => value.length > 0);
+function richText(value) {
+	return { rich_text: [{ type: "text", text: { content: value } }] };
+}
+
+function title(value) {
+	return { title: [{ type: "text", text: { content: value } }] };
+}
+
+function relation(id) {
+	return { relation: [{ id }] };
+}
+
+function select(name) {
+	return { select: { name } };
+}
+
+function createVerificationReport(companyId) {
+	const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+	const sentinel = {
+		企業プロフィール: `商太live検証用の既存欄です。企業プロフィール sentinel ${stamp}`,
+		"3C分析": `商太live検証用の既存欄です。3C分析 sentinel ${stamp}`,
+		商談仮説: `商太live検証用の既存欄です。商談仮説 sentinel ${stamp}`,
+		ヒアリングリスト: `商太live検証用の既存欄です。ヒアリングリスト sentinel ${stamp}`,
+		"注意点・リスク": `商太live検証用の既存欄です。注意点・リスク sentinel ${stamp}`,
+	};
+	return createPage({
+		parent: { data_source_id: MEETING_PREP_REPORT_DATA_SOURCE_ID },
+		properties: {
+			"企業名（商談日）": title(`【商太live検証】${stamp}`),
+			対象企業: relation(companyId),
+			ステータス: select("準備中"),
+			...Object.fromEntries(
+				Object.entries(sentinel).map(([key, value]) => [key, richText(value)]),
+			),
+		},
+	});
 }
 
 function hasAll(values) {
@@ -154,14 +207,15 @@ async function main() {
 	const beforeStartedAt = Date.now();
 
 	const companyBefore = page(COMPANY_ID);
+	const createdVerificationReport = CREATE_TEST_REPORT ? createVerificationReport(COMPANY_ID) : null;
 	const beforeReportIds = relationIds(companyBefore.properties?.["関連商談準備レポート"]);
-	const beforeReportId = beforeReportIds[0] ?? null;
+	const beforeReportId = createdVerificationReport?.id || beforeReportIds[0] || null;
 	const beforeReport = beforeReportId ? page(beforeReportId) : null;
 	const beforeExistingFields = beforeReport ? readFields(beforeReport, EXISTING_FIELDS) : {};
 
 	const execInput = {
 		companyPageId: COMPANY_ID,
-		reportPageId: "",
+		reportPageId: beforeReportId || "",
 		dryRun: false,
 		force: FORCE,
 	};
@@ -226,6 +280,7 @@ async function main() {
 		workerId: WORKER_ID,
 		companyId: COMPANY_ID,
 		reportId,
+		createdVerificationReportId: createdVerificationReport?.id ?? null,
 		exec: {
 			status: execResult.status,
 			parsed: execJson,

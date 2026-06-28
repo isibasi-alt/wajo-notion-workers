@@ -14537,6 +14537,12 @@ type ResidentDocumentDraft = {
 	nextRequiredFields: string[];
 	documentTitle: string;
 	summaryLines: string[];
+	sections: ResidentDocumentPdfSection[];
+};
+
+type ResidentDocumentPdfSection = {
+	title: string;
+	lines: string[];
 };
 
 type ProposalSimulationDraft = {
@@ -16021,71 +16027,129 @@ async function buildResidentDocumentPdfBytes(
 	pageId: string,
 ): Promise<Uint8Array> {
 	const pdf = await PDFDocument.create();
-	const font = await pdf.embedFont(StandardFonts.Helvetica);
-	const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-	const sections = [
-		"Cover",
-		"Project Overview",
-		"Notification Method",
-		"Facility Certification",
-		"Operator Change",
-		"Site Location",
-		"Hazard Map",
-		"Target Area",
-		"Reflection Check",
-		"Site Photos",
-		"Question Period",
-		"Contact / Responsibility",
-		"Final Confirmation",
-	];
-	const summary = draft.summaryLines.length > 0 ? draft.summaryLines : ["No summary lines"];
+	pdf.registerFontkit(fontkit);
+	const fonts = await embedMonthlyEvalPdfFonts(pdf);
+	const pageWidth = 595.28;
+	const pageHeight = 841.89;
+	const left = 42;
+	const right = 42;
+	const maxWidth = pageWidth - left - right;
+	const sections =
+		draft.sections.length > 0
+			? draft.sections
+			: [{ title: "住民説明会資料", lines: draft.summaryLines }];
 	for (const [index, section] of sections.entries()) {
-		const page = pdf.addPage([595.28, 841.89]);
+		const page = pdf.addPage([pageWidth, pageHeight]);
 		page.drawRectangle({
 			x: 0,
-			y: page.getHeight() - 86,
-			width: page.getWidth(),
+			y: pageHeight - 88,
+			width: pageWidth,
 			height: 86,
 			color: rgb(0.08, 0.16, 0.22),
 		});
-		page.drawText(toPdfSafeText(draft.documentTitle || "Resident Briefing Document"), {
-			x: 42,
-			y: page.getHeight() - 36,
-			size: 16,
-			font: bold,
+		const titleLines = wrapPdfText(
+			draft.documentTitle || "住民説明会資料",
+			fonts.bold,
+			15,
+			maxWidth,
+		).slice(0, 2);
+		let titleY = pageHeight - 34;
+		for (const titleLine of titleLines) {
+			page.drawText(titleLine, {
+				x: left,
+				y: titleY,
+				size: 15,
+				font: fonts.bold,
+				color: rgb(1, 1, 1),
+			});
+			titleY -= 18;
+		}
+		page.drawText(`${index + 1} / ${sections.length}`, {
+			x: pageWidth - right - 34,
+			y: pageHeight - 36,
+			size: 9,
+			font: fonts.regular,
 			color: rgb(1, 1, 1),
 		});
-		page.drawText(`Page ${index + 1} / 13 / ${section}`, {
-			x: 42,
-			y: page.getHeight() - 58,
+		page.drawText(`Record ID: ${pageId}`, {
+			x: left,
+			y: pageHeight - 69,
 			size: 9,
-			font,
+			font: fonts.regular,
 			color: rgb(0.84, 0.9, 0.88),
 		});
-		page.drawText(toPdfSafeText(section), {
-			x: 42,
-			y: page.getHeight() - 126,
+		page.drawText(section.title, {
+			x: left,
+			y: pageHeight - 126,
 			size: 14,
-			font: bold,
+			font: fonts.bold,
 			color: rgb(0.08, 0.16, 0.22),
 		});
-		let y = page.getHeight() - 158;
-		for (const line of summary) {
-			page.drawText(toPdfSafeText(line).slice(0, 92), {
-				x: 42,
-				y,
-				size: 10,
-				font,
-				color: rgb(0.12, 0.14, 0.16),
-			});
-			y -= 18;
-			if (y < 72) break;
+		page.drawLine({
+			start: { x: left, y: pageHeight - 137 },
+			end: { x: pageWidth - right, y: pageHeight - 137 },
+			thickness: 0.8,
+			color: rgb(0.66, 0.77, 0.72),
+		});
+		let y = pageHeight - 166;
+		const bodyLines = section.lines.length > 0 ? section.lines : draft.summaryLines;
+		for (const sourceLine of bodyLines) {
+			const wrapped = wrapPdfText(sourceLine, fonts.regular, 10.5, maxWidth).slice(0, 6);
+			for (const line of wrapped) {
+				page.drawText(line, {
+					x: left,
+					y,
+					size: 10.5,
+					font: fonts.regular,
+					color: rgb(0.12, 0.14, 0.16),
+				});
+				y -= 17;
+				if (y < 96) break;
+			}
+			y -= 4;
+			if (y < 96) break;
 		}
-		page.drawText(`Record ID: ${pageId}`, {
-			x: 42,
+		if (index === 0) {
+			page.drawRectangle({
+				x: left,
+				y: 118,
+				width: maxWidth,
+				height: 92,
+				borderColor: rgb(0.66, 0.77, 0.72),
+				borderWidth: 0.8,
+				color: rgb(0.96, 0.98, 0.96),
+			});
+			const noticeLines = [
+				"配布前チェック",
+				"社名・連絡先・配布先・添付画像の表示状態は、配布前に必ず最終確認してください。",
+			];
+			let noticeY = 178;
+			for (const [noticeIndex, noticeLine] of noticeLines.entries()) {
+				const wrapped = wrapPdfText(noticeLine, noticeIndex === 0 ? fonts.bold : fonts.regular, 9.5, maxWidth - 24);
+				for (const line of wrapped) {
+					page.drawText(line, {
+						x: left + 12,
+						y: noticeY,
+						size: noticeIndex === 0 ? 10.5 : 9.5,
+						font: noticeIndex === 0 ? fonts.bold : fonts.regular,
+						color: rgb(0.11, 0.24, 0.2),
+					});
+					noticeY -= 16;
+				}
+			}
+		}
+		page.drawText("WAJO Sales OS / 住民説明会資料", {
+			x: left,
 			y: 42,
 			size: 8,
-			font,
+			font: fonts.regular,
+			color: rgb(0.38, 0.42, 0.44),
+		});
+		page.drawText(`Page ${index + 1}`, {
+			x: pageWidth - right - 42,
+			y: 42,
+			size: 8,
+			font: fonts.regular,
 			color: rgb(0.38, 0.42, 0.44),
 		});
 	}
@@ -16583,21 +16647,131 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 				.map((check) => check.label),
 			documentTitle: "",
 			summaryLines: [],
+			sections: [],
 		};
 	}
 
 	const titleBase = caseNumber || plantName || readGenericPageTitle(page) || "住民説明会資料";
+	const summaryLines = [
+		`案件番号: ${caseNumber}`,
+		`発電所名: ${plantName}`,
+		`認定出力: ${formatNumberWithUnit(certifiedOutputKw, "kW")}`,
+		`周知方法: ${notifyMethod}`,
+		`質問受付期間: ${questionPeriod}`,
+		`周知日: ${briefingDate}`,
+	];
+	const imageStatusLines = [
+		`発電所所在地画像: ${plantLocationImages.length}件`,
+		`ハザードマップ: ${hazardMapImages.length}件`,
+		`説明会対象エリア画像: ${targetAreaImages.length}件`,
+		`反射光画像: ${reflectionImages.length}件`,
+		`現場写真: ${siteImages.length}件`,
+	];
 	return {
 		missingField: null,
 		nextRequiredFields: [],
 		documentTitle: `${titleBase}｜住民説明会資料`,
-		summaryLines: [
-			`案件番号: ${caseNumber}`,
-			`発電所名: ${plantName}`,
-			`認定出力: ${formatNumberWithUnit(certifiedOutputKw, "kW")}`,
-			`周知方法: ${notifyMethod}`,
-			`質問受付期間: ${questionPeriod}`,
-			`周知日: ${briefingDate}`,
+		summaryLines,
+		sections: [
+			{
+				title: "表紙",
+				lines: [
+					"本資料は、発電設備の周辺地域への説明・周知のために作成した配布用資料です。",
+					...summaryLines,
+				],
+			},
+			{
+				title: "事業概要",
+				lines: [
+					`発電所名: ${plantName}`,
+					`所在地: ${plantAddress}`,
+					`認定出力: ${formatNumberWithUnit(certifiedOutputKw, "kW")}`,
+					`設備ID: ${facilityId}`,
+				],
+			},
+			{
+				title: "周知方法",
+				lines: [
+					`周知方法: ${notifyMethod}`,
+					`周知日: ${briefingDate}`,
+					`質問受付期間: ${questionPeriod}`,
+					"対象地域の皆さまからのご質問は、受付期間内に担当窓口で受け付けます。",
+				],
+			},
+			{
+				title: "設備認定",
+				lines: [
+					`設備ID: ${facilityId}`,
+					`認定出力: ${formatNumberWithUnit(certifiedOutputKw, "kW")}`,
+					"設備認定情報に基づき、対象発電設備の概要を確認しています。",
+				],
+			},
+			{
+				title: "事業者変更",
+				lines: [
+					`旧認定事業者: ${oldOperator}`,
+					`新認定事業者: ${newOperator}`,
+					"事業者変更に伴い、保守管理責任者および問い合わせ窓口を明確にします。",
+				],
+			},
+			{
+				title: "所在地図",
+				lines: [
+					`所在地: ${plantAddress}`,
+					`発電所所在地画像: ${plantLocationImages.length}件添付確認`,
+					"添付された所在地画像をもとに、発電所位置を説明します。",
+				],
+			},
+			{
+				title: "ハザードマップ",
+				lines: [
+					`ハザードマップ画像: ${hazardMapImages.length}件添付確認`,
+					"添付資料をもとに、周辺地域の災害リスク情報を確認します。",
+				],
+			},
+			{
+				title: "対象エリア",
+				lines: [
+					`説明会対象エリア画像: ${targetAreaImages.length}件添付確認`,
+					"周知対象となる範囲を添付画像で確認し、必要な配布・説明範囲を明確にします。",
+				],
+			},
+			{
+				title: "反射光確認",
+				lines: [
+					`反射光画像: ${reflectionImages.length}件添付確認`,
+					"反射光に関する確認資料を添付し、周辺への影響確認に使用します。",
+				],
+			},
+			{
+				title: "現場写真",
+				lines: [
+					`現場写真: ${siteImages.length}件添付確認`,
+					"現地の状況、設備の状態、周辺環境を写真資料で確認します。",
+				],
+			},
+			{
+				title: "質問受付",
+				lines: [
+					`質問受付期間: ${questionPeriod}`,
+					"ご質問・ご意見は、受付期間内に担当窓口までお願いいたします。",
+				],
+			},
+			{
+				title: "連絡先・責任者",
+				lines: [
+					`保守管理責任者: ${managerName}`,
+					"保守管理、緊急時対応、周辺地域からの問い合わせ対応は責任者が確認します。",
+				],
+			},
+			{
+				title: "最終確認",
+				lines: [
+					"以下の資料入力がそろっていることを確認しました。",
+					...imageStatusLines,
+					"配布前に、社名・連絡先・配布先・添付画像の表示状態を最終確認してください。",
+				],
+			},
 		],
 	};
 }
