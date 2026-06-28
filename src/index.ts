@@ -14893,6 +14893,217 @@ const PROJECT_DOCUMENT_REQUEST_CONFIGS: Record<
 	},
 };
 
+const PROJECT_DOCUMENT_REQUEST_BASE_PROPERTY_ALIASES: Record<string, string[]> = {
+	案件名: ["案件タイトル", "提案名", "タイトル", "名称"],
+	資料種別: ["資料タイプ", "資料分類", "資料カテゴリ", "区分"],
+	関連案件: ["案件", "案件参照", "案件リンク", "元案件"],
+	資料作成メモ: ["依頼メモ", "作成メモ", "メモ", "補足"],
+	提案タイプ: [
+		"提案相手タイプ",
+		"提案書タイプ",
+		"資料タイプ",
+		"対象者",
+		"顧客タイプ",
+		"AI案件種別",
+		"提案種別",
+	],
+	販売価格: ["提案価格", "売価", "物件総額", "契約金額", "契約金額（税込）", "総事業費"],
+	仕入れ価格: [
+		"仕入価格",
+		"仕入れ総額",
+		"仕入総額",
+		"買取価格",
+		"買取総額",
+		"原価",
+		"取得費合計",
+		"実質投資額",
+		"自己投資額",
+	],
+	年間売電収入: [
+		"年間想定総売上",
+		"年間想定収益",
+		"年間収益",
+		"年間売上",
+		"想定年間売電収入",
+		"年間収入",
+		"売電収入（年）",
+	],
+	"年間維持費（ランニングコスト）": [
+		"年間ランニングコスト（合計）",
+		"年間ランニングコスト",
+		"ランニングコスト（年）",
+		"年間維持費",
+		"年間運用費",
+	],
+	発電所名: ["物件名", "案件名", "設備名", "発電所"],
+	所在地: ["住所", "発電所住所", "案件所在地"],
+	電力会社エリア: ["電力会社", "電力供給会社", "供給会社", "事業者"],
+	"低圧/高圧区分": ["系統区分", "電圧区分"],
+	残存売電期間: ["残存FIT年数", "残存FIT期間", "残り売電期間", "残存期間"],
+	連系開始日: ["発電開始日", "売電開始日", "稼働開始日", "開始日"],
+};
+
+const PROJECT_DOCUMENT_REQUEST_STATUS_ALIASES: Record<ProjectDocumentRequestKind, string[]> = {
+	proposal: ["シミュレーション進捗", "シミュレーション状況", "提案ステータス", "提案進捗", "進行ステータス"],
+	resident: ["資料作成状況", "資料ステータス", "説明会資料ステータス", "進行状況", "進行ステータス"],
+};
+
+function getProjectDocumentRequestPropertyAliases(
+	kind: ProjectDocumentRequestKind,
+	propertyName: string,
+	statusProperty: string,
+): string[] {
+	if (propertyName === statusProperty) {
+		return PROJECT_DOCUMENT_REQUEST_STATUS_ALIASES[kind];
+	}
+	return PROJECT_DOCUMENT_REQUEST_BASE_PROPERTY_ALIASES[propertyName] ?? [];
+}
+
+function buildProjectDocumentRequestProperties(
+	kind: ProjectDocumentRequestKind,
+	statusProperty: string,
+	patches: Record<string, SafePatch>,
+): Record<string, Record<string, unknown>> {
+	const properties: Record<string, Record<string, unknown>> = {};
+	for (const [propertyName, patch] of Object.entries(patches)) {
+		const aliases = [propertyName, ...getProjectDocumentRequestPropertyAliases(kind, propertyName, statusProperty)];
+		const propertyValue = safePatchToCreatePropertyValue(propertyName, patch);
+		for (const alias of aliases) {
+			properties[alias] = propertyValue;
+		}
+	}
+	return properties;
+}
+
+function buildProjectDocumentRequestExistingPropertyPatch(
+	page: Page,
+	kind: ProjectDocumentRequestKind,
+	statusProperty: string,
+	patches: Record<string, SafePatch>,
+): Record<string, Record<string, unknown>> {
+	const pageProperties = page.properties ?? {};
+	const result: Record<string, Record<string, unknown>> = {};
+	for (const [propertyName, patch] of Object.entries(patches)) {
+		const aliases = [propertyName, ...getProjectDocumentRequestPropertyAliases(kind, propertyName, statusProperty)];
+		let resolvedName: string | undefined;
+		for (const alias of aliases) {
+			if (pageProperties[alias]) {
+				resolvedName = alias;
+				break;
+			}
+		}
+		if (!resolvedName && propertyName === "案件名") {
+			const titleName = Object.entries(pageProperties).find(([, value]) => {
+				if (!value || typeof value !== "object") return false;
+				const property = value as Record<string, unknown>;
+				return property.type === "title";
+			})?.[0];
+			resolvedName = titleName;
+		}
+		if (!resolvedName) continue;
+		const value = propertyValueForExistingType(pageProperties[resolvedName], patch);
+		if (!value) continue;
+		result[resolvedName] = value as Record<string, unknown>;
+	}
+	return result;
+}
+
+function safePatchToCreatePropertyValue(propertyName: string, patch: SafePatch): Record<string, unknown> {
+	switch (patch.kind) {
+		case "text": {
+			if (propertyName === "案件名") return title(patch.value);
+			return richText(patch.value);
+		}
+		case "text-with-revision":
+			return richText(patch.newValue);
+		case "select":
+			return select(patch.value);
+		case "number":
+			return { number: patch.value };
+		case "date":
+			return { date: { start: patch.value } };
+		case "checkbox":
+			return { checkbox: patch.value };
+		case "multi_select":
+			return { multi_select: patch.values.filter(Boolean).map((value) => ({ name: value })) };
+		case "people":
+			return { people: patch.ids.map((id) => ({ object: "user", id })) };
+		case "relation":
+			return { relation: patch.ids.map((id) => ({ id })) };
+		case "clear":
+			return {};
+		default:
+			return {};
+	}
+}
+
+function propertyToSafePatchFromCreateValue(value: Record<string, unknown>): SafePatch | null {
+	if (!value) return null;
+	if (typeof value !== "object") return null;
+	if ("select" in value && value.select && typeof value.select === "object") {
+		const selectValue = value.select as Record<string, unknown>;
+		return typeof selectValue.name === "string" ? { kind: "select", value: selectValue.name } : null;
+	}
+	if ("status" in value && value.status && typeof value.status === "object") {
+		const statusValue = value.status as Record<string, unknown>;
+		return typeof statusValue.name === "string" ? { kind: "select", value: statusValue.name } : null;
+	}
+	if ("number" in value && typeof (value.number as number) === "number") {
+		return { kind: "number", value: value.number as number };
+	}
+	if ("title" in value && value.title && Array.isArray(value.title)) {
+		const parts = value.title as Array<Record<string, unknown>>;
+		const texts = parts.flatMap((item) => {
+			if (!item || typeof item !== "object") return [];
+			const text = item.text;
+			if (!text || typeof text !== "object") return [];
+			const textBlock = text as Record<string, unknown>;
+			return typeof textBlock.content === "string" ? [textBlock.content] : [];
+		});
+		return { kind: "text", value: texts.join("") };
+	}
+	if ("rich_text" in value && value.rich_text && Array.isArray(value.rich_text)) {
+		const parts = value.rich_text as Array<Record<string, unknown>>;
+		const texts = parts.flatMap((item) => {
+			if (!item || typeof item !== "object") return [];
+			const text = item.text;
+			if (!text || typeof text !== "object") return [];
+			const textBlock = text as Record<string, unknown>;
+			return typeof textBlock.content === "string" ? [textBlock.content] : [];
+		});
+		return { kind: "text", value: texts.join("") };
+	}
+	if ("relation" in value && value.relation && Array.isArray(value.relation)) {
+		const relation = value.relation as Array<Record<string, unknown>>;
+		const ids = relation
+			.map((item) => (typeof item?.id === "string" ? item.id : ""))
+			.filter(Boolean);
+		return { kind: "relation", ids };
+	}
+	if ("date" in value && value.date && typeof value.date === "object") {
+		const dateValue = value.date as Record<string, unknown>;
+		return typeof dateValue.start === "string" ? { kind: "date", value: dateValue.start } : null;
+	}
+	if ("checkbox" in value && typeof value.checkbox === "boolean") {
+		return { kind: "checkbox", value: value.checkbox };
+	}
+	if ("multi_select" in value && Array.isArray(value.multi_select)) {
+		const multi = value.multi_select as Array<Record<string, unknown>>;
+		const values = multi
+			.map((item) => (typeof item?.name === "string" ? item.name : ""))
+			.filter(Boolean);
+		return values.length > 0 ? { kind: "multi_select", values } : null;
+	}
+	if ("people" in value && Array.isArray(value.people)) {
+		const people = value.people as Array<Record<string, unknown>>;
+		const ids = people
+			.map((item) => (typeof item?.id === "string" ? item.id : ""))
+			.filter(Boolean);
+		return ids.length > 0 ? { kind: "people", ids } : null;
+	}
+	return null;
+}
+
 async function processProjectProposalRequest(
 	input: ProjectProposalRequestInput,
 	notion: NotionClient,
@@ -15084,18 +15295,60 @@ async function processProjectDocumentRequest(
 	}
 
 	const requestMemo = [config.memo, missingMessage].filter(Boolean).join("\n");
+	const writePatches: Record<string, SafePatch> = {
+		案件名: { kind: "text", value: requestTitle },
+		資料種別: { kind: "select", value: config.documentType },
+		[config.statusProperty]: { kind: "select", value: config.statusValue },
+		関連案件: { kind: "relation", ids: [projectPage.id] },
+		資料作成メモ: { kind: "text", value: requestMemo },
+		...config.defaultProperties
+			? Object.entries(config.defaultProperties).reduce((acc, [propertyName, propertyValue]) => {
+				const patch = propertyToSafePatchFromCreateValue(propertyValue as Record<string, unknown>);
+				if (patch) {
+					acc[propertyName] = patch;
+				}
+				return acc;
+			}, {} as Record<string, SafePatch>)
+			: {},
+		...Object.entries(readiness.prefillProperties).reduce((acc, [propertyName, propertyValue]) => {
+			const patch = propertyToSafePatchFromCreateValue(propertyValue as Record<string, unknown>);
+			if (patch) {
+				acc[propertyName] = patch;
+			}
+			return acc;
+		}, {} as Record<string, SafePatch>),
+	};
+	const requestProperties = buildProjectDocumentRequestProperties(
+		kind,
+		config.statusProperty,
+		writePatches,
+	);
 	const requestPage = await notion.pages.create({
 		parent: { data_source_id: PROPOSAL_REQUEST_DATA_SOURCE_ID },
-		properties: {
-			案件名: title(requestTitle),
-			資料種別: select(config.documentType),
-			[config.statusProperty]: select(config.statusValue),
-			関連案件: relation(projectPage.id),
-			資料作成メモ: richText(requestMemo),
-			...(config.defaultProperties ?? {}),
-			...readiness.prefillProperties,
-		},
+		properties: requestProperties,
 	});
+	const resolvedRequestPage = requestPage.properties
+		? requestPage
+		: await notion.pages.retrieve({ page_id: requestPage.id });
+	const requestPagePatch = buildProjectDocumentRequestExistingPropertyPatch(
+		resolvedRequestPage as Page,
+		kind,
+		config.statusProperty,
+		writePatches,
+	);
+	if (Object.keys(requestPagePatch).length > 0) {
+		try {
+			await notion.pages.update({
+				page_id: requestPage.id,
+				properties: requestPagePatch,
+			});
+		} catch (error) {
+			console.log("document request fallback update skipped", {
+				requestPageId: requestPage.id,
+				error: String(error),
+			});
+		}
+	}
 	const generationMessage = readiness.missingField
 		? ""
 		: await finalizeProjectDocumentRequest(notion, kind, requestPage.id);
