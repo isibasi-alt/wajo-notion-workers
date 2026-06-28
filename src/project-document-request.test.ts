@@ -199,6 +199,20 @@ function makeNotion(options: {
 				if (page_id === "equipment-1") {
 					return options.equipmentPageOverride ?? equipmentPage();
 				}
+				if (page_id.startsWith("request-created-")) {
+					const index = Number(page_id.replace("request-created-", "")) - 1;
+					const created = creates[index];
+					assert.ok(created, `created request not found: ${page_id}`);
+					return {
+						id: page_id,
+						url: `https://www.notion.so/${page_id}`,
+						properties: created.properties as Record<string, unknown>,
+					};
+				}
+				for (const pages of Object.values(options.existingByDocumentType ?? {})) {
+					const found = pages.find((page) => page.id === page_id);
+					if (found) return found;
+				}
 				assert.equal(page_id, "project-1");
 				if (options.projectPageOverride) return options.projectPageOverride;
 				return projectPage(
@@ -340,7 +354,7 @@ async function main() {
 		(projectProps.資料作成依頼 as { relation: Array<{ id: string }> }).relation,
 		[{ id: "request-created-1" }],
 	);
-	assert.equal(comments.length, 1);
+	assert.equal(comments.length, 2);
 
 	const existingCase = makeNotion({
 		projectRequestIds: ["request-existing"],
@@ -358,7 +372,7 @@ async function main() {
 	assert.equal(existing.requestPageId, "request-existing");
 	assert.equal(existingCase.creates.length, 0);
 	assert.equal(existingCase.updates.length, 0);
-	assert.equal(existingCase.comments.length, 1);
+	assert.equal(existingCase.comments.length, 2);
 
 	const residentCase = makeNotion({
 		projectRequestIds: ["request-proposal-existing"],

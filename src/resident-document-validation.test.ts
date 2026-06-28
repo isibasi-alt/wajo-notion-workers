@@ -3,6 +3,7 @@ import { PDFDocument } from "pdf-lib";
 import {
 	buildResidentDocumentPdfBytesForTest,
 	evaluateResidentDocumentDraftForTest,
+	processResidentDocumentForTest,
 } from "./index";
 
 function titleProp(value: string) {
@@ -116,6 +117,65 @@ async function main() {
 	const pdfBytes = await buildResidentDocumentPdfBytesForTest(ready, "resident-2");
 	const pdf = await PDFDocument.load(pdfBytes);
 	assert.equal(pdf.getPageCount(), 13);
+
+	const updates: Array<Record<string, unknown>> = [];
+	const comments: Array<Record<string, unknown>> = [];
+	const uploads: Array<Record<string, unknown>> = [];
+	const readyPage = {
+		id: "resident-3",
+		url: "https://www.notion.so/resident-3",
+		properties: {
+			...readyResidentProps(),
+			資料作成ステータス: { type: "select", select: { name: "入力待ち" } },
+			資料作成メモ: richTextProp(""),
+			不足項目: richTextProp(""),
+			生成ドキュメント名: richTextProp(""),
+			住民説明会資料PDF: { type: "files", files: [] },
+		},
+	};
+	const notion = {
+		pages: {
+			retrieve: async () => readyPage,
+			update: async (args: Record<string, unknown>) => {
+				updates.push(args);
+				return readyPage;
+			},
+		},
+		comments: {
+			create: async (args: Record<string, unknown>) => {
+				comments.push(args);
+				return {};
+			},
+		},
+		fileUploads: {
+			create: async (args: Record<string, unknown>) => {
+				uploads.push({ step: "create", ...args });
+				return { id: "file-upload-1" };
+			},
+			send: async (args: Record<string, unknown>) => {
+				uploads.push({ step: "send", ...args });
+				return {};
+			},
+			complete: async (args: Record<string, unknown>) => {
+				uploads.push({ step: "complete", ...args });
+				return {};
+			},
+		},
+	};
+	const processed = await processResidentDocumentForTest(
+		{ pageId: "resident-3", dryRun: false },
+		notion as never,
+	);
+	assert.equal(processed.action, "prepared");
+	assert.equal(processed.status, "作成完了");
+	assert.match(processed.message, /PDFを保存しました/);
+	assert.ok(
+		updates.some((update) =>
+			JSON.stringify(update.properties ?? {}).includes("file-upload-1"),
+		),
+	);
+	assert.equal(comments.length, 1);
+	assert.equal(uploads.filter((upload) => upload.step === "send").length, 1);
 }
 
 main().catch((error) => {

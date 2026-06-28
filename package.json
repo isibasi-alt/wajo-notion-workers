@@ -52,6 +52,7 @@
 		"verify:land-evaluation-staging": "node scripts/verify-land-evaluation-staging.mjs",
 		"verify:land-evaluation-v2-release": "node scripts/verify-land-evaluation-release.mjs",
 		"verify:land-evaluation-v2-remote": "node scripts/verify-land-evaluation-remote.mjs",
+		"verify:shouta-live": "node scripts/verify-shouta-live.mjs",
 		"deploy:land-evaluation-v2": "NOTION_KEYRING=0 npx ntn workers deploy --local-build --no-git",
 		"test:lost-order-system": "tsx src/lost-order-system.test.ts",
 		"test:meeting-deal-anthropic-config": "tsx src/meeting-deal-anthropic-config.test.ts",

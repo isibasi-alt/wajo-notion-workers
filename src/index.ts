@@ -1144,6 +1144,23 @@ const PROPOSAL_PDF_URL_PROPERTY_ALIASES = [
 	"PDF URL",
 ];
 
+const RESIDENT_DOCUMENT_PDF_FILE_PROPERTY_ALIASES = [
+	"住民説明会資料PDF",
+	"説明会用資料PDF",
+	"住民説明会PDF",
+	"資料PDF",
+	"PDFファイル",
+];
+
+const RESIDENT_DOCUMENT_PDF_URL_PROPERTY_ALIASES = [
+	"住民説明会資料PDFリンク",
+	"住民説明会資料PDF URL",
+	"説明会用資料PDFリンク",
+	"説明会用資料PDF URL",
+	"資料PDF URL",
+	"PDF URL",
+];
+
 type NotionClient = {
 	dataSources: {
 		query: (args: Record<string, unknown>) => Promise<QueryResponse>;
@@ -14625,14 +14642,31 @@ async function processResidentDocument(
 	const readyMessage = [
 		"住民説明会資料の必須入力チェックを通過しました。",
 		...draft.summaryLines,
-		"次ステップ: PDF生成ワーカーに渡して資料を作成してください。",
+	].join("\n");
+	const pdfExport = input.dryRun
+		? {
+				attached: false,
+				destination: "none" as const,
+				message: "dry-runのためPDFは保存していません。",
+				fileName: "",
+				fileUrl: null as string | null,
+		  }
+		: await exportResidentDocumentPdf(notion, page, draft);
+	const resultMessage = [
+		readyMessage,
+		`PDF出力: ${pdfExport.message}`,
+		pdfExport.destination === "property"
+			? "保存先: レコード内のPDFプロパティ（住民説明会資料PDF / 説明会用資料PDF 等）から確認できます。"
+			: pdfExport.destination === "page_block"
+				? "保存先: 同じレコード本文の末尾にPDFを追加しています。"
+				: "PDFが保存されていない場合は、レコードに files 型の「住民説明会資料PDF」プロパティを1つ追加してください。",
 	].join("\n");
 	if (!input.dryRun) {
 		const patches: Record<string, SafePatch> = {};
 		setAliasPatch(
 			patches,
 			["資料作成ステータス", "住民説明会資料ステータス", "生成ステータス"],
-			{ kind: "select", value: "作成準備完了" },
+			{ kind: "select", value: pdfExport.attached ? "作成完了" : "作成準備完了" },
 		);
 		setAliasPatch(
 			patches,
@@ -14642,26 +14676,32 @@ async function processResidentDocument(
 		setAliasPatch(
 			patches,
 			["資料作成メモ", "住民説明会メモ", "処理結果メモ"],
-			{ kind: "text", value: readyMessage },
+			{ kind: "text", value: resultMessage },
 		);
 		setAliasPatch(
 			patches,
 			["生成ドキュメント名", "資料タイトル", "住民説明会資料名"],
 			{ kind: "text", value: draft.documentTitle },
 		);
+		if (pdfExport.fileUrl) {
+			setAliasPatch(patches, RESIDENT_DOCUMENT_PDF_URL_PROPERTY_ALIASES, {
+				kind: "text",
+				value: pdfExport.fileUrl,
+			});
+		}
 		await safeUpdateExistingProperties(notion, page, patches);
 		await createPageComment(
 			notion,
 			page.id,
-			`✅ 住民説明会資料の準備が完了しました。\n${draft.documentTitle}`,
+			`✅ 住民説明会資料を作成しました。\n${draft.documentTitle}\n${pdfExport.message}`,
 		);
 	}
 	return {
 		pageId: page.id,
 		action: input.dryRun ? "dry-run" : "prepared",
-		status: "作成準備完了",
+		status: pdfExport.attached ? "作成完了" : "作成準備完了",
 		missingField: null,
-		message: readyMessage,
+		message: resultMessage,
 	};
 }
 
@@ -15008,18 +15048,29 @@ async function processProjectDocumentRequest(
 	);
 	if (existingRequest) {
 		const message = `既存の${config.createdLabel}があります: ${projectName}`;
+		const generationMessage = input.dryRun
+			? ""
+			: await finalizeProjectDocumentRequest(
+					notion,
+					kind,
+					existingRequest.id,
+				);
 		if (!input.dryRun) {
 			await createPageComment(
 				notion,
 				projectPage.id,
-				`📄 ${message}\n${config.documentType}の資料作成依頼を重複作成しませんでした。`,
+				[
+					`📄 ${message}`,
+					`${config.documentType}の資料作成依頼を重複作成しませんでした。`,
+					generationMessage,
+				].filter(Boolean).join("\n"),
 			);
 		}
 		return {
 			projectPageId: projectPage.id,
 			requestPageId: existingRequest.id,
 			action: "existing",
-			message,
+			message: [message, generationMessage].filter(Boolean).join("\n"),
 		};
 	}
 
@@ -15046,6 +15097,9 @@ async function processProjectDocumentRequest(
 			...readiness.prefillProperties,
 		},
 	});
+	const generationMessage = readiness.missingField
+		? ""
+		: await finalizeProjectDocumentRequest(notion, kind, requestPage.id);
 	const requestUrl = typeof (requestPage as Record<string, unknown>).url === "string"
 		? ((requestPage as Record<string, unknown>).url as string)
 		: "";
@@ -15057,6 +15111,7 @@ async function processProjectDocumentRequest(
 			value: [
 				`${config.createdLabel}を作成しました。${requestUrl}`,
 				missingMessage,
+				generationMessage,
 			].filter(Boolean).join("\n"),
 		},
 	});
@@ -15067,6 +15122,7 @@ async function processProjectDocumentRequest(
 			`📄 ${config.createdLabel}を作成しました: ${requestTitle}`,
 			requestUrl ? `開く: ${requestUrl}` : "",
 			missingMessage ? `不足: ${readiness.missingField}` : "",
+			generationMessage,
 			config.nextActionMessage,
 		].filter(Boolean).join("\n"),
 	);
@@ -15074,8 +15130,28 @@ async function processProjectDocumentRequest(
 		projectPageId: projectPage.id,
 		requestPageId: requestPage.id,
 		action: "created",
-		message: `${config.createdLabel}を作成しました: ${requestTitle}`,
+		message: [
+			`${config.createdLabel}を作成しました: ${requestTitle}`,
+			generationMessage,
+		].filter(Boolean).join("\n"),
 	};
+}
+
+async function finalizeProjectDocumentRequest(
+	notion: NotionClient,
+	kind: ProjectDocumentRequestKind,
+	requestPageId: string,
+): Promise<string> {
+	try {
+		const result =
+			kind === "proposal"
+				? await processProposalSimulation({ pageId: requestPageId, dryRun: false }, notion)
+				: await processResidentDocument({ pageId: requestPageId, dryRun: false }, notion);
+		return `資料生成結果: ${result.status}`;
+	} catch (error) {
+		const message = String(error).slice(0, 300);
+		return `資料生成結果: 生成処理で停止（${message}）`;
+	}
 }
 
 function evaluateProjectDocumentRequestReadiness(
@@ -15387,6 +15463,8 @@ type ProposalPdfExportResult = {
 	fileUrl: string | null;
 };
 
+type ResidentDocumentPdfExportResult = ProposalPdfExportResult;
+
 async function exportProposalSimulationPdf(
 	notion: NotionClient,
 	page: Page,
@@ -15524,6 +15602,157 @@ async function exportProposalSimulationPdf(
 			destination: "none",
 			message:
 				"PDFアップロードは完了しましたが、保存先が未設定です。files型の「提案PDF」を追加してください。",
+			fileName,
+			fileUrl,
+		};
+	} catch (error) {
+		return {
+			attached: false,
+			destination: "none",
+			message: `PDF保存に失敗しました。${String(error)}`,
+			fileName,
+			fileUrl: null,
+		};
+	}
+}
+
+async function exportResidentDocumentPdf(
+	notion: NotionClient,
+	page: Page,
+	draft: ResidentDocumentDraft,
+): Promise<ResidentDocumentPdfExportResult> {
+	if (!notion.fileUploads?.create || !notion.fileUploads.send) {
+		return {
+			attached: false,
+			destination: "none",
+			message: "この実行環境ではPDFアップロード機能を利用できません。",
+			fileName: "",
+			fileUrl: null,
+		};
+	}
+
+	const properties = page.properties ?? {};
+	const filePropertyName = findFirstFilesPropertyNameByAliases(
+		properties,
+		RESIDENT_DOCUMENT_PDF_FILE_PROPERTY_ALIASES,
+	);
+	const titleSeed = draft.documentTitle || readGenericPageTitle(page) || "resident-document";
+	const fileName = `${sanitizeFileName(titleSeed)}_${todayIsoDateInTokyo()}.pdf`;
+
+	try {
+		const pdfBytes = await buildResidentDocumentPdfBytes(draft, page.id);
+		const created = await notion.fileUploads.create({
+			mode: "single_part",
+			filename: fileName,
+			content_type: "application/pdf",
+		});
+		const fileUploadId =
+			firstString(
+				(created as Record<string, unknown>).id,
+				readNestedString(created, ["file_upload", "id"]),
+			) ?? "";
+		if (!fileUploadId) {
+			return {
+				attached: false,
+				destination: "none",
+				message: "PDFアップロードIDの取得に失敗しました。",
+				fileName,
+				fileUrl: null,
+			};
+		}
+
+		await notion.fileUploads.send({
+			file_upload_id: fileUploadId,
+			file: {
+				filename: fileName,
+				data: new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" }),
+			},
+		});
+		if (notion.fileUploads.complete) {
+			try {
+				await notion.fileUploads.complete({ file_upload_id: fileUploadId });
+			} catch {
+				// single_partではcomplete不要の場合があるため無視
+			}
+		}
+
+		let fileUrl: string | null = null;
+		if (filePropertyName) {
+			await notion.pages.update({
+				page_id: page.id,
+				properties: {
+					[filePropertyName]: {
+						files: [
+							{
+								type: "file_upload",
+								file_upload: { id: fileUploadId },
+								name: fileName,
+							},
+						],
+					},
+				},
+			});
+			try {
+				const refreshed = await notion.pages.retrieve({ page_id: page.id });
+				fileUrl = readFirstFileUrlByAliases(refreshed.properties ?? {}, [filePropertyName]);
+			} catch {
+				// URL取得に失敗してもPDF保存は成功扱い
+			}
+			return {
+				attached: true,
+				destination: "property",
+				message: `PDFを保存しました（${filePropertyName}）。`,
+				fileName,
+				fileUrl,
+			};
+		}
+
+		if (notion.blocks?.children?.append) {
+			await notion.blocks.children.append({
+				block_id: page.id,
+				children: [
+					{
+						object: "block",
+						type: "heading_3",
+						heading_3: {
+							rich_text: [
+								{
+									type: "text",
+									text: { content: "住民説明会資料PDF" },
+								},
+							],
+						},
+					},
+					{
+						object: "block",
+						type: "pdf",
+						pdf: {
+							file_upload: { id: fileUploadId },
+							caption: [
+								{
+									type: "text",
+									text: { content: fileName },
+								},
+							],
+						},
+					},
+				],
+			});
+			return {
+				attached: true,
+				destination: "page_block",
+				message:
+					"PDF保存先プロパティが無かったため、同じレコード本文の末尾にPDFを追加しました。",
+				fileName,
+				fileUrl: null,
+			};
+		}
+
+		return {
+			attached: false,
+			destination: "none",
+			message:
+				"PDFアップロードは完了しましたが、保存先が未設定です。files型の「住民説明会資料PDF」を追加してください。",
 			fileName,
 			fileUrl,
 		};
@@ -27765,6 +27994,7 @@ export { processProjectProposalRequest as processProjectProposalRequestForTest }
 export {
 	processProjectResidentDocumentRequest as processProjectResidentDocumentRequestForTest,
 };
+export { processResidentDocument as processResidentDocumentForTest };
 export {
 	buildProposalSimulationPdfBytes as buildProposalSimulationPdfBytesForTest,
 	buildResidentDocumentPdfBytes as buildResidentDocumentPdfBytesForTest,
