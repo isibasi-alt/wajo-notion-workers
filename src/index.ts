@@ -14350,6 +14350,51 @@ function buildShoutaInput(
 }
 export { buildShoutaInput as buildShoutaInputForTest };
 
+const SHOUTA_MEETING_PREP_SOURCE_FIELDS = [
+	"企業プロフィール",
+	"3C分析",
+	"商談仮説",
+	"ヒアリングリスト",
+	"注意点・リスク",
+] as const;
+
+function buildMeetingPrepReportContext(
+	properties: Record<string, unknown>,
+): string {
+	const lines = SHOUTA_MEETING_PREP_SOURCE_FIELDS
+		.map((name) => {
+			const value = text(properties[name]).trim();
+			return value ? `${name}: ${value}` : "";
+		})
+		.filter(Boolean);
+	return lines.length > 0
+		? `【商談前準備レポート既存5欄(ABC/準備材料)】\n${lines.join("\n")}`
+		: "";
+}
+export { buildMeetingPrepReportContext as buildMeetingPrepReportContextForTest };
+
+function buildGeneratedMeetingPrepContext(prep: MeetingPrepReport | null): string {
+	if (!prep) return "";
+	const lines = [
+		["企業プロフィール", prep.profile],
+		["3C分析", prep.threeC],
+		["商談仮説", prep.hypothesis],
+		["ヒアリングリスト", prep.questions],
+		["注意点・リスク", prep.risks],
+	]
+		.map(([name, value]) => `${name}: ${String(value ?? "").trim()}`)
+		.filter((line) => !line.endsWith(": ") && !line.endsWith(":"));
+	return lines.length > 0
+		? `【今回生成した商談前準備5欄(商太の下ごしらえ)】\n${lines.join("\n")}`
+		: "";
+}
+
+function appendShoutaDossier(input: ShoutaInput, value: string): void {
+	const body = value.trim();
+	if (!body) return;
+	input.dossier = [input.dossier, body].filter(Boolean).join("\n\n");
+}
+
 async function processMeetingPrepReport(
 	input: MeetingPrepInput,
 	notion: NotionClient,
@@ -14451,14 +14496,21 @@ async function processMeetingPrepReport(
 			companyPage.properties ?? {},
 		);
 		const bodyDossier = await fetchPageBlockPlainText(notion, company.page.id);
-		if (bodyDossier.trim()) {
-			shoutaInput.dossier = [
-				shoutaInput.dossier,
-				`【企業ページ本文(Aドシエ全文)】\n${bodyDossier}`,
-			]
-				.filter(Boolean)
-				.join("\n\n");
-		}
+		appendShoutaDossier(
+			shoutaInput,
+			bodyDossier.trim()
+				? `【企業ページ本文(Aドシエ全文)】
+${bodyDossier}`
+				: "",
+		);
+		appendShoutaDossier(
+			shoutaInput,
+			buildMeetingPrepReportContext(
+				(targetReport as unknown as { properties?: Record<string, unknown> })
+					.properties ?? {},
+			),
+		);
+		appendShoutaDossier(shoutaInput, buildGeneratedMeetingPrepContext(finalPrep));
 		const hasMaterial =
 			(shoutaInput.hits?.length ?? 0) > 0 ||
 			Boolean(shoutaInput.renewableXray) ||
@@ -15853,72 +15905,85 @@ async function buildProposalSimulationPdfBytes(
 	pageId: string,
 ): Promise<Uint8Array> {
 	const pdf = await PDFDocument.create();
-	const font = await pdf.embedFont(StandardFonts.Helvetica);
-	const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+	pdf.registerFontkit(fontkit);
+	const fonts = await embedMonthlyEvalPdfFonts(pdf);
+	const pageWidth = 595.28;
+	const pageHeight = 841.89;
 	const left = 42;
-	const createPageWriter = () => {
-		const page = pdf.addPage([595.28, 841.89]); // A4 portrait
-		const maxWidth = page.getWidth() - left * 2;
+	const right = 42;
+	const maxWidth = pageWidth - left - right;
+	const createPageWriter = (pageNo: number, title: string, subtitle: string) => {
+		const page = pdf.addPage([pageWidth, pageHeight]);
 		page.drawRectangle({
 			x: 0,
-			y: page.getHeight() - 88,
-			width: page.getWidth(),
+			y: pageHeight - 88,
+			width: pageWidth,
 			height: 88,
-			color: rgb(0.06, 0.18, 0.24),
+			color: rgb(0.08, 0.16, 0.22),
 		});
-		let y = page.getHeight() - 36;
+		page.drawText("WAJO Sales OS", {
+			x: left,
+			y: pageHeight - 34,
+			size: 15,
+			font: fonts.bold,
+			color: rgb(1, 1, 1),
+		});
+		page.drawText(title, {
+			x: left,
+			y: pageHeight - 57,
+			size: 11,
+			font: fonts.bold,
+			color: rgb(0.9, 0.95, 0.92),
+		});
+		page.drawText(subtitle, {
+			x: left,
+			y: pageHeight - 73,
+			size: 8.5,
+			font: fonts.regular,
+			color: rgb(0.82, 0.88, 0.86),
+		});
+		page.drawText(`${pageNo} / 2`, {
+			x: pageWidth - right - 28,
+			y: pageHeight - 36,
+			size: 9,
+			font: fonts.regular,
+			color: rgb(1, 1, 1),
+		});
+		let y = pageHeight - 124;
 		const drawWrapped = (textLine: string, size = 11, strong = false) => {
-			const wrapped = wrapTextForPdf(toPdfSafeText(textLine), strong ? bold : font, size, maxWidth);
+			const wrapped = wrapPdfText(textLine, strong ? fonts.bold : fonts.regular, size, maxWidth);
 			for (const line of wrapped) {
 				page.drawText(line, {
 					x: left,
 					y,
 					size,
-					font: strong ? bold : font,
+					font: strong ? fonts.bold : fonts.regular,
 					color: rgb(0.11, 0.14, 0.18),
 				});
 				y -= size + 5;
 				if (y < 45) return;
 			}
 		};
-		const drawHeader = (title: string, subtitle: string) => {
-			page.drawText(toPdfSafeText(title), {
-				x: left,
-				y,
-				size: 17,
-				font: bold,
-				color: rgb(1, 1, 1),
-			});
-			y -= 22;
-			page.drawText(toPdfSafeText(subtitle), {
-				x: left,
-				y,
-				size: 9,
-				font,
-				color: rgb(0.84, 0.9, 0.88),
-			});
-			y = page.getHeight() - 114;
-		};
 		const drawSectionTitle = (title: string) => {
-			y -= 4;
-			page.drawText(toPdfSafeText(title).toUpperCase(), {
+			y -= 2;
+			page.drawText(title, {
 				x: left,
 				y,
-				size: 9,
-				font: bold,
+				size: 11,
+				font: fonts.bold,
 				color: rgb(0.05, 0.32, 0.38),
 			});
-			y -= 8;
+			y -= 9;
 			page.drawLine({
 				start: { x: left, y },
-				end: { x: page.getWidth() - left, y },
+				end: { x: pageWidth - right, y },
 				thickness: 0.7,
 				color: rgb(0.65, 0.78, 0.76),
 			});
 			y -= 14;
 		};
 		const drawMetricRows = (rows: Array<[string, string]>) => {
-			const rowHeight = 28;
+			const rowHeight = 26;
 			for (const [label, value] of rows) {
 				if (y < 80) return;
 				page.drawRectangle({
@@ -15928,18 +15993,19 @@ async function buildProposalSimulationPdfBytes(
 					height: rowHeight,
 					color: rgb(0.94, 0.97, 0.96),
 				});
-				page.drawText(toPdfSafeText(label), {
+				page.drawText(label, {
 					x: left + 12,
 					y,
 					size: 9,
-					font,
+					font: fonts.regular,
 					color: rgb(0.32, 0.39, 0.4),
 				});
-				page.drawText(toPdfSafeText(value), {
+				const valueLines = wrapPdfText(value, fonts.bold, 9, maxWidth - 240).slice(0, 1);
+				page.drawText(valueLines[0] ?? "", {
 					x: left + 240,
 					y,
-					size: 10,
-					font: bold,
+					size: 9,
+					font: fonts.bold,
 					color: rgb(0.09, 0.14, 0.16),
 				});
 				y -= rowHeight + 4;
@@ -15949,7 +16015,7 @@ async function buildProposalSimulationPdfBytes(
 			y -= 6;
 			page.drawLine({
 				start: { x: left, y },
-				end: { x: page.getWidth() - left, y },
+				end: { x: pageWidth - right, y },
 				thickness: 0.8,
 				color: rgb(0.75, 0.78, 0.76),
 			});
@@ -16010,89 +16076,103 @@ async function buildProposalSimulationPdfBytes(
 					}
 				}
 				if (!drewImage) {
-					page.drawText(`SITE PHOTO ${index + 1}`, {
-						x: slotX + 14,
-						y: slotY + slotHeight / 2 + 8,
-						size: 11,
-						font: bold,
-						color: rgb(0.44, 0.48, 0.48),
-					});
-					page.drawText("Portrait 3:4", {
-						x: slotX + 14,
-						y: slotY + slotHeight / 2 - 10,
-						size: 8,
-						font,
-						color: rgb(0.44, 0.48, 0.48),
-					});
+						page.drawText(`SITE PHOTO ${index + 1}`, {
+							x: slotX + 14,
+							y: slotY + slotHeight / 2 + 8,
+							size: 11,
+							font: fonts.bold,
+							color: rgb(0.44, 0.48, 0.48),
+						});
+						page.drawText("Portrait 3:4", {
+							x: slotX + 14,
+							y: slotY + slotHeight / 2 - 10,
+							size: 8,
+							font: fonts.regular,
+							color: rgb(0.44, 0.48, 0.48),
+						});
 				}
 				if (sitePhoto?.name) {
-					page.drawText(toPdfSafeText(sitePhoto.name).slice(0, 26), {
+					page.drawText(sitePhoto.name.slice(0, 26), {
 						x: slotX,
 						y: slotY - 9,
 						size: 7,
-						font,
+						font: fonts.regular,
 						color: rgb(0.36, 0.4, 0.4),
 					});
 				}
 			}
 			y = boxY - 22;
 		};
-		return { drawWrapped, drawHeader, drawSectionTitle, drawMetricRows, drawRule, drawSitePhotoFrame };
+		const drawFooter = () => {
+			page.drawText(`Record ID: ${pageId}`, {
+				x: left,
+				y: 42,
+				size: 7.5,
+				font: fonts.regular,
+				color: rgb(0.38, 0.42, 0.44),
+			});
+			page.drawText(todayIsoDateInTokyo(), {
+				x: pageWidth - right - 62,
+				y: 42,
+				size: 7.5,
+				font: fonts.regular,
+				color: rgb(0.38, 0.42, 0.44),
+			});
+		};
+		return { drawWrapped, drawSectionTitle, drawMetricRows, drawRule, drawSitePhotoFrame, drawFooter };
 	};
 
 	const generatedDate = todayIsoDateInTokyo();
-	const first = createPageWriter();
-	first.drawHeader(
-		"WAJO Proposal Sheet",
-		`Page 1 / Executive Summary / ${proposalKindLabelForPdf(draft.proposalKind)} / ${generatedDate}`,
+	const first = createPageWriter(
+		1,
+		"通常営業シミュレーション",
+		`${proposalKindJapaneseLabel(draft.proposalKind)} / ${generatedDate}`,
 	);
 	if (draft.proposalKind !== "gridBattery") {
-		await first.drawSitePhotoFrame("Site Photos", draft.sitePhotos, 232);
+		await first.drawSitePhotoFrame("現場写真", draft.sitePhotos, 210);
 	}
-	first.drawSectionTitle("Core Message");
-	for (const line of buildProposalPdfPageOneLines(draft)) {
-		first.drawWrapped(line, 10);
+	first.drawSectionTitle("提案の結論");
+	for (const line of draft.pageOneLines.slice(0, 7)) {
+		first.drawWrapped(line, 9.5);
 	}
 	const saleMetricLabel = draft.proposalKind === "gridBattery" ? "Project Cost" : "Sales Price";
 	const purchaseMetricLabel = draft.proposalKind === "gridBattery" ? "Net Investment" : "Sourcing Price";
-	first.drawSectionTitle("Simulation Metrics");
+	first.drawSectionTitle("通常営業シミュレーション");
 	first.drawMetricRows([
-		[saleMetricLabel, formatYenForPdf(draft.salePrice)],
-		[purchaseMetricLabel, formatYenForPdf(draft.purchaseCost)],
-		["Annual Income", formatYenForPdf(draft.annualIncome)],
-		["Annual Maintenance Cost", formatYenForPdf(draft.runningCost)],
-		["Annual Net Cashflow", formatYenForPdf(draft.annualNetIncome)],
-		["Gross Profit / Annual Net Profit", formatYenForPdf(draft.grossProfit)],
-		["Expected Yield", formatPercentForPdf(draft.expectedYield, 2)],
-		["Payback Years", formatDecimalForPdf(draft.paybackYears, 2)],
+		[saleMetricLabel === "Project Cost" ? "総事業費" : "販売価格", formatYen(draft.salePrice ?? 0)],
+		[purchaseMetricLabel === "Net Investment" ? "実質投資額" : "仕入れ価格", formatYen(draft.purchaseCost ?? 0)],
+		["残存FIT年数", draft.fitRemainingYears !== null ? `${trimTrailingZeros(draft.fitRemainingYears)}年` : "未入力"],
+		["出力抑制前提", `${draft.curtailmentScenario}${draft.curtailmentScenario === "抑制あり" ? ` / ${trimTrailingZeros(draft.curtailmentRate)}%` : ""}`],
+		["年間売電収入", formatYen(draft.annualIncome ?? 0)],
+		["年間維持費", formatYen(draft.runningCost)],
+		["年間手残り", formatYen(draft.annualNetIncome ?? 0)],
+		["想定利回り", draft.expectedYield !== null ? `${trimTrailingZeros(draft.expectedYield)}%` : "算出不可"],
+		["回収年数", draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"],
+		["残存FIT総手残り", draft.fitTotalNetCashflow !== null ? formatYen(draft.fitTotalNetCashflow) : "算出不可"],
 	]);
-	first.drawRule();
-	first.drawWrapped(`Record ID: ${pageId}`, 8);
+	first.drawFooter();
 
-	const second = createPageWriter();
-	second.drawHeader(
-		"WAJO Proposal Sheet",
-		`Page 2 / Assumptions, Risks and Type Guide / ${proposalKindLabelForPdf(draft.proposalKind)}`,
+	const second = createPageWriter(
+		2,
+		"ファイナンス・税効果シミュレーション",
+		"土地は償却対象外 / システム17年償却 / 権利代5年償却",
 	);
-	second.drawSectionTitle("Assumptions / Risk Notes");
-	for (const line of buildProposalPdfPageTwoLines(draft)) {
-		second.drawWrapped(line, 10);
+	second.drawSectionTitle("税務前提");
+	const financeLines = draft.financeSimulation?.lines ?? [
+		"土地は償却対象外です。",
+		"システム本体は17年で償却します。",
+		"権利代は5年で償却します。",
+		"土地代、権利代、借入額、金利、返済期間、実効税率を入力すると、税効果と購入タイミング判定を表示します。",
+		"注釈: 本資料はシミュレーション資料です。実際の会計・税務処理は、貴社顧問税理士へご確認ください。",
+	];
+	for (const line of financeLines.slice(0, 16)) {
+		second.drawWrapped(line, 8.8);
 	}
-	second.drawSectionTitle("Energy / ESG Impact");
-	second.drawMetricRows([
-		["Annual Cost Reduction Rate", formatPercentForPdf(draft.reductionRate, 1)],
-		["Annual Cost Reduction Amount", formatYenForPdf(draft.annualReductionAmount)],
-		["Annual CO2 Reduction", `${formatDecimalForPdf(draft.co2ReductionTons, 2)} tons`],
-	]);
-	second.drawSectionTitle("Proposal Type Guide");
-	for (const line of buildProposalTypeGuidePdfLines(draft.proposalKind)) {
+	second.drawSectionTitle("前提・リスク");
+	for (const line of draft.pageTwoLines.slice(0, 8)) {
 		second.drawWrapped(line, 8.5);
 	}
-	second.drawRule();
-	second.drawWrapped(
-		"Full Japanese sales copy is stored on the Notion record. This PDF is a safe two-page summary generated by WAJO Sales OS.",
-		9,
-	);
+	second.drawFooter();
 
 	return pdf.save();
 }

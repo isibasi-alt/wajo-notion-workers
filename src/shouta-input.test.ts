@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
-import { buildShoutaInputForTest as build } from "./index";
-import { extractShoutaMeetingPrepFields } from "./shouta-brief";
+import {
+	buildMeetingPrepReportContextForTest,
+	buildShoutaInputForTest as build,
+} from "./index";
+import {
+	buildShoutaUserPromptForTest,
+	extractShoutaMeetingPrepFields,
+} from "./shouta-brief";
 
 // 商太への入力組み立ての契約:
 // - Aの実データ(直近ニュース/再エネ接点シグナル/サマリー等)を弾・透視・ドシエに振り分ける
@@ -56,7 +62,27 @@ async function main() {
 		assert.equal(i.contact, "佐藤 次郎");
 	}
 
-	// 5) 商太ブリーフは、商談前準備レポートDBの商太5欄へ分解できる
+	// 5) 商太は商談前準備レポート既存5欄を材料として読める
+	{
+		const context = buildMeetingPrepReportContextForTest({
+			企業プロフィール: rt("九州エリアの発電所出口整理を相談したい会社"),
+			"3C分析": rt("競合は価格比較、顧客は出口と蓄電池併設を気にしている"),
+			商談仮説: rt("最初は売却意向ではなく、出口の選択肢整理から入る"),
+			ヒアリングリスト: rt("保有発電所のFIT満了年、PCS更新時期、売却希望時期"),
+			"注意点・リスク": rt("断定せず、まず発電所一覧と電力契約を確認する"),
+		});
+		assert.ok(context.includes("商談前準備レポート既存5欄"));
+		assert.ok(context.includes("FIT満了年"));
+		assert.ok(context.includes("出口の選択肢整理"));
+		const prompt = buildShoutaUserPromptForTest({
+			companyName: "九州ソーラーファーム株式会社",
+			dossier: context,
+		});
+		assert.ok(prompt.includes("既存5欄"));
+		assert.ok(prompt.includes("刺す順番"));
+	}
+
+	// 6) 商太ブリーフは、商談前準備レポートDBの商太5欄へ分解できる
 	{
 		const fields = extractShoutaMeetingPrepFields(
 			[
@@ -82,7 +108,7 @@ async function main() {
 		assert.ok(fields.finalCheck.includes("電気使用量"));
 	}
 
-	// 6) 旧商太フォーマットも、互換的に5欄へ逃がす
+	// 7) 旧商太フォーマットも、互換的に5欄へ逃がす
 	{
 		const fields = extractShoutaMeetingPrepFields(
 			[
