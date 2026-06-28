@@ -2173,6 +2173,11 @@ type ProposalSimulationResult = {
 	message: string;
 };
 
+type ProjectDocumentGenerationResult = {
+	action: "prepared" | "needs-input" | "error";
+	message: string;
+};
+
 type ProjectProposalRequestInput = {
 	projectPageId: string;
 	dryRun?: boolean;
@@ -5368,10 +5373,10 @@ worker.webhook("processProposalSimulationWebhook", {
 				notion as unknown as NotionClient,
 			);
 			if (result.action === "needs-input") {
-				console.log("proposal simulation needs input", {
-					pageId,
-					message: result.message,
-				});
+				throw new Error(result.message);
+			}
+			if (result.action === "error") {
+				throw new Error(result.message);
 			}
 		}
 	},
@@ -15285,13 +15290,16 @@ async function processProjectDocumentRequest(
 	);
 	if (existingRequest) {
 		const message = `既存の${config.createdLabel}があります: ${projectName}`;
-		const generationMessage = input.dryRun
-			? ""
+		const generationResult = input.dryRun
+			? null
 			: await finalizeProjectDocumentRequest(
 					notion,
 					kind,
 					existingRequest.id,
 				);
+		const generationMessage = generationResult?.message ?? "";
+		const generationNeedsInput = generationResult?.action === "needs-input";
+		const generationError = generationResult?.action === "error";
 		if (!input.dryRun) {
 			await createPageComment(
 				notion,
@@ -15306,7 +15314,7 @@ async function processProjectDocumentRequest(
 		return {
 			projectPageId: projectPage.id,
 			requestPageId: existingRequest.id,
-			action: "existing",
+			action: generationNeedsInput || generationError ? "needs-input" : "existing",
 			message: [message, generationMessage].filter(Boolean).join("\n"),
 		};
 	}
@@ -15376,9 +15384,11 @@ async function processProjectDocumentRequest(
 			});
 		}
 	}
-	const generationMessage = readiness.missingField
-		? ""
+	const generationResult = input.dryRun
+		? null
 		: await finalizeProjectDocumentRequest(notion, kind, requestPage.id);
+	const generationMessage = generationResult?.message ?? "";
+	const requestNeedsInput = generationResult?.action === "needs-input" || generationResult?.action === "error";
 	const requestUrl = typeof (requestPage as Record<string, unknown>).url === "string"
 		? ((requestPage as Record<string, unknown>).url as string)
 		: "";
@@ -15408,7 +15418,7 @@ async function processProjectDocumentRequest(
 	return {
 		projectPageId: projectPage.id,
 		requestPageId: requestPage.id,
-		action: "created",
+		action: requestNeedsInput ? "needs-input" : "created",
 		message: [
 			`${config.createdLabel}を作成しました: ${requestTitle}`,
 			generationMessage,
@@ -15420,16 +15430,23 @@ async function finalizeProjectDocumentRequest(
 	notion: NotionClient,
 	kind: ProjectDocumentRequestKind,
 	requestPageId: string,
-): Promise<string> {
+): Promise<ProjectDocumentGenerationResult> {
 	try {
 		const result =
 			kind === "proposal"
 				? await processProposalSimulation({ pageId: requestPageId, dryRun: false }, notion)
 				: await processResidentDocument({ pageId: requestPageId, dryRun: false }, notion);
-		return `資料生成結果: ${result.status}`;
+		const action = result.action === "needs-input" || result.action === "error"
+			? result.action
+			: "prepared";
+		const message = `資料生成結果: ${result.status}${result.message ? ` / ${result.message}` : ""}`;
+		return { action, message };
 	} catch (error) {
 		const message = String(error).slice(0, 300);
-		return `資料生成結果: 生成処理で停止（${message}）`;
+		return {
+			action: "error",
+			message: `資料生成結果: 生成処理で停止（${message}）`,
+		};
 	}
 }
 
