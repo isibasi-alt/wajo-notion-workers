@@ -56,6 +56,9 @@ const POWER_PLANT_EQUIPMENT_DATA_SOURCE_ID =
 const PROPOSAL_REQUEST_DATA_SOURCE_ID =
 	process.env.PROPOSAL_REQUEST_DATA_SOURCE_ID ??
 	"9701e891-ffd0-43d7-b6f9-911fedc65391";
+const FINANCE_SIMULATION_DATA_SOURCE_ID =
+	process.env.FINANCE_SIMULATION_DATA_SOURCE_ID ??
+	"7e4d0168-6e54-4071-bd55-f9730202225c";
 const MEETING_DATA_SOURCE_ID =
 	process.env.MEETING_DATA_SOURCE_ID ??
 	"c22e58f6-42c9-4a2f-b24d-e65e889d59e9";
@@ -14542,6 +14545,8 @@ type FinanceSimulation = {
 	taxBenefit: number;
 	loanAmount: number;
 	interestRate: number;
+	effectiveInterestRate: number | null;
+	addOnInterestRate: number | null;
 	loanYears: number | null;
 	annualDebtService: number;
 	cashflowAfterDebt: number;
@@ -14872,6 +14877,7 @@ async function processProposalSimulation(
 			);
 		}
 		await safeUpdateExistingProperties(notion, page, patches);
+		await syncFinanceSimulationRecord(notion, page, draft);
 		await updateRelatedProjectProposalResult(notion, page, draft, pdfExport);
 		await createPageComment(
 			notion,
@@ -15771,6 +15777,81 @@ async function updateRelatedProjectProposalResult(
 			});
 		}
 	}
+}
+
+async function syncFinanceSimulationRecord(
+	notion: NotionClient,
+	proposalPage: Page,
+	draft: ProposalSimulationDraft,
+): Promise<void> {
+	if (!draft.financeSimulation) return;
+	try {
+		const existing = await notion.dataSources.query({
+			data_source_id: FINANCE_SIMULATION_DATA_SOURCE_ID,
+			filter: {
+				property: "関連提案シミュレーション",
+				relation: { contains: proposalPage.id },
+			},
+			page_size: 1,
+		});
+		const existingPage = existing.results[0] ?? null;
+		const properties = buildFinanceSimulationRecordProperties(proposalPage, draft);
+		if (existingPage) {
+			await notion.pages.update({
+				page_id: existingPage.id,
+				properties,
+			});
+			return;
+		}
+		await notion.pages.create({
+			parent: { data_source_id: FINANCE_SIMULATION_DATA_SOURCE_ID },
+			properties,
+		});
+	} catch (error) {
+		console.log("finance simulation sync skipped", {
+			proposalPageId: proposalPage.id,
+			error: String(error),
+		});
+	}
+}
+
+function buildFinanceSimulationRecordProperties(
+	proposalPage: Page,
+	draft: ProposalSimulationDraft,
+): Record<string, unknown> {
+	const finance = draft.financeSimulation!;
+	const equityBase = draft.salePrice ?? draft.purchaseCost ?? 0;
+	const selfFunding = Math.max(0, equityBase - finance.loanAmount);
+	const properties: Record<string, unknown> = {
+		Name: title(`${draft.titleLabel || readGenericPageTitle(proposalPage) || proposalPage.id}｜ファイナンス`),
+		関連提案シミュレーション: relation(proposalPage.id),
+		借入額: { number: finance.loanAmount },
+		金利: { number: finance.interestRate },
+		返済期間: finance.loanYears !== null ? { number: finance.loanYears } : undefined,
+		自己資金: { number: selfFunding },
+		実効税率: { number: finance.effectiveTaxRate },
+		今期利益見込: finance.pretaxProfit !== null ? { number: finance.pretaxProfit } : undefined,
+		土地代: { number: finance.landPrice },
+		システム本体価格: { number: finance.systemPrice },
+		権利代: { number: finance.rightsPrice },
+		年間返済額: { number: finance.annualDebtService },
+		年間償却額: { number: finance.annualDepreciation },
+		税効果: { number: finance.taxBenefit },
+		税引後キャッシュフロー: { number: finance.afterTaxCashflow },
+		DSCR: finance.dscr !== null ? { number: finance.dscr } : undefined,
+		実質金利: finance.effectiveInterestRate !== null ? { number: finance.effectiveInterestRate } : undefined,
+		アドオン金利: finance.addOnInterestRate !== null ? { number: finance.addOnInterestRate } : undefined,
+		購入タイミング判定: select(finance.timingRank),
+		購入タイミング理由: richText(finance.timingReason),
+		金利メモ: richText(
+			"入力金利は元利均等返済の年率として扱い、アドオン金利は総支払利息から換算しています。",
+		),
+		ファイナンスメモ: richText("提案シミュレーション実行時に自動連携しました。"),
+		ファイナンス状態: select("準備完了"),
+	};
+	return Object.fromEntries(
+		Object.entries(properties).filter(([, value]) => value !== undefined),
+	);
 }
 
 type ProposalPdfExportResult = {
@@ -17702,6 +17783,14 @@ function buildFinanceSimulation(input: {
 		"ローン年数",
 	]);
 	const annualDebtService = calculateAnnualDebtService(loanAmount, interestRate, loanYears);
+	const effectiveInterestRate = loanAmount > 0 && loanYears && loanYears > 0
+		? interestRate
+		: null;
+	const addOnInterestRate = calculateAddOnInterestRate(
+		loanAmount,
+		annualDebtService,
+		loanYears,
+	);
 	const annualSystemDepreciation = roundTo(systemPrice * 0.059, 0);
 	const annualRightsDepreciation = roundTo(rightsPrice / 5, 0);
 	const annualDepreciation = annualSystemDepreciation + annualRightsDepreciation;
@@ -17747,6 +17836,8 @@ function buildFinanceSimulation(input: {
 		taxBenefit,
 		loanAmount,
 		interestRate,
+		effectiveInterestRate,
+		addOnInterestRate,
 		loanYears,
 		annualDebtService,
 		cashflowAfterDebt,
@@ -17769,6 +17860,7 @@ function buildFinanceSimulation(input: {
 			`実効税率: ${trimTrailingZeros(effectiveTaxRate)}%`,
 			`年間税効果: ${formatYen(taxBenefit)}`,
 			debtLine,
+			`金利換算: 実質金利 ${effectiveInterestRate !== null ? `${trimTrailingZeros(effectiveInterestRate)}%` : "未計算"} / アドオン金利 ${addOnInterestRate !== null ? `${trimTrailingZeros(addOnInterestRate)}%` : "未計算"}`,
 			pretaxProfitLine,
 			`税効果後キャッシュフロー: ${formatYen(afterTaxCashflow)}`,
 			`DSCR: ${dscr !== null ? trimTrailingZeros(dscr) : "借入なし"}`,
@@ -17923,6 +18015,17 @@ function calculateAnnualDebtService(
 	if (rate <= 0) return roundTo(loanAmount / years, 0);
 	const annualPayment = loanAmount * rate / (1 - Math.pow(1 + rate, -years));
 	return roundTo(annualPayment, 0);
+}
+
+function calculateAddOnInterestRate(
+	loanAmount: number,
+	annualDebtService: number,
+	loanYears: number | null,
+): number | null {
+	if (loanAmount <= 0 || !loanYears || loanYears <= 0) return null;
+	const totalRepayment = annualDebtService * loanYears;
+	const totalInterest = Math.max(0, totalRepayment - loanAmount);
+	return roundTo((totalInterest / (loanAmount * loanYears)) * 100, 2);
 }
 
 function judgeFinanceTiming(input: {
