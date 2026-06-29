@@ -6399,13 +6399,8 @@ async function uploadBusinessCardJpeg(
 				data: new Blob([new Uint8Array(jpegBytes)], { type: "image/jpeg" }),
 			},
 		});
-		if (notion.fileUploads.complete) {
-			try {
-				await notion.fileUploads.complete({ file_upload_id: fileUploadId });
-			} catch {
-				// single_partではcomplete不要の場合があるため無視
-			}
-		}
+		// single_part upload は send 後にそのまま添付へ進める。
+		// complete を呼ぶと uploaded 状態で validation_error になるため呼ばない。
 		return fileUploadId;
 	} catch (error) {
 		console.log("business card image upload skipped", String(error).slice(0, 120));
@@ -15872,13 +15867,8 @@ async function exportProposalSimulationPdf(
 				data: new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" }),
 			},
 		});
-		if (notion.fileUploads.complete) {
-			try {
-				await notion.fileUploads.complete({ file_upload_id: fileUploadId });
-			} catch {
-				// single_partではcomplete不要の場合があるため無視
-			}
-		}
+		// single_part upload は send 後にそのまま添付へ進める。
+		// complete を呼ぶと uploaded 状態で validation_error になるため呼ばない。
 
 		let fileUrl: string | null = null;
 		if (filePropertyName) {

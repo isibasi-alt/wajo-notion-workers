@@ -439,6 +439,10 @@ async function main() {
 	const projectPdfAppend = simulationCase.appends.find((append) => append.block_id === "project-1");
 	assert.ok(projectPdfAppend);
 	assert.match(JSON.stringify(projectPdfAppend), /"type":"pdf"/);
+	assert.equal(
+		simulationCase.fileUploads.some((upload) => upload.action === "complete"),
+		false,
+	);
 
 	const existingCase = makeNotion({
 		projectRequestIds: ["request-existing"],
