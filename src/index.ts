@@ -1466,7 +1466,7 @@ async function embedMonthlyEvalPdfFont(pdf: PDFDocument, fontPath: string): Prom
 	const fontBytes = readFileSync(fontPath);
 	return fontPath.toLowerCase().endsWith(".ttc")
 		? pdf.embedFont(fontBytes)
-		: pdf.embedFont(fontBytes, { subset: true });
+		: pdf.embedFont(fontBytes, { subset: false });
 }
 
 function resolveMonthlyEvalJapaneseFontPaths(): MonthlyEvalPdfFontPaths | null {
