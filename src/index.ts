@@ -59,6 +59,9 @@ const PROPOSAL_REQUEST_DATA_SOURCE_ID =
 const FINANCE_SIMULATION_DATA_SOURCE_ID =
 	process.env.FINANCE_SIMULATION_DATA_SOURCE_ID ??
 	"7e4d0168-6e54-4071-bd55-f9730202225c";
+const SALES_PROPOSAL_DATA_SOURCE_ID =
+	process.env.SALES_PROPOSAL_DATA_SOURCE_ID ??
+	"4c3a7df6-3ca1-458a-b595-d98cdeac2802";
 const MEETING_DATA_SOURCE_ID =
 	process.env.MEETING_DATA_SOURCE_ID ??
 	"c22e58f6-42c9-4a2f-b24d-e65e889d59e9";
@@ -14894,7 +14897,14 @@ async function processProposalSimulation(
 			);
 		}
 		await safeUpdateExistingProperties(notion, page, patches);
-		await syncFinanceSimulationRecord(notion, page, draft);
+		const financeSync = await syncFinanceSimulationRecord(notion, page, draft);
+		await syncSalesProposalRecord(
+			notion,
+			page,
+			draft,
+			pdfExport,
+			financeSync?.pageId ?? null,
+		);
 		await updateRelatedProjectProposalResult(notion, page, draft, pdfExport);
 		await createPageComment(
 			notion,
@@ -15355,6 +15365,9 @@ async function processProjectDocumentRequest(
 		資料種別: { kind: "select", value: config.documentType },
 		[config.statusProperty]: { kind: "select", value: config.statusValue },
 		関連案件: { kind: "relation", ids: [projectPage.id] },
+		...(equipmentPage
+			? { 関連設備詳細: { kind: "relation", ids: [equipmentPage.id] } as SafePatch }
+			: {}),
 		資料作成メモ: { kind: "text", value: requestMemo },
 		...config.defaultProperties
 			? Object.entries(config.defaultProperties).reduce((acc, [propertyName, propertyValue]) => {
@@ -15800,8 +15813,8 @@ async function syncFinanceSimulationRecord(
 	notion: NotionClient,
 	proposalPage: Page,
 	draft: ProposalSimulationDraft,
-): Promise<void> {
-	if (!draft.financeSimulation) return;
+): Promise<{ pageId: string; action: "created" | "updated" } | null> {
+	if (!draft.financeSimulation) return null;
 	try {
 		const existing = await notion.dataSources.query({
 			data_source_id: FINANCE_SIMULATION_DATA_SOURCE_ID,
@@ -15818,18 +15831,172 @@ async function syncFinanceSimulationRecord(
 				page_id: existingPage.id,
 				properties,
 			});
-			return;
+			return { pageId: existingPage.id, action: "updated" };
 		}
-		await notion.pages.create({
+		const created = await notion.pages.create({
 			parent: { data_source_id: FINANCE_SIMULATION_DATA_SOURCE_ID },
 			properties,
 		});
+		return { pageId: created.id, action: "created" };
 	} catch (error) {
 		console.log("finance simulation sync skipped", {
 			proposalPageId: proposalPage.id,
 			error: String(error),
 		});
+		return null;
 	}
+}
+
+async function syncSalesProposalRecord(
+	notion: NotionClient,
+	proposalPage: Page,
+	draft: ProposalSimulationDraft,
+	pdfExport: ProposalPdfExportResult,
+	financePageId: string | null,
+): Promise<SalesProposalSyncResult | null> {
+	try {
+		const existing = await notion.dataSources.query({
+			data_source_id: SALES_PROPOSAL_DATA_SOURCE_ID,
+			filter: {
+				property: "関連提案シミュレーション依頼",
+				relation: { contains: proposalPage.id },
+			},
+			page_size: 1,
+		});
+		const existingPage = existing.results[0] ?? null;
+		const properties = buildSalesProposalRecordProperties(
+			proposalPage,
+			draft,
+			pdfExport,
+			financePageId,
+		);
+		if (existingPage) {
+			await notion.pages.update({
+				page_id: existingPage.id,
+				properties,
+			});
+			return { pageId: existingPage.id, action: "updated" };
+		}
+		const created = await notion.pages.create({
+			parent: { data_source_id: SALES_PROPOSAL_DATA_SOURCE_ID },
+			properties,
+		});
+		return { pageId: created.id, action: "created" };
+	} catch (error) {
+		console.log("sales proposal sync skipped", {
+			proposalPageId: proposalPage.id,
+			error: String(error),
+		});
+		return null;
+	}
+}
+
+function buildSalesProposalRecordProperties(
+	proposalPage: Page,
+	draft: ProposalSimulationDraft,
+	pdfExport: ProposalPdfExportResult,
+	financePageId: string | null,
+): Record<string, unknown> {
+	const relatedProjectIds = relationIdsFromProperty(proposalPage.properties?.["関連案件"]);
+	const relatedEquipmentIds = relationIdsFromAliases(proposalPage.properties ?? {}, [
+		"関連設備詳細",
+		"発電所設備詳細",
+		"設備詳細",
+	]);
+	const proposalState = inferSalesProposalState(pdfExport);
+	const actionCategory = inferSalesProposalActionCategory(draft);
+	const reasonLines = [
+		draft.conclusionText,
+		draft.financeSimulation
+			? `購入タイミング判定: ${draft.financeSimulation.timingRank} / ${draft.financeSimulation.timingReason}`
+			: "",
+		draft.financeSimulation
+			? `B/Sルーブリック: ${formatBalanceSheetSalesRubricSummary(draft.financeSimulation.salesRubric)}`
+			: "",
+	].filter(Boolean);
+	const nextActionLines = buildSalesProposalNextActionLines(actionCategory, pdfExport);
+	const properties: Record<string, unknown> = {
+		Name: title(draft.proposalTitle),
+		関連提案シミュレーション依頼: relation(proposalPage.id),
+		提案状態: select(proposalState),
+		シミュレーション種別: select(proposalKindJapaneseLabel(draft.proposalKind)),
+		営業提案用サマリー: richText(
+			[draft.conclusionText, ...draft.summaryLines.slice(0, 6)].join("\n"),
+		),
+		"S/A/B/C判定": select(inferSalesProposalRank(draft)),
+		案件アクション分類: select(actionCategory),
+		判定理由: richText(reasonLines.join("\n")),
+		次にやる営業アクション: richText(nextActionLines.join("\n")),
+		提案PDFリンク: pdfExport.fileUrl ? { url: pdfExport.fileUrl } : undefined,
+		作成した提案PDFを開く: pdfExport.fileUploadId
+			? { files: [{ file_upload: { id: pdfExport.fileUploadId } }] }
+			: undefined,
+	};
+	if (pdfExport.fileUploadId) {
+		properties.提案PDF = { files: [{ file_upload: { id: pdfExport.fileUploadId } }] };
+	}
+	if (relatedProjectIds.length > 0) {
+		properties.関連案件 = relation(relatedProjectIds[0]!);
+	}
+	if (relatedEquipmentIds.length > 0) {
+		properties.関連設備条件 = relation(relatedEquipmentIds[0]!);
+	}
+	if (financePageId) {
+		properties.関連ファイナンスシミュレーション = relation(financePageId);
+	}
+	return Object.fromEntries(
+		Object.entries(properties).filter(([, value]) => value !== undefined),
+	);
+}
+
+function inferSalesProposalState(pdfExport: ProposalPdfExportResult): string {
+	if (pdfExport.attached) return "提案可能";
+	if (pdfExport.destination === "none") return "要確認";
+	return "下書き";
+}
+
+function inferSalesProposalRank(draft: ProposalSimulationDraft): string {
+	if (draft.financeSimulation?.timingRank) return draft.financeSimulation.timingRank;
+	if (draft.expectedYield !== null && draft.expectedYield >= 8) return "A";
+	if (draft.expectedYield !== null && draft.expectedYield >= 5) return "B";
+	return "C";
+}
+
+function inferSalesProposalActionCategory(draft: ProposalSimulationDraft): string {
+	if (draft.grossProfit !== null && draft.grossProfit <= 0) return "捨てる案件";
+	if (draft.annualNetIncome !== null && draft.annualNetIncome <= 0) return "捨てる案件";
+	if (draft.paybackYears !== null && draft.paybackYears > 20) return "捨てる案件";
+	const timingRank = draft.financeSimulation?.timingRank ?? null;
+	if (timingRank === "S" || timingRank === "A") return "やるべき案件";
+	if (timingRank === "B") return "化ける案件";
+	if (timingRank === "C") return "保留案件";
+	return "やるべき案件";
+}
+
+function buildSalesProposalNextActionLines(
+	actionCategory: string,
+	pdfExport: ProposalPdfExportResult,
+): string[] {
+	const lines = [
+		pdfExport.fileUrl
+			? `提案PDF確認: ${pdfExport.fileUrl}`
+			: "提案PDF確認: files型の提案PDFを確認",
+	];
+	switch (actionCategory) {
+		case "やるべき案件":
+			lines.push("営業アクション: 買い手へ提案提示と面談設定を進める");
+			break;
+		case "化ける案件":
+			lines.push("営業アクション: 条件調整・補強材料を追加して再提案する");
+			break;
+		case "保留案件":
+			lines.push("営業アクション: 財務条件または設備条件を再確認して保留管理する");
+			break;
+		case "捨てる案件":
+			lines.push("営業アクション: 深追いせず、条件を記録して別案件へ切り替える");
+			break;
+	}
+	return lines;
 }
 
 function buildFinanceSimulationRecordProperties(
@@ -15886,6 +16053,11 @@ type ProposalPdfExportResult = {
 };
 
 type ResidentDocumentPdfExportResult = ProposalPdfExportResult;
+
+type SalesProposalSyncResult = {
+	pageId: string;
+	action: "created" | "updated";
+};
 
 function buildProposalPdfBlocks(
 	fileUploadId: string,

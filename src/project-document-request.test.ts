@@ -179,6 +179,7 @@ function readyProposalRequestPage() {
 			...validProjectProperties(),
 			案件名: titleProp("湖南市250kW 太陽光案件｜提案シミュレーション"),
 			関連案件: relationProp(["project-1"]),
+			関連設備詳細: relationProp(["equipment-1"]),
 			シミュレーションステータス: selectProp("入力待ち"),
 			不足項目: richTextProp(""),
 			想定粗利額: numberProp(null),
@@ -207,6 +208,7 @@ function makeNotion(options: {
 	projectRequestIds?: string[];
 	projectPropertyOverrides?: Record<string, unknown>;
 	existingByDocumentType?: Record<string, Array<Record<string, unknown>>>;
+	existingByDataSource?: Record<string, Array<Record<string, unknown>>>;
 	projectPageOverride?: Record<string, unknown>;
 	equipmentPageOverride?: Record<string, unknown>;
 } = {}) {
@@ -220,6 +222,12 @@ function makeNotion(options: {
 		dataSources: {
 			query: async (args: Record<string, unknown>) => {
 				queries.push(args);
+				const dataSourceId = typeof args.data_source_id === "string" ? args.data_source_id : "";
+				if (dataSourceId && options.existingByDataSource?.[dataSourceId]) {
+					return {
+						results: options.existingByDataSource[dataSourceId] ?? [],
+					};
+				}
 				return {
 					results: options.existingByDocumentType?.[queryDocumentType(args)] ?? [],
 				};
@@ -230,9 +238,38 @@ function makeNotion(options: {
 				if (page_id === "equipment-1") {
 					return options.equipmentPageOverride ?? equipmentPage();
 				}
+				if (page_id.startsWith("finance-created-")) {
+					const index = Number(page_id.replace("finance-created-", "")) - 1;
+					const created = creates.filter((entry) =>
+						(entry.parent as { data_source_id?: string })?.data_source_id ===
+						"7e4d0168-6e54-4071-bd55-f9730202225c"
+					)[index];
+					assert.ok(created, `created finance page not found: ${page_id}`);
+					return {
+						id: page_id,
+						url: `https://www.notion.so/${page_id}`,
+						properties: created.properties as Record<string, unknown>,
+					};
+				}
+				if (page_id.startsWith("sales-proposal-created-")) {
+					const index = Number(page_id.replace("sales-proposal-created-", "")) - 1;
+					const created = creates.filter((entry) =>
+						(entry.parent as { data_source_id?: string })?.data_source_id ===
+						"4c3a7df6-3ca1-458a-b595-d98cdeac2802"
+					)[index];
+					assert.ok(created, `created sales proposal page not found: ${page_id}`);
+					return {
+						id: page_id,
+						url: `https://www.notion.so/${page_id}`,
+						properties: created.properties as Record<string, unknown>,
+					};
+				}
 				if (page_id.startsWith("request-created-")) {
 					const index = Number(page_id.replace("request-created-", "")) - 1;
-					const created = creates[index];
+					const created = creates.filter((entry) =>
+						(entry.parent as { data_source_id?: string })?.data_source_id ===
+						"9701e891-ffd0-43d7-b6f9-911fedc65391"
+					)[index];
 					assert.ok(created, `created request not found: ${page_id}`);
 					return {
 						id: page_id,
@@ -253,9 +290,21 @@ function makeNotion(options: {
 			},
 			create: async (args: Record<string, unknown>) => {
 				creates.push(args);
+				const dataSourceId = (args.parent as { data_source_id?: string })?.data_source_id;
+				const idPrefix =
+					dataSourceId === "9701e891-ffd0-43d7-b6f9-911fedc65391"
+						? "request-created"
+						: dataSourceId === "7e4d0168-6e54-4071-bd55-f9730202225c"
+							? "finance-created"
+							: dataSourceId === "4c3a7df6-3ca1-458a-b595-d98cdeac2802"
+								? "sales-proposal-created"
+								: "created";
+				const sameKindCount = creates.filter((entry) =>
+					(entry.parent as { data_source_id?: string })?.data_source_id === dataSourceId
+				).length;
 				const page = {
-					id: `request-created-${creates.length}`,
-					url: `https://www.notion.so/request-created-${creates.length}`,
+					id: `${idPrefix}-${sameKindCount}`,
+					url: `https://www.notion.so/${idPrefix}-${sameKindCount}`,
 					properties: args.properties as Record<string, unknown>,
 				};
 				return page;
@@ -372,6 +421,10 @@ async function main() {
 		(fromEquipmentPageButtonProps.関連案件 as { relation: Array<{ id: string }> }).relation,
 		[{ id: "project-1" }],
 	);
+	assert.deepEqual(
+		(fromEquipmentPageButtonProps.関連設備詳細 as { relation: Array<{ id: string }> }).relation,
+		[{ id: "equipment-1" }],
+	);
 	assert.equal(
 		(fromEquipmentPageButtonProps.発電所名 as { rich_text: Array<{ text: { content: string } }> }).rich_text[0]!.text.content,
 		"湖南市250kW 太陽光発電所",
@@ -425,6 +478,24 @@ async function main() {
 	);
 	assert.equal(simulation.status, "シミュレーション準備完了");
 	assert.equal(simulation.grossProfit, 3000000);
+	const salesProposalCreate = simulationCase.creates.find((create) =>
+		(create.parent as { data_source_id?: string })?.data_source_id ===
+		"4c3a7df6-3ca1-458a-b595-d98cdeac2802"
+	);
+	assert.ok(salesProposalCreate);
+	const salesProposalProps = salesProposalCreate!.properties as Record<string, unknown>;
+	assert.equal(
+		(salesProposalProps.提案状態 as { select: { name: string } }).select.name,
+		"提案可能",
+	);
+	assert.equal(
+		(salesProposalProps["案件アクション分類"] as { select: { name: string } }).select.name,
+		"化ける案件",
+	);
+	assert.deepEqual(
+		(salesProposalProps["関連提案シミュレーション依頼"] as { relation: Array<{ id: string }> }).relation,
+		[{ id: "request-ready-1" }],
+	);
 	const projectGrossUpdate = simulationCase.updates.find((update) => {
 		const properties = update.properties as Record<string, unknown>;
 		return Boolean(properties.予定粗利額);
