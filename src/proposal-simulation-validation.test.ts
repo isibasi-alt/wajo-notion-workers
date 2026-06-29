@@ -302,6 +302,7 @@ async function main() {
 	assert.equal(readyWithoutBsMetrics.financeSimulation?.salesRubric.totalScore, null);
 	assert.equal(readyWithoutBsMetrics.financeSimulation?.salesRubric.route, null);
 	assert.match(readyWithoutBsMetrics.summaryLines.join("\n"), /B\/Sルーブリック: 未判定/);
+	assert.match(readyWithoutBsMetrics.pageTwoLines.join("\n"), /未判定/);
 
 	const individual = evaluateProposalSimulationDraftForTest({
 		id: "proposal-3",

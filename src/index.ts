@@ -16603,22 +16603,7 @@ async function buildProposalSimulationPdfBytes(
 
 	y -= 4;
 	y = drawSectionTitle(second, y, "ファイナンス・税務前提");
-	const financeRows: Array<[string, string]> = draft.financeSimulation
-		? [
-			["購入タイミング判定", `${draft.financeSimulation.timingRank} / ${draft.financeSimulation.timingReason}`],
-			["B/Sルーブリック", formatBalanceSheetSalesRubricSummary(draft.financeSimulation.salesRubric)],
-			["税引後キャッシュフロー", formatYen(draft.financeSimulation.afterTaxCashflow)],
-			["年間償却額", formatYen(draft.financeSimulation.annualDepreciation)],
-			["税効果", formatYen(draft.financeSimulation.taxBenefit)],
-			["借入条件", `${formatYen(draft.financeSimulation.loanAmount)} / 金利 ${trimTrailingZeros(draft.financeSimulation.interestRate)}% / ${draft.financeSimulation.loanYears !== null ? `${trimTrailingZeros(draft.financeSimulation.loanYears)}年返済` : "返済期間未入力"}`],
-			["DSCR", draft.financeSimulation.dscr !== null ? trimTrailingZeros(draft.financeSimulation.dscr) : "未入力"],
-		]
-		: [
-			["土地", "償却対象外"],
-			["システム本体", "17年償却"],
-			["権利代", "5年償却"],
-			["注記", "実際の会計・税務処理は顧問税理士へ確認してください。"],
-		];
+	const financeRows = buildProposalPdfFinanceRows(draft);
 	y = drawDetailRows(second, y, financeRows);
 
 	y -= 2;
@@ -16629,21 +16614,15 @@ async function buildProposalSimulationPdfBytes(
 		maxLines: draft.proposalKind === "gridBattery" ? 10 : 8,
 	});
 
-	if (draft.financeSimulation) {
-		y -= 10;
-		drawNoteBox(
-			second,
-			y,
-			"B/S提案ルート",
-			[
-				`${draft.financeSimulation.salesRubric.routeTitle} / ${draft.financeSimulation.salesRubric.recommendedModel}`,
-				`推奨場所: ${draft.financeSimulation.salesRubric.recommendedLocation}`,
-				`ひと言: ${draft.financeSimulation.salesRubric.killerPhrase}`,
-			],
-			74,
-		);
-		y -= 86;
-	}
+	y -= 10;
+	drawNoteBox(
+		second,
+		y,
+		"B/S提案ルート",
+		buildProposalPdfRubricBoxLines(draft),
+		74,
+	);
+	y -= 86;
 
 	if (draft.proposalKind !== "gridBattery") {
 		y -= 10;
@@ -16654,6 +16633,63 @@ async function buildProposalSimulationPdfBytes(
 	drawFooter(second);
 
 	return pdf.save();
+}
+
+function buildProposalPdfFinanceRows(draft: ProposalSimulationDraft): Array<[string, string]> {
+	if (!draft.financeSimulation) {
+		return [
+			["購入タイミング判定", "未判定"],
+			["B/Sルーブリック", "未判定"],
+			["土地代", "未入力 / 償却対象外"],
+			["システム本体価格", "未入力 / 17年償却"],
+			["権利代", "未入力 / 5年償却"],
+			["実効税率", "未入力"],
+			["借入条件", "未入力"],
+			["年間償却額", "未入力"],
+			["税効果", "未入力"],
+			["税引後キャッシュフロー", "未入力"],
+			["DSCR", "未入力"],
+		];
+	}
+	const finance = draft.financeSimulation;
+	return [
+		["購入タイミング判定", `${finance.timingRank} / ${finance.timingReason}`],
+		["B/Sルーブリック", formatBalanceSheetSalesRubricSummary(finance.salesRubric)],
+		["土地代", `${formatYen(finance.landPrice)} / 償却対象外`],
+		["システム本体価格", `${formatYen(finance.systemPrice)} / 17年償却`],
+		["権利代", `${formatYen(finance.rightsPrice)} / 5年償却`],
+		["実効税率", `${trimTrailingZeros(finance.effectiveTaxRate)}%`],
+		["借入条件", `${finance.loanAmount > 0 ? formatYen(finance.loanAmount) : "借入なし"} / 金利 ${trimTrailingZeros(finance.interestRate)}% / ${finance.loanYears !== null ? `${trimTrailingZeros(finance.loanYears)}年返済` : "返済期間未入力"}`],
+		["年間償却額", formatYen(finance.annualDepreciation)],
+		["税効果", formatYen(finance.taxBenefit)],
+		["税引後キャッシュフロー", formatYen(finance.afterTaxCashflow)],
+		["DSCR", finance.dscr !== null ? trimTrailingZeros(finance.dscr) : "未入力"],
+		["B/S 3指標", buildProposalPdfRubricMetricsLine(finance.salesRubric)],
+	];
+}
+
+function buildProposalPdfRubricBoxLines(draft: ProposalSimulationDraft): string[] {
+	if (!draft.financeSimulation) {
+		return [
+			"判定保留 / B/S3指標を確認後に提案ルートを確定",
+			"推奨場所: 未判定",
+			"ひと言: 決算書の3指標が揃い次第、投資余力に合わせて提案ルートを確定します。",
+		];
+	}
+	const rubric = draft.financeSimulation.salesRubric;
+	return [
+		`${rubric.routeTitle} / ${rubric.recommendedModel}`,
+		`推奨場所: ${rubric.recommendedLocation}`,
+		`ひと言: ${rubric.killerPhrase}`,
+	];
+}
+
+function buildProposalPdfRubricMetricsLine(rubric: BalanceSheetSalesRubric): string {
+	return [
+		`流動比率 ${formatRubricMetric(rubric.liquidityRatio, "%")} (${formatRubricScore(rubric.liquidityScore)})`,
+		`利益剰余金 ${formatRubricMetric(rubric.retainedEarnings, "円")} (${formatRubricScore(rubric.retainedEarningsScore)})`,
+		`自己資本比率 ${formatRubricMetric(rubric.equityRatio, "%")} (${formatRubricScore(rubric.equityRatioScore)})`,
+	].join(" / ");
 }
 
 async function buildResidentDocumentPdfBytes(
