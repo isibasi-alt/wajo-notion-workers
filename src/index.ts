@@ -14763,14 +14763,15 @@ async function processProposalSimulation(
 		...draft.pageOneLines,
 		"【A4 2枚構成｜2枚目】",
 		...draft.pageTwoLines,
-		"【提案タイプの選び方】",
-		...draft.typeGuideLines,
 		`PDF出力: ${pdfExport.message}`,
+		"【確認手順】",
 		pdfExport.destination === "property"
-			? "保存先: レコード内のPDFプロパティ（提案PDF / シミュレーションPDF 等）から確認できます。"
+			? "1. このレコードの『提案PDF』を開く"
 			: pdfExport.destination === "page_block"
-				? "保存先: 同じレコード本文の末尾にPDFを追加しています。"
-				: "PDFが保存されていない場合は、レコードに files 型の「提案PDF」プロパティを1つ追加してください。",
+				? "1. このレコード本文の末尾に追加されたPDFを開く"
+				: "1. files型の『提案PDF』プロパティを追加する",
+		pdfExport.fileUrl ? "2. 『提案PDFリンク』からも同じPDFを開けます" : "",
+		"3. 『資料PDF』は今回の提案シミュレーションでは使いません",
 	].join("\n");
 	if (!input.dryRun) {
 		const patches: Record<string, SafePatch> = {};
@@ -16101,7 +16102,12 @@ async function buildProposalSimulationPdfBytes(
 	const left = 42;
 	const right = 42;
 	const maxWidth = pageWidth - left - right;
-	const createPageWriter = (pageNo: number, title: string, subtitle: string) => {
+	const createPageWriter = (
+		pageNo: number,
+		title: string,
+		subtitle: string,
+		breadcrumb: string,
+	) => {
 		const page = pdf.addPage([pageWidth, pageHeight]);
 		page.drawRectangle({
 			x: 0,
@@ -16109,6 +16115,13 @@ async function buildProposalSimulationPdfBytes(
 			width: pageWidth,
 			height: 88,
 			color: rgb(0.08, 0.16, 0.22),
+		});
+		page.drawText(breadcrumb, {
+			x: left,
+			y: pageHeight - 20,
+			size: 7.5,
+			font: fonts.regular,
+			color: rgb(0.78, 0.84, 0.83),
 		});
 		page.drawText("WAJO Sales OS", {
 			x: left,
@@ -16315,7 +16328,8 @@ async function buildProposalSimulationPdfBytes(
 	const first = createPageWriter(
 		1,
 		"通常営業シミュレーション",
-		`${proposalKindJapaneseLabel(draft.proposalKind)} / ${generatedDate}`,
+		`${draft.titleLabel || proposalKindJapaneseLabel(draft.proposalKind)} / ${generatedDate}`,
+		"案件 > 提案シミュレーション > 提案PDF",
 	);
 	if (draft.proposalKind !== "gridBattery") {
 		await first.drawSitePhotoFrame("現場写真", draft.sitePhotos, 210);
@@ -16344,7 +16358,8 @@ async function buildProposalSimulationPdfBytes(
 	const second = createPageWriter(
 		2,
 		"ファイナンス・税効果シミュレーション",
-		"土地は償却対象外 / システム17年償却 / 権利代5年償却",
+		`${draft.titleLabel || proposalKindJapaneseLabel(draft.proposalKind)} / 税務前提とリスク整理`,
+		"案件 > 提案シミュレーション > 税務・リスク確認",
 	);
 	second.drawSectionTitle("税務前提");
 	const financeLines = draft.financeSimulation?.lines ?? [
@@ -16503,24 +16518,24 @@ async function buildResidentDocumentPdfBytes(
 function buildProposalPdfPageOneLines(draft: ProposalSimulationDraft): string[] {
 	if (draft.proposalKind === "gridBattery") {
 		return [
-			`Proposal focus: ${proposalKindLabelForPdf(draft.proposalKind)}`,
-			`Project cost: ${formatYenForPdf(draft.salePrice)} / Net investment: ${formatYenForPdf(draft.purchaseCost)}`,
-			`Annual revenue: ${formatYenForPdf(draft.annualIncome)} / Annual running cost: ${formatYenForPdf(draft.runningCost)}`,
-			`Annual net profit: ${formatYenForPdf(draft.annualNetIncome)} / Expected yield: ${formatPercentForPdf(draft.expectedYield, 2)} / Payback: ${formatDecimalForPdf(draft.paybackYears, 2)} years`,
-			"Positioning: Grid-scale battery storage revenue depends on market prices, awards, operation policy and grid conditions.",
+			`提案の軸: ${proposalKindJapaneseLabel(draft.proposalKind)}`,
+			`総事業費 ${formatYenForPdf(draft.salePrice)} / 実質投資額 ${formatYenForPdf(draft.purchaseCost)}`,
+			`年間想定総売上 ${formatYenForPdf(draft.annualIncome)} / 年間ランニングコスト ${formatYenForPdf(draft.runningCost)}`,
+			`年間想定純利益 ${formatYenForPdf(draft.annualNetIncome)} / 想定利回り ${formatPercentForPdf(draft.expectedYield, 2)} / 想定回収年数 ${formatDecimalForPdf(draft.paybackYears, 2)}年`,
+			"位置づけ: 系統用蓄電池は、市場価格、約定結果、運用条件、系統条件で収益が変動します。",
 		];
 	}
 	const details = draft.solarDetails;
 	return nonEmptyLines([
-		`Proposal focus: ${proposalKindLabelForPdf(draft.proposalKind)}`,
+		`提案の軸: ${proposalKindJapaneseLabel(draft.proposalKind)}`,
 		details
-			? `Asset: Solar power plant / ${pdfSafeValue(details.plantName, "See Notion record")} / ${englishVoltageClass(details.voltageClass)}`
-			: "Asset: Solar power plant",
-		`Sales price: ${formatYenForPdf(draft.salePrice)} / Sourcing price: ${formatYenForPdf(draft.purchaseCost)}`,
-		`Annual revenue: ${formatYenForPdf(draft.annualIncome)} / Annual maintenance cost: ${formatYenForPdf(draft.runningCost)}`,
-		`Annual net cashflow: ${formatYenForPdf(draft.annualNetIncome)} / Expected yield: ${formatPercentForPdf(draft.expectedYield, 2)} / Payback: ${formatDecimalForPdf(draft.paybackYears, 2)} years`,
+			? `対象資産: 太陽光発電所 / ${pdfSafeValue(details.plantName, "Notionで確認")} / ${details.voltageClass || englishVoltageClass(details.voltageClass)}`
+			: "対象資産: 太陽光発電所",
+		`販売価格 ${formatYenForPdf(draft.salePrice)} / 仕入れ価格 ${formatYenForPdf(draft.purchaseCost)}`,
+		`年間売電収入 ${formatYenForPdf(draft.annualIncome)} / 年間維持費 ${formatYenForPdf(draft.runningCost)}`,
+		`年間手残り ${formatYenForPdf(draft.annualNetIncome)} / 想定利回り ${formatPercentForPdf(draft.expectedYield, 2)} / 想定回収年数 ${formatDecimalForPdf(draft.paybackYears, 2)}年`,
 		details
-			? `Equipment summary: ${pdfSafeValue(details.panelMaker, "Panel maker")} ${pdfSafeValue(details.panelModel, "")} / ${formatDecimalForPdf(details.panelCount, 0)} panels / DC ${formatDecimalForPdf(details.dcCapacityKw, 1)} kW`
+			? `設備概要: ${pdfSafeValue(details.panelMaker, "パネルメーカー")} ${pdfSafeValue(details.panelModel, "")} / ${formatDecimalForPdf(details.panelCount, 0)}枚 / DC ${formatDecimalForPdf(details.dcCapacityKw, 1)}kW`
 			: "",
 	]);
 }
@@ -16528,9 +16543,9 @@ function buildProposalPdfPageOneLines(draft: ProposalSimulationDraft): string[] 
 function buildProposalPdfPageTwoLines(draft: ProposalSimulationDraft): string[] {
 	if (draft.proposalKind === "gridBattery") {
 		return [
-			"Subsidy assumptions must be confirmed against the public offering guideline and grant decision.",
-			"Market revenue changes with JEPX spreads, capacity market awards, balancing market awards, degradation cost and penalties.",
-			"Required checks: grid connection, receiving point, PCS output, battery capacity, EMS or aggregator operation, insurance, O&M and land terms.",
+			"補助金前提は、公募要領と交付決定の確認が必要です。",
+			"市場収益は、JEPX値差、容量市場、需給調整市場、劣化コスト、ペナルティで変動します。",
+			"確認項目: 系統接続、受電点、PCS出力、蓄電容量、EMS/アグリゲーター運用、保険、O&M、土地条件。",
 		];
 	}
 	const details = draft.solarDetails;
@@ -16542,22 +16557,22 @@ function buildProposalPdfPageTwoLines(draft: ProposalSimulationDraft): string[] 
 			: "";
 	return nonEmptyLines([
 		details
-			? `Site: ${pdfSafeValue(details.location, "See Notion record")} / Power area: ${pdfSafeValue(details.powerArea, "See Notion record")} / Voltage: ${englishVoltageClass(details.voltageClass)}`
+			? `所在地: ${pdfSafeValue(details.location, "Notionで確認")} / 電力会社エリア: ${pdfSafeValue(details.powerArea, "Notionで確認")} / 区分: ${details.voltageClass || englishVoltageClass(details.voltageClass)}`
 			: "",
 		details
-			? `Panels: ${pdfSafeValue(details.panelMaker, "Panel maker")} / ${pdfSafeValue(details.panelModel, "Panel model")} / ${formatDecimalForPdf(details.panelCount, 0)} panels / DC ${formatDecimalForPdf(details.dcCapacityKw, 1)} kW`
+			? `パネル: ${pdfSafeValue(details.panelMaker, "パネルメーカー")} / ${pdfSafeValue(details.panelModel, "型式")} / ${formatDecimalForPdf(details.panelCount, 0)}枚 / DC ${formatDecimalForPdf(details.dcCapacityKw, 1)}kW`
 			: "",
 		details
-			? `PCS: ${pdfSafeValue(details.powerConditionerMaker, "PCS maker")} / ${pdfSafeValue(details.powerConditionerModel, "PCS model")} / ${formatDecimalForPdf(details.pcsCapacityKw, 1)} kW`
+			? `PCS: ${pdfSafeValue(details.powerConditionerMaker, "PCSメーカー")} / ${pdfSafeValue(details.powerConditionerModel, "型式")} / ${formatDecimalForPdf(details.pcsCapacityKw, 1)}kW`
 			: "",
 		details
-			? `Feed-in terms: ${pdfSafeValue(details.fitFipType, "FIT/FIP")} / ${formatDecimalForPdf(details.unitPrice, 2)} JPY per kWh / remaining ${formatDecimalForPdf(details.remainingSalesYears, 1)} years`
+			? `売電条件: ${pdfSafeValue(details.fitFipType, "FIT/FIP")} / ${formatDecimalForPdf(details.unitPrice, 2)}円/kWh / 残存 ${formatDecimalForPdf(details.remainingSalesYears, 1)}年`
 			: "",
 		details
-			? `Operation: grid connection ${pdfSafeValue(details.gridConnectionDate, "See Notion record")} / operating period ${formatOperationYearsForPdf(details.operationYears)}`
+			? `稼働状況: 連系開始日 ${pdfSafeValue(details.gridConnectionDate, "Notionで確認")} / 稼働年数 ${formatOperationYearsForPdf(details.operationYears)}`
 			: "",
 		maintenanceBreakdown,
-		"Risk notes: generation variance, curtailment, insurance deductible, equipment failure, financing terms and future disposal cost must be shown before submission.",
+		"リスク注記: 発電量変動、出力抑制、保険免責、設備故障、融資条件、将来の解体・廃棄費用は提出前に必ず開示します。",
 	]);
 }
 
