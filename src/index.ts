@@ -16441,6 +16441,85 @@ async function buildProposalSimulationPdfBytes(
 		});
 	};
 
+	const drawComparisonBarChart = (
+		page: PDFPage,
+		yTop: number,
+		title: string,
+		items: Array<{ label: string; value: number }>,
+		height = 104,
+	) => {
+		page.drawRectangle({
+			x: left,
+			y: yTop - height,
+			width: contentWidth,
+			height,
+			color: rgb(0.985, 0.992, 0.994),
+			borderColor: colors.line,
+			borderWidth: 0.6,
+		});
+		page.drawText(title, {
+			x: left + 12,
+			y: yTop - 18,
+			size: 9,
+			font: fonts.bold,
+			color: colors.teal,
+		});
+		const chartLeft = left + 18;
+		const chartBottom = yTop - height + 18;
+		const chartWidth = contentWidth - 36;
+		const chartHeight = height - 42;
+		const maxValue = Math.max(...items.map((item) => Math.abs(item.value)), 1);
+		const barGap = 12;
+		const barWidth = (chartWidth - barGap * (items.length - 1)) / items.length;
+		const barColors = [rgb(0.12, 0.43, 0.39), rgb(0.62, 0.70, 0.72), rgb(0.19, 0.56, 0.47), rgb(0.80, 0.64, 0.30)];
+
+		page.drawLine({
+			start: { x: chartLeft, y: chartBottom },
+			end: { x: chartLeft + chartWidth, y: chartBottom },
+			thickness: 0.6,
+			color: colors.line,
+		});
+
+		items.forEach((item, index) => {
+			const normalizedHeight = (Math.max(item.value, 0) / maxValue) * (chartHeight - 22);
+			const x = chartLeft + index * (barWidth + barGap);
+			page.drawRectangle({
+				x,
+				y: chartBottom,
+				width: barWidth,
+				height: Math.max(normalizedHeight, 2),
+				color: barColors[index % barColors.length]!,
+			});
+			const labelLines = wrapPdfText(item.label, fonts.regular, 7.2, barWidth).slice(0, 2);
+			let labelY = chartBottom - 11;
+			for (const line of labelLines) {
+				page.drawText(line, {
+					x,
+					y: labelY,
+					size: 7.2,
+					font: fonts.regular,
+					color: colors.muted,
+				});
+				labelY -= 8.5;
+			}
+			const valueLabel = formatYen(item.value);
+			const valueLines = wrapPdfText(valueLabel, fonts.bold, 7.8, barWidth + 8).slice(0, 2);
+			let valueY = chartBottom + Math.max(normalizedHeight, 2) + 4;
+			for (const line of valueLines) {
+				page.drawText(line, {
+					x,
+					y: valueY,
+					size: 7.8,
+					font: fonts.bold,
+					color: colors.text,
+				});
+				valueY -= 9;
+			}
+		});
+
+		return yTop - height - 8;
+	};
+
 	const drawSitePhotoFrame = async (page: PDFPage, yTop: number, sitePhotos: ProposalSitePhoto[]) => {
 		const height = 170;
 		const boxY = yTop - height;
@@ -16575,15 +16654,18 @@ async function buildProposalSimulationPdfBytes(
 		["想定粗利", draft.grossProfit !== null ? formatYen(draft.grossProfit) : "算出不可"],
 	]);
 	y -= 6;
+	y = drawComparisonBarChart(
+		first,
+		y,
+		"収益イメージ",
+		buildProposalChartItems(draft),
+	);
 	drawNoteBox(
 		first,
 		y,
-		"注記",
-		[
-			"本資料はシミュレーションです。実際の売電収入、出力抑制、融資条件、税務処理は個別条件で変動します。",
-			"最終提案前に、設備資料、連系条件、売買契約条件、税務前提を再確認してください。",
-		],
-		72,
+		"今回の読み解き",
+		buildProposalInsightLines(draft),
+		68,
 	);
 	drawFooter(first);
 
@@ -16708,6 +16790,37 @@ function buildProposalPdfRubricMetricsLine(rubric: BalanceSheetSalesRubric): str
 		`利益剰余金 ${formatRubricMetric(rubric.retainedEarnings, "円")} (${formatRubricScore(rubric.retainedEarningsScore)})`,
 		`自己資本比率 ${formatRubricMetric(rubric.equityRatio, "%")} (${formatRubricScore(rubric.equityRatioScore)})`,
 	].join(" / ");
+}
+
+function buildProposalChartItems(
+	draft: ProposalSimulationDraft,
+): Array<{ label: string; value: number }> {
+	if (draft.proposalKind === "gridBattery") {
+		return [
+			{ label: "年間総売上", value: draft.annualIncome ?? 0 },
+			{ label: "年間ランニング", value: draft.runningCost ?? 0 },
+			{ label: "年間純利益", value: draft.annualNetIncome ?? 0 },
+		];
+	}
+	return [
+		{ label: "年間売電収入", value: draft.annualIncome ?? 0 },
+		{ label: "年間維持費", value: draft.runningCost ?? 0 },
+		{ label: "年間手残り", value: draft.annualNetIncome ?? 0 },
+	];
+}
+
+function buildProposalInsightLines(draft: ProposalSimulationDraft): string[] {
+	const routeLine = draft.financeSimulation
+		? `投資判断: ${draft.financeSimulation.timingRank}判定 / ${draft.financeSimulation.timingReason}`
+		: "投資判断: ファイナンス前提が未入力のため、税効果と返済余力は暫定表示です。";
+	const fitLine = draft.proposalKind === "gridBattery"
+		? `収益見通し: 年間総売上 ${formatOptionalYen(draft.annualIncome)} / 年間純利益 ${formatOptionalYen(draft.annualNetIncome)} / 想定回収 ${draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"}`
+		: `収益見通し: 残存FIT総手残り ${draft.fitTotalNetCashflow !== null ? formatYen(draft.fitTotalNetCashflow) : "算出不可"} / 想定回収 ${draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"}`;
+	const nextActionLine =
+		draft.proposalKind === "gridBattery"
+			? "次アクション: 系統・補助金・運用条件を詰めて、事業化可否を人間が最終判定します。"
+			: "次アクション: 決算書3指標、融資条件、設備資料を揃えて、社内決裁に耐える最終版へ進めます。";
+	return [routeLine, fitLine, nextActionLine];
 }
 
 async function buildResidentDocumentPdfBytes(
