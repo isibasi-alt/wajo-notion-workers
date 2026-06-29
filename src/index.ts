@@ -16532,10 +16532,10 @@ async function buildProposalSimulationPdfBytes(
 
 	const cardGap = 12;
 	const cardWidth = (contentWidth - cardGap) / 2;
-	drawMetricCard(first, left, y, cardWidth, 64, "販売価格", formatYen(draft.salePrice ?? 0));
-	drawMetricCard(first, left + cardWidth + cardGap, y, cardWidth, 64, "仕入れ価格", formatYen(draft.purchaseCost ?? 0));
+	drawMetricCard(first, left, y, cardWidth, 64, "販売価格", formatOptionalYen(draft.salePrice));
+	drawMetricCard(first, left + cardWidth + cardGap, y, cardWidth, 64, "仕入れ価格", formatOptionalYen(draft.purchaseCost));
 	y -= 76;
-	drawMetricCard(first, left, y, cardWidth, 64, "年間手残り", formatYen(draft.annualNetIncome ?? 0));
+	drawMetricCard(first, left, y, cardWidth, 64, "年間手残り", formatOptionalYen(draft.annualNetIncome));
 	drawMetricCard(
 		first,
 		left + cardWidth + cardGap,
@@ -16549,8 +16549,8 @@ async function buildProposalSimulationPdfBytes(
 
 	y = drawSectionTitle(first, y, "主要前提");
 	y = drawDetailRows(first, y, [
-		["年間売電収入", formatYen(draft.annualIncome ?? 0)],
-		["年間維持費", formatYen(draft.runningCost)],
+		["年間売電収入", formatOptionalYen(draft.annualIncome)],
+		["年間維持費", formatOptionalYen(draft.runningCost)],
 		["残存FIT年数", draft.fitRemainingYears !== null ? `${trimTrailingZeros(draft.fitRemainingYears)}年` : "未入力"],
 		["出力抑制前提", `${draft.curtailmentScenario}${draft.curtailmentScenario === "抑制あり" ? ` / ${trimTrailingZeros(draft.curtailmentRate)}%` : ""}`],
 		["残存FIT総手残り", draft.fitTotalNetCashflow !== null ? formatYen(draft.fitTotalNetCashflow) : "算出不可"],
@@ -16583,10 +16583,10 @@ async function buildProposalSimulationPdfBytes(
 	if (draft.proposalKind === "gridBattery") {
 		y = drawDetailRows(second, y, [
 			["提案タイプ", proposalKindJapaneseLabel(draft.proposalKind)],
-			["総事業費", formatYen(draft.salePrice ?? 0)],
-			["実質投資額", formatYen(draft.purchaseCost ?? 0)],
-			["年間想定総売上", formatYen(draft.annualIncome ?? 0)],
-			["年間ランニングコスト", formatYen(draft.runningCost)],
+			["総事業費", formatOptionalYen(draft.salePrice)],
+			["実質投資額", formatOptionalYen(draft.purchaseCost)],
+			["年間想定総売上", formatOptionalYen(draft.annualIncome)],
+			["年間ランニングコスト", formatOptionalYen(draft.runningCost)],
 		]);
 	} else {
 		const details = draft.solarDetails;
@@ -29922,6 +29922,10 @@ async function appendClosingFanfareCallout(
 
 function formatYen(value: number): string {
 	return `¥${Math.round(value).toLocaleString("ja-JP")}`;
+}
+
+function formatOptionalYen(value: number | null): string {
+	return value === null ? "未入力" : formatYen(value);
 }
 
 /**
