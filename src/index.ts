@@ -16961,13 +16961,21 @@ async function buildProposalSimulationPdfBytes(
 		y,
 		"収益イメージ",
 		buildProposalChartItems(draft),
+		88,
+	);
+	y = drawComparisonBarChart(
+		first,
+		y,
+		draft.financeSimulation ? "投資構成" : "価格イメージ",
+		buildProposalInvestmentChartItems(draft),
+		88,
 	);
 	drawNoteBox(
 		first,
 		y,
 		"今回の読み解き",
 		buildProposalInsightLines(draft),
-		68,
+		64,
 	);
 	drawFooter(first);
 
@@ -17111,18 +17119,48 @@ function buildProposalChartItems(
 	];
 }
 
+function buildProposalInvestmentChartItems(
+	draft: ProposalSimulationDraft,
+): Array<{ label: string; value: number }> {
+	if (draft.financeSimulation) {
+		return [
+			{ label: "土地代", value: draft.financeSimulation.landPrice },
+			{ label: "システム代", value: draft.financeSimulation.systemPrice },
+			{ label: "権利代", value: draft.financeSimulation.rightsPrice },
+		];
+	}
+	if (draft.proposalKind === "gridBattery") {
+		return [
+			{ label: "総事業費", value: draft.salePrice ?? 0 },
+			{ label: "実質投資額", value: draft.purchaseCost ?? 0 },
+			{ label: "年間純利益", value: draft.annualNetIncome ?? 0 },
+		];
+	}
+	return [
+		{ label: "販売価格", value: draft.salePrice ?? 0 },
+		{ label: "仕入れ価格", value: draft.purchaseCost ?? 0 },
+		{ label: "想定粗利", value: draft.grossProfit ?? 0 },
+	];
+}
+
 function buildProposalInsightLines(draft: ProposalSimulationDraft): string[] {
-	const routeLine = draft.financeSimulation
+	const timingLine = draft.financeSimulation
 		? `投資判断: ${draft.financeSimulation.timingRank}判定 / ${draft.financeSimulation.timingReason}`
 		: "投資判断: ファイナンス前提が未入力のため、税効果と返済余力は暫定表示です。";
-	const fitLine = draft.proposalKind === "gridBattery"
+	const bsLine = draft.financeSimulation
+		? `B/S提案: ${formatBalanceSheetSalesRubricSummary(draft.financeSimulation.salesRubric)} / ${draft.financeSimulation.salesRubric.recommendedModel}`
+		: "B/S提案: 決算書3指標が未入力のため、提案ルートは仮置きです。";
+	const incomeLine = draft.proposalKind === "gridBattery"
 		? `収益見通し: 年間総売上 ${formatOptionalYen(draft.annualIncome)} / 年間純利益 ${formatOptionalYen(draft.annualNetIncome)} / 想定回収 ${draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"}`
-		: `収益見通し: 残存FIT総手残り ${draft.fitTotalNetCashflow !== null ? formatYen(draft.fitTotalNetCashflow) : "算出不可"} / 想定回収 ${draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"}`;
+		: `収益見通し: 残存FIT総手残り ${draft.fitTotalNetCashflow !== null ? formatYen(draft.fitTotalNetCashflow) : "算出不可"} / 年間手残り ${formatOptionalYen(draft.annualNetIncome)} / 想定回収 ${draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"}`;
+	const taxLine = draft.financeSimulation
+		? `税務と返済: 年間償却 ${formatYen(draft.financeSimulation.annualDepreciation)} / 税効果 ${formatYen(draft.financeSimulation.taxBenefit)} / DSCR ${draft.financeSimulation.dscr !== null ? trimTrailingZeros(draft.financeSimulation.dscr) : "未入力"}`
+		: "税務と返済: 借入条件、税率、償却前提を入れると税引後キャッシュフローまで出力できます。";
 	const nextActionLine =
 		draft.proposalKind === "gridBattery"
 			? "次アクション: 系統・補助金・運用条件を詰めて、事業化可否を人間が最終判定します。"
-			: "次アクション: 決算書3指標、融資条件、設備資料を揃えて、社内決裁に耐える最終版へ進めます。";
-	return [routeLine, fitLine, nextActionLine];
+			: "次アクション: 決算書3指標、融資条件、設備資料を揃えて、社内決裁と金融機関説明に耐える最終版へ進めます。";
+	return [timingLine, bsLine, incomeLine, taxLine, nextActionLine];
 }
 
 async function buildResidentDocumentPdfBytes(
@@ -17295,10 +17333,20 @@ function buildProposalPdfPageTwoLines(draft: ProposalSimulationDraft): string[] 
 	const details = draft.solarDetails;
 	const maintenanceBreakdown =
 		draft.runningCostBreakdown.length > 0
-			? `Maintenance breakdown: ${draft.runningCostBreakdown
+			? `維持費内訳: ${draft.runningCostBreakdown
 					.map((item) => `${pdfSafeValue(item.label, "Cost")} ${formatYenForPdf(item.value)}`)
 					.join(" / ")}`
 			: "";
+	const curtailmentLine =
+		draft.curtailmentScenario === "抑制あり"
+			? `出力抑制前提: 抑制あり / 抑制率 ${trimTrailingZeros(draft.curtailmentRate)}% / 抑制後の年間売電収入 ${formatYenForPdf(draft.annualIncome)}`
+			: `出力抑制前提: 抑制なし / 年間売電収入 ${formatYenForPdf(draft.annualIncome)}`;
+	const financeLine = draft.financeSimulation
+		? `財務前提: 税効果 ${formatYenForPdf(draft.financeSimulation.taxBenefit)} / 税引後キャッシュフロー ${formatYenForPdf(draft.financeSimulation.afterTaxCashflow)} / DSCR ${draft.financeSimulation.dscr !== null ? trimTrailingZeros(draft.financeSimulation.dscr) : "未入力"}`
+		: "財務前提: 借入条件、実効税率、償却前提を入れるとDSCRまで算出できます。";
+	const timingLine = draft.financeSimulation
+		? `購入タイミング判定: ${draft.financeSimulation.timingRank} / ${draft.financeSimulation.timingReason}`
+		: "購入タイミング判定: 決算書3指標が未入力のため保留";
 	return nonEmptyLines([
 		details
 			? `所在地: ${pdfSafeValue(details.location, "Notionで確認")} / 電力会社エリア: ${pdfSafeValue(details.powerArea, "Notionで確認")} / 区分: ${details.voltageClass || englishVoltageClass(details.voltageClass)}`
@@ -17315,8 +17363,12 @@ function buildProposalPdfPageTwoLines(draft: ProposalSimulationDraft): string[] 
 		details
 			? `稼働状況: 連系開始日 ${pdfSafeValue(details.gridConnectionDate, "Notionで確認")} / 稼働年数 ${formatOperationYearsForPdf(details.operationYears)}`
 			: "",
+		curtailmentLine,
+		financeLine,
+		timingLine,
 		maintenanceBreakdown,
 		"リスク注記: 発電量変動、出力抑制、保険免責、設備故障、融資条件、将来の解体・廃棄費用は提出前に必ず開示します。",
+		"税務注記: 本資料は提案用の試算です。税務判断は購入法人の決算内容と税理士確認を前提に最終確定します。",
 	]);
 }
 
