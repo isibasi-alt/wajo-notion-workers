@@ -1126,6 +1126,7 @@ const DEFAULT_SALES_NEWS_KEYWORDS = [
 const PROPOSAL_PDF_FILE_PROPERTY_ALIASES = [
 	"提案シミュレーションPDF",
 	"提案PDF",
+	"作成した提案PDFを開く",
 	"シミュレーションPDF",
 	"提案書PDF",
 	"PDFファイル",
@@ -14766,10 +14767,10 @@ async function processProposalSimulation(
 		`PDF出力: ${pdfExport.message}`,
 		"【確認手順】",
 		pdfExport.destination === "property"
-			? "1. このレコードの『提案PDF』を開く"
+			? "1. このレコードの『提案PDF』または『作成した提案PDFを開く』を開く"
 			: pdfExport.destination === "page_block"
 				? "1. このレコード本文の末尾に追加されたPDFを開く"
-				: "1. files型の『提案PDF』プロパティを追加する",
+				: "1. files型の『提案PDF』または『作成した提案PDFを開く』プロパティを追加する",
 		pdfExport.fileUrl ? "2. 『提案PDFリンク』からも同じPDFを開けます" : "",
 		"3. 『資料PDF』は今回の提案シミュレーションでは使いません",
 	].join("\n");
@@ -15923,7 +15924,7 @@ async function exportProposalSimulationPdf(
 			attached: false,
 			destination: "none",
 			message:
-				"PDFアップロードは完了しましたが、保存先が未設定です。files型の「提案PDF」を追加してください。",
+				"PDFアップロードは完了しましたが、保存先が未設定です。files型の「提案PDF」または「作成した提案PDFを開く」を追加してください。",
 			fileName,
 			fileUploadId,
 			fileUrl,
