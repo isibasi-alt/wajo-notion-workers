@@ -16099,29 +16099,28 @@ async function buildProposalSimulationPdfBytes(
 	const fonts = await embedMonthlyEvalPdfFonts(pdf);
 	const pageWidth = 595.28;
 	const pageHeight = 841.89;
-	const left = 42;
-	const right = 42;
-	const maxWidth = pageWidth - left - right;
-	const createPageWriter = (
-		pageNo: number,
-		title: string,
-		subtitle: string,
-		breadcrumb: string,
-	) => {
-		const page = pdf.addPage([pageWidth, pageHeight]);
+	const left = 40;
+	const right = 40;
+	const contentWidth = pageWidth - left - right;
+	const generatedDate = todayIsoDateInTokyo();
+
+	const colors = {
+		navy: rgb(0.08, 0.16, 0.22),
+		text: rgb(0.11, 0.14, 0.18),
+		muted: rgb(0.38, 0.42, 0.44),
+		line: rgb(0.78, 0.84, 0.83),
+		teal: rgb(0.08, 0.39, 0.42),
+		panel: rgb(0.95, 0.97, 0.97),
+		panelStrong: rgb(0.9, 0.95, 0.94),
+	};
+
+	const drawHeader = (page: PDFPage, pageNo: number, title: string, subtitle: string, breadcrumb: string) => {
 		page.drawRectangle({
 			x: 0,
 			y: pageHeight - 88,
 			width: pageWidth,
 			height: 88,
-			color: rgb(0.08, 0.16, 0.22),
-		});
-		page.drawText(breadcrumb, {
-			x: left,
-			y: pageHeight - 20,
-			size: 7.5,
-			font: fonts.regular,
-			color: rgb(0.78, 0.84, 0.83),
+			color: colors.navy,
 		});
 		page.drawText("WAJO Sales OS", {
 			x: left,
@@ -16133,7 +16132,7 @@ async function buildProposalSimulationPdfBytes(
 		page.drawText(title, {
 			x: left,
 			y: pageHeight - 57,
-			size: 11,
+			size: 11.5,
 			font: fonts.bold,
 			color: rgb(0.9, 0.95, 0.92),
 		});
@@ -16144,239 +16143,387 @@ async function buildProposalSimulationPdfBytes(
 			font: fonts.regular,
 			color: rgb(0.82, 0.88, 0.86),
 		});
+		page.drawText(breadcrumb, {
+			x: left,
+			y: pageHeight - 20,
+			size: 7.2,
+			font: fonts.regular,
+			color: rgb(0.78, 0.84, 0.83),
+		});
 		page.drawText(`${pageNo} / 2`, {
-			x: pageWidth - right - 28,
+			x: pageWidth - right - 30,
 			y: pageHeight - 36,
 			size: 9,
 			font: fonts.regular,
 			color: rgb(1, 1, 1),
 		});
-		let y = pageHeight - 124;
-		const drawWrapped = (textLine: string, size = 11, strong = false) => {
-			const wrapped = wrapPdfText(textLine, strong ? fonts.bold : fonts.regular, size, maxWidth);
-			for (const line of wrapped) {
-				page.drawText(line, {
-					x: left,
-					y,
-					size,
-					font: strong ? fonts.bold : fonts.regular,
-					color: rgb(0.11, 0.14, 0.18),
-				});
-				y -= size + 5;
-				if (y < 45) return;
-			}
-		};
-		const drawSectionTitle = (title: string) => {
-			y -= 2;
-			page.drawText(title, {
-				x: left,
-				y,
-				size: 11,
-				font: fonts.bold,
-				color: rgb(0.05, 0.32, 0.38),
-			});
-			y -= 9;
-			page.drawLine({
-				start: { x: left, y },
-				end: { x: pageWidth - right, y },
-				thickness: 0.7,
-				color: rgb(0.65, 0.78, 0.76),
-			});
-			y -= 14;
-		};
-		const drawMetricRows = (rows: Array<[string, string]>) => {
-			const rowHeight = 26;
-			for (const [label, value] of rows) {
-				if (y < 80) return;
-				page.drawRectangle({
-					x: left,
-					y: y - 8,
-					width: maxWidth,
-					height: rowHeight,
-					color: rgb(0.94, 0.97, 0.96),
-				});
-				page.drawText(label, {
-					x: left + 12,
-					y,
-					size: 9,
-					font: fonts.regular,
-					color: rgb(0.32, 0.39, 0.4),
-				});
-				const valueLines = wrapPdfText(value, fonts.bold, 9, maxWidth - 240).slice(0, 1);
-				page.drawText(valueLines[0] ?? "", {
-					x: left + 240,
-					y,
-					size: 9,
-					font: fonts.bold,
-					color: rgb(0.09, 0.14, 0.16),
-				});
-				y -= rowHeight + 4;
-			}
-		};
-		const drawRule = () => {
-			y -= 6;
-			page.drawLine({
-				start: { x: left, y },
-				end: { x: pageWidth - right, y },
-				thickness: 0.8,
-				color: rgb(0.75, 0.78, 0.76),
-			});
-			y -= 14;
-		};
-		const drawSitePhotoFrame = async (
-			title: string,
-			sitePhotos: ProposalSitePhoto[],
-			height = 232,
-		) => {
-			drawSectionTitle(title);
-			const boxY = y - height;
-			page.drawRectangle({
-				x: left,
-				y: boxY,
-				width: maxWidth,
-				height,
-				borderColor: rgb(0.08, 0.12, 0.14),
-				borderWidth: 1.2,
-				color: rgb(0.98, 0.98, 0.96),
-			});
-			const gap = 14;
-			const slotHeight = height - 28;
-			const slotWidth = Math.min((maxWidth - gap - 24) / 2, slotHeight * 0.75);
-			const totalSlotWidth = slotWidth * 2 + gap;
-			const startX = left + (maxWidth - totalSlotWidth) / 2;
-			const slotY = boxY + 14;
-			for (let index = 0; index < 2; index += 1) {
-				const slotX = startX + index * (slotWidth + gap);
-				page.drawRectangle({
-					x: slotX,
-					y: slotY,
-					width: slotWidth,
-					height: slotHeight,
-					borderColor: rgb(0.16, 0.21, 0.23),
-					borderWidth: 1,
-					color: rgb(1, 1, 1),
-				});
-				const sitePhoto = sitePhotos[index] ?? null;
-				let drewImage = false;
-				if (sitePhoto?.url) {
-					const image = await embedPdfImageFromUrl(pdf, sitePhoto.url);
-					if (image) {
-						const padding = 5;
-						const fit = fitRectWithinBox(
-							image.width,
-							image.height,
-							slotWidth - padding * 2,
-							slotHeight - padding * 2,
-						);
-						page.drawImage(image, {
-							x: slotX + padding + fit.x,
-							y: slotY + padding + fit.y,
-							width: fit.width,
-							height: fit.height,
-						});
-						drewImage = true;
-					}
-				}
-				if (!drewImage) {
-						page.drawText(`SITE PHOTO ${index + 1}`, {
-							x: slotX + 14,
-							y: slotY + slotHeight / 2 + 8,
-							size: 11,
-							font: fonts.bold,
-							color: rgb(0.44, 0.48, 0.48),
-						});
-						page.drawText("Portrait 3:4", {
-							x: slotX + 14,
-							y: slotY + slotHeight / 2 - 10,
-							size: 8,
-							font: fonts.regular,
-							color: rgb(0.44, 0.48, 0.48),
-						});
-				}
-				if (sitePhoto?.name) {
-					page.drawText(sitePhoto.name.slice(0, 26), {
-						x: slotX,
-						y: slotY - 9,
-						size: 7,
-						font: fonts.regular,
-						color: rgb(0.36, 0.4, 0.4),
-					});
-				}
-			}
-			y = boxY - 22;
-		};
-		const drawFooter = () => {
-			page.drawText(`Record ID: ${pageId}`, {
-				x: left,
-				y: 42,
-				size: 7.5,
-				font: fonts.regular,
-				color: rgb(0.38, 0.42, 0.44),
-			});
-			page.drawText(todayIsoDateInTokyo(), {
-				x: pageWidth - right - 62,
-				y: 42,
-				size: 7.5,
-				font: fonts.regular,
-				color: rgb(0.38, 0.42, 0.44),
-			});
-		};
-		return { drawWrapped, drawSectionTitle, drawMetricRows, drawRule, drawSitePhotoFrame, drawFooter };
 	};
 
-	const generatedDate = todayIsoDateInTokyo();
-	const first = createPageWriter(
+	const drawFooter = (page: PDFPage) => {
+		page.drawText(`Record ID: ${pageId}`, {
+			x: left,
+			y: 30,
+			size: 7.5,
+			font: fonts.regular,
+			color: colors.muted,
+		});
+		page.drawText(generatedDate, {
+			x: pageWidth - right - 62,
+			y: 30,
+			size: 7.5,
+			font: fonts.regular,
+			color: colors.muted,
+		});
+	};
+
+	const drawSectionTitle = (page: PDFPage, y: number, title: string) => {
+		page.drawText(title, {
+			x: left,
+			y,
+			size: 11,
+			font: fonts.bold,
+			color: colors.teal,
+		});
+		page.drawLine({
+			start: { x: left, y: y - 7 },
+			end: { x: pageWidth - right, y: y - 7 },
+			thickness: 0.8,
+			color: colors.line,
+		});
+		return y - 24;
+	};
+
+	const drawWrappedLines = (
+		page: PDFPage,
+		lines: string[],
+		y: number,
+		options?: { size?: number; strong?: boolean; width?: number; x?: number; lineGap?: number; maxLines?: number },
+	) => {
+		const size = options?.size ?? 9.5;
+		const font = options?.strong ? fonts.bold : fonts.regular;
+		const width = options?.width ?? contentWidth;
+		const x = options?.x ?? left;
+		const lineGap = options?.lineGap ?? 5;
+		let used = 0;
+		const maxLines = options?.maxLines ?? Number.POSITIVE_INFINITY;
+		for (const sourceLine of lines) {
+			const wrapped = wrapPdfText(sourceLine, font, size, width);
+			for (const wrappedLine of wrapped) {
+				if (used >= maxLines) return y;
+				page.drawText(wrappedLine, {
+					x,
+					y,
+					size,
+					font,
+					color: colors.text,
+				});
+				y -= size + lineGap;
+				used += 1;
+			}
+		}
+		return y;
+	};
+
+	const drawMetricCard = (
+		page: PDFPage,
+		x: number,
+		yTop: number,
+		width: number,
+		height: number,
+		label: string,
+		value: string,
+	) => {
+		page.drawRectangle({
+			x,
+			y: yTop - height,
+			width,
+			height,
+			color: colors.panel,
+			borderColor: colors.line,
+			borderWidth: 0.6,
+		});
+		page.drawText(label, {
+			x: x + 12,
+			y: yTop - 18,
+			size: 8.2,
+			font: fonts.regular,
+			color: colors.muted,
+		});
+		const valueLines = wrapPdfText(value, fonts.bold, 13, width - 24).slice(0, 2);
+		let valueY = yTop - 38;
+		for (const line of valueLines) {
+			page.drawText(line, {
+				x: x + 12,
+				y: valueY,
+				size: 13,
+				font: fonts.bold,
+				color: colors.text,
+			});
+			valueY -= 16;
+		}
+	};
+
+	const drawDetailRows = (page: PDFPage, y: number, rows: Array<[string, string]>) => {
+		const rowHeight = 24;
+		for (const [label, value] of rows) {
+			page.drawRectangle({
+				x: left,
+				y: y - rowHeight + 4,
+				width: contentWidth,
+				height: rowHeight,
+				color: rgb(0.98, 0.99, 0.99),
+			});
+			page.drawText(label, {
+				x: left + 10,
+				y,
+				size: 8.8,
+				font: fonts.regular,
+				color: colors.muted,
+			});
+			const line = wrapPdfText(value, fonts.bold, 8.8, contentWidth - 180).slice(0, 1)[0] ?? "";
+			page.drawText(line, {
+				x: left + 170,
+				y,
+				size: 8.8,
+				font: fonts.bold,
+				color: colors.text,
+			});
+			y -= rowHeight + 4;
+		}
+		return y;
+	};
+
+	const drawNoteBox = (page: PDFPage, yTop: number, title: string, lines: string[], height: number) => {
+		page.drawRectangle({
+			x: left,
+			y: yTop - height,
+			width: contentWidth,
+			height,
+			color: colors.panelStrong,
+			borderColor: colors.line,
+			borderWidth: 0.6,
+		});
+		page.drawText(title, {
+			x: left + 12,
+			y: yTop - 18,
+			size: 9,
+			font: fonts.bold,
+			color: colors.teal,
+		});
+		drawWrappedLines(page, lines, yTop - 38, {
+			size: 8.7,
+			width: contentWidth - 24,
+			x: left + 12,
+			lineGap: 4,
+			maxLines: Math.max(1, Math.floor((height - 38) / 13)),
+		});
+	};
+
+	const drawSitePhotoFrame = async (page: PDFPage, yTop: number, sitePhotos: ProposalSitePhoto[]) => {
+		const height = 170;
+		const boxY = yTop - height;
+		page.drawRectangle({
+			x: left,
+			y: boxY,
+			width: contentWidth,
+			height,
+			borderColor: colors.line,
+			borderWidth: 0.8,
+			color: rgb(0.99, 0.99, 0.98),
+		});
+		const gap = 14;
+		const innerWidth = contentWidth - 28;
+		const slotWidth = (innerWidth - gap) / 2;
+		const slotHeight = 126;
+		for (let index = 0; index < 2; index += 1) {
+			const slotX = left + 14 + index * (slotWidth + gap);
+			const slotY = boxY + 24;
+			page.drawRectangle({
+				x: slotX,
+				y: slotY,
+				width: slotWidth,
+				height: slotHeight,
+				borderColor: rgb(0.82, 0.84, 0.84),
+				borderWidth: 0.8,
+				color: rgb(1, 1, 1),
+			});
+			const sitePhoto = sitePhotos[index] ?? null;
+			let drewImage = false;
+			if (sitePhoto?.url) {
+				const image = await embedPdfImageFromUrl(pdf, sitePhoto.url);
+				if (image) {
+					const fit = fitRectWithinBox(image.width, image.height, slotWidth - 10, slotHeight - 10);
+					page.drawImage(image, {
+						x: slotX + 5 + fit.x,
+						y: slotY + 5 + fit.y,
+						width: fit.width,
+						height: fit.height,
+					});
+					drewImage = true;
+				}
+			}
+			if (!drewImage) {
+				page.drawText(`現場写真 ${index + 1}`, {
+					x: slotX + 12,
+					y: slotY + slotHeight / 2 + 6,
+					size: 10,
+					font: fonts.bold,
+					color: colors.muted,
+				});
+				page.drawText("画像未登録", {
+					x: slotX + 12,
+					y: slotY + slotHeight / 2 - 10,
+					size: 8,
+					font: fonts.regular,
+					color: colors.muted,
+				});
+			}
+			if (sitePhoto?.name) {
+				page.drawText(sitePhoto.name.slice(0, 24), {
+					x: slotX,
+					y: slotY - 11,
+					size: 7,
+					font: fonts.regular,
+					color: colors.muted,
+				});
+			}
+		}
+	};
+
+	const first = pdf.addPage([pageWidth, pageHeight]);
+	drawHeader(
+		first,
 		1,
-		"通常営業シミュレーション",
+		"提案シミュレーション",
 		`${draft.titleLabel || proposalKindJapaneseLabel(draft.proposalKind)} / ${generatedDate}`,
 		"案件 > 提案シミュレーション > 提案PDF",
 	);
-	if (draft.proposalKind !== "gridBattery") {
-		await first.drawSitePhotoFrame("現場写真", draft.sitePhotos, 210);
+
+	let y = pageHeight - 126;
+	const titleLines = wrapPdfText(draft.proposalTitle, fonts.bold, 18, contentWidth).slice(0, 2);
+	for (const line of titleLines) {
+		first.drawText(line, {
+			x: left,
+			y,
+			size: 18,
+			font: fonts.bold,
+			color: colors.text,
+		});
+		y -= 22;
 	}
-	first.drawSectionTitle("提案の結論");
-	for (const line of draft.pageOneLines.slice(0, 7)) {
-		first.drawWrapped(line, 9.5);
-	}
-	const saleMetricLabel = draft.proposalKind === "gridBattery" ? "Project Cost" : "Sales Price";
-	const purchaseMetricLabel = draft.proposalKind === "gridBattery" ? "Net Investment" : "Sourcing Price";
-	first.drawSectionTitle("通常営業シミュレーション");
-	first.drawMetricRows([
-		[saleMetricLabel === "Project Cost" ? "総事業費" : "販売価格", formatYen(draft.salePrice ?? 0)],
-		[purchaseMetricLabel === "Net Investment" ? "実質投資額" : "仕入れ価格", formatYen(draft.purchaseCost ?? 0)],
-		["残存FIT年数", draft.fitRemainingYears !== null ? `${trimTrailingZeros(draft.fitRemainingYears)}年` : "未入力"],
-		["出力抑制前提", `${draft.curtailmentScenario}${draft.curtailmentScenario === "抑制あり" ? ` / ${trimTrailingZeros(draft.curtailmentRate)}%` : ""}`],
+	y -= 6;
+	y = drawSectionTitle(first, y, "提案の結論");
+	const conclusionLines = draft.conclusionText
+		? draft.conclusionText.split("\n")
+		: draft.pageOneLines.slice(0, 4);
+	y = drawWrappedLines(first, conclusionLines, y, { size: 9.7, lineGap: 5, maxLines: 7 });
+	y -= 8;
+
+	const cardGap = 12;
+	const cardWidth = (contentWidth - cardGap) / 2;
+	drawMetricCard(first, left, y, cardWidth, 64, "販売価格", formatYen(draft.salePrice ?? 0));
+	drawMetricCard(first, left + cardWidth + cardGap, y, cardWidth, 64, "仕入れ価格", formatYen(draft.purchaseCost ?? 0));
+	y -= 76;
+	drawMetricCard(first, left, y, cardWidth, 64, "年間手残り", formatYen(draft.annualNetIncome ?? 0));
+	drawMetricCard(
+		first,
+		left + cardWidth + cardGap,
+		y,
+		cardWidth,
+		64,
+		"想定利回り / 回収年数",
+		`${draft.expectedYield !== null ? `${trimTrailingZeros(draft.expectedYield)}%` : "算出不可"} / ${draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"}`,
+	);
+	y -= 84;
+
+	y = drawSectionTitle(first, y, "主要前提");
+	y = drawDetailRows(first, y, [
 		["年間売電収入", formatYen(draft.annualIncome ?? 0)],
 		["年間維持費", formatYen(draft.runningCost)],
-		["年間手残り", formatYen(draft.annualNetIncome ?? 0)],
-		["想定利回り", draft.expectedYield !== null ? `${trimTrailingZeros(draft.expectedYield)}%` : "算出不可"],
-		["回収年数", draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"],
+		["残存FIT年数", draft.fitRemainingYears !== null ? `${trimTrailingZeros(draft.fitRemainingYears)}年` : "未入力"],
+		["出力抑制前提", `${draft.curtailmentScenario}${draft.curtailmentScenario === "抑制あり" ? ` / ${trimTrailingZeros(draft.curtailmentRate)}%` : ""}`],
 		["残存FIT総手残り", draft.fitTotalNetCashflow !== null ? formatYen(draft.fitTotalNetCashflow) : "算出不可"],
+		["想定粗利", draft.grossProfit !== null ? formatYen(draft.grossProfit) : "算出不可"],
 	]);
-	first.drawFooter();
+	y -= 6;
+	drawNoteBox(
+		first,
+		y,
+		"注記",
+		[
+			"本資料はシミュレーションです。実際の売電収入、出力抑制、融資条件、税務処理は個別条件で変動します。",
+			"最終提案前に、設備資料、連系条件、売買契約条件、税務前提を再確認してください。",
+		],
+		72,
+	);
+	drawFooter(first);
 
-	const second = createPageWriter(
+	const second = pdf.addPage([pageWidth, pageHeight]);
+	drawHeader(
+		second,
 		2,
-		"ファイナンス・税効果シミュレーション",
-		`${draft.titleLabel || proposalKindJapaneseLabel(draft.proposalKind)} / 税務前提とリスク整理`,
+		"物件情報・税務前提",
+		`${draft.titleLabel || proposalKindJapaneseLabel(draft.proposalKind)} / 詳細確認`,
 		"案件 > 提案シミュレーション > 税務・リスク確認",
 	);
-	second.drawSectionTitle("税務前提");
-	const financeLines = draft.financeSimulation?.lines ?? [
-		"土地は償却対象外です。",
-		"システム本体は17年で償却します。",
-		"権利代は5年で償却します。",
-		"土地代、権利代、借入額、金利、返済期間、実効税率を入力すると、税効果と購入タイミング判定を表示します。",
-		"注釈: 本資料はシミュレーション資料です。実際の会計・税務処理は、貴社顧問税理士へご確認ください。",
-	];
-	for (const line of financeLines.slice(0, 16)) {
-		second.drawWrapped(line, 8.8);
+
+	y = pageHeight - 126;
+	y = drawSectionTitle(second, y, "物件・設備情報");
+	if (draft.proposalKind === "gridBattery") {
+		y = drawDetailRows(second, y, [
+			["提案タイプ", proposalKindJapaneseLabel(draft.proposalKind)],
+			["総事業費", formatYen(draft.salePrice ?? 0)],
+			["実質投資額", formatYen(draft.purchaseCost ?? 0)],
+			["年間想定総売上", formatYen(draft.annualIncome ?? 0)],
+			["年間ランニングコスト", formatYen(draft.runningCost)],
+		]);
+	} else {
+		const details = draft.solarDetails;
+		y = drawDetailRows(second, y, [
+			["発電所名", details?.plantName || "未入力"],
+			["所在地", details?.location || "未入力"],
+			["電力会社エリア / 区分", `${details?.powerArea || "未入力"} / ${details?.voltageClass || "未入力"}`],
+			["パネル", details ? `${details.panelMaker} / ${details.panelModel} / ${formatDecimalForPdf(details.panelCount, 0)}枚 / DC ${formatDecimalForPdf(details.dcCapacityKw, 1)}kW` : "未入力"],
+			["PCS", details ? `${details.powerConditionerMaker} / ${details.powerConditionerModel} / ${formatDecimalForPdf(details.pcsCapacityKw, 1)}kW` : "未入力"],
+			["FIT/FIP・売電条件", details ? `${details.fitFipType} / ${formatDecimalForPdf(details.unitPrice, 2)}円/kWh / 残存${formatDecimalForPdf(details.remainingSalesYears, 1)}年` : "未入力"],
+			["連系開始日 / 稼働年数", details ? `${details.gridConnectionDate} / ${formatOperationYearsForPdf(details.operationYears)}` : "未入力"],
+		]);
 	}
-	second.drawSectionTitle("前提・リスク");
-	for (const line of draft.pageTwoLines.slice(0, 8)) {
-		second.drawWrapped(line, 8.5);
+
+	y -= 4;
+	y = drawSectionTitle(second, y, "ファイナンス・税務前提");
+	const financeRows: Array<[string, string]> = draft.financeSimulation
+		? [
+			["購入タイミング判定", `${draft.financeSimulation.timingRank} / ${draft.financeSimulation.timingReason}`],
+			["税引後キャッシュフロー", formatYen(draft.financeSimulation.afterTaxCashflow)],
+			["年間償却額", formatYen(draft.financeSimulation.annualDepreciation)],
+			["税効果", formatYen(draft.financeSimulation.taxBenefit)],
+			["借入条件", `${formatYen(draft.financeSimulation.loanAmount)} / 金利 ${trimTrailingZeros(draft.financeSimulation.interestRate)}% / ${draft.financeSimulation.loanYears !== null ? `${trimTrailingZeros(draft.financeSimulation.loanYears)}年返済` : "返済期間未入力"}`],
+			["DSCR", draft.financeSimulation.dscr !== null ? trimTrailingZeros(draft.financeSimulation.dscr) : "未入力"],
+		]
+		: [
+			["土地", "償却対象外"],
+			["システム本体", "17年償却"],
+			["権利代", "5年償却"],
+			["注記", "実際の会計・税務処理は顧問税理士へ確認してください。"],
+		];
+	y = drawDetailRows(second, y, financeRows);
+
+	y -= 2;
+	y = drawSectionTitle(second, y, "補足・リスク");
+	y = drawWrappedLines(second, draft.pageTwoLines.slice(0, 6), y, {
+		size: 8.7,
+		lineGap: 4,
+		maxLines: draft.proposalKind === "gridBattery" ? 10 : 8,
+	});
+
+	if (draft.proposalKind !== "gridBattery") {
+		y -= 10;
+		y = drawSectionTitle(second, y, "現場写真");
+		await drawSitePhotoFrame(second, y, draft.sitePhotos);
 	}
-	second.drawFooter();
+
+	drawFooter(second);
 
 	return pdf.save();
 }
