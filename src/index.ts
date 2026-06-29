@@ -17013,6 +17013,14 @@ async function buildProposalSimulationPdfBytes(
 
 	y -= 4;
 	y = drawSectionTitle(second, y, "ファイナンス・税務前提");
+	drawNoteBox(
+		second,
+		y,
+		"ファイナンス要約",
+		buildProposalFinanceSummaryLines(draft),
+		58,
+	);
+	y -= 70;
 	const financeRows = buildProposalPdfFinanceRows(draft);
 	y = drawDetailRows(second, y, financeRows);
 
@@ -17091,6 +17099,27 @@ function buildProposalPdfRubricBoxLines(draft: ProposalSimulationDraft): string[
 		`${rubric.routeTitle} / ${rubric.recommendedModel}`,
 		`推奨場所: ${rubric.recommendedLocation}`,
 		`ひと言: ${rubric.killerPhrase}`,
+	];
+}
+
+function buildProposalFinanceSummaryLines(draft: ProposalSimulationDraft): string[] {
+	if (!draft.financeSimulation) {
+		return [
+			"借入条件、税率、償却前提が未入力のため、ファイナンス要約は暫定表示です。",
+			`販売価格 ${formatOptionalYen(draft.salePrice)} / 年間手残り ${formatOptionalYen(draft.annualNetIncome)}`,
+			`想定利回り ${draft.expectedYield !== null ? `${trimTrailingZeros(draft.expectedYield)}%` : "算出不可"} / 想定回収 ${draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"}`,
+		];
+	}
+	const finance = draft.financeSimulation;
+	const debtLine = finance.loanAmount > 0
+		? `借入 ${formatYen(finance.loanAmount)} / 金利 ${trimTrailingZeros(finance.interestRate)}% / 年間返済 ${formatYen(finance.annualDebtService)}`
+		: "借入なし / 自己資金前提で返済負担なし";
+	const dscrLabel = finance.dscr !== null ? trimTrailingZeros(finance.dscr) : "未入力";
+	return [
+		`投資判定 ${finance.timingRank} / ${finance.timingReason}`,
+		`商品構成: 土地 ${trimTrailingZeros(finance.landRatio)}% / システム ${trimTrailingZeros(finance.systemRatio)}% / 権利代 ${trimTrailingZeros(finance.rightsRatio)}%`,
+		debtLine,
+		`税効果 ${formatYen(finance.taxBenefit)} / 税引後CF ${formatYen(finance.afterTaxCashflow)} / DSCR ${dscrLabel}`,
 	];
 }
 
