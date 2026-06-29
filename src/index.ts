@@ -16060,9 +16060,7 @@ function buildSalesProposalRecordProperties(
 		判定理由: richText(reasonLines.join("\n")),
 		次にやる営業アクション: richText(nextActionLines.join("\n")),
 		提案PDFリンク: pdfExport.fileUrl ? { url: pdfExport.fileUrl } : undefined,
-		作成した提案PDFを開く: pdfExport.fileUploadId
-			? { files: [{ file_upload: { id: pdfExport.fileUploadId } }] }
-			: undefined,
+		作成した提案PDFを開く: pdfExport.fileUrl ? { url: pdfExport.fileUrl } : undefined,
 	};
 	if (pdfExport.fileUploadId) {
 		properties.提案PDF = { files: [{ file_upload: { id: pdfExport.fileUploadId } }] };
