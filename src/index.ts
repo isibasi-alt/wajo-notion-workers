@@ -14898,12 +14898,18 @@ async function processProposalSimulation(
 		}
 		await safeUpdateExistingProperties(notion, page, patches);
 		const financeSync = await syncFinanceSimulationRecord(notion, page, draft);
-		await syncSalesProposalRecord(
+		const salesProposalSync = await syncSalesProposalRecord(
 			notion,
 			page,
 			draft,
 			pdfExport,
 			financeSync?.pageId ?? null,
+		);
+		await syncProposalSimulationRelations(
+			notion,
+			page,
+			financeSync?.pageId ?? null,
+			salesProposalSync?.pageId ?? null,
 		);
 		await updateRelatedProjectProposalResult(notion, page, draft, pdfExport);
 		await createPageComment(
@@ -15806,6 +15812,132 @@ async function updateRelatedProjectProposalResult(
 				error: String(error),
 			});
 		}
+	}
+}
+
+async function syncProposalSimulationRelations(
+	notion: NotionClient,
+	proposalPage: Page,
+	financePageId: string | null,
+	salesProposalPageId: string | null,
+): Promise<void> {
+	try {
+		const proposalProperties = proposalPage.properties ?? {};
+		const relatedProjectIds = relationIdsFromProperty(proposalProperties["関連案件"]);
+		let relatedEquipmentIds = relationIdsFromAliases(proposalProperties, [
+			"関連設備詳細",
+			"発電所設備詳細",
+			"設備詳細",
+		]);
+
+		if (relatedEquipmentIds.length === 0 && relatedProjectIds.length > 0) {
+			try {
+				const projectPage = await notion.pages.retrieve({ page_id: relatedProjectIds[0]! });
+				const equipmentPage = await retrieveProjectEquipmentDetailPage(notion, projectPage);
+				if (equipmentPage) {
+					relatedEquipmentIds = [equipmentPage.id];
+				}
+			} catch (error) {
+				console.log("proposal simulation relation project fallback skipped", {
+					proposalPageId: proposalPage.id,
+					projectPageId: relatedProjectIds[0],
+					error: String(error),
+				});
+			}
+		}
+
+		const proposalPatches: Record<string, SafePatch> = {};
+		if (relatedEquipmentIds.length > 0) {
+			setAliasPatch(
+				proposalPatches,
+				["関連設備詳細", "発電所設備詳細", "設備詳細"],
+				{ kind: "relation", ids: uniqueIds(relatedEquipmentIds) },
+			);
+		}
+		if (financePageId) {
+			setAliasPatch(
+				proposalPatches,
+				["ファイナンスシミュレーションDB", "関連ファイナンスシミュレーション"],
+				{ kind: "relation", ids: uniqueIds([financePageId]) },
+			);
+		}
+		if (salesProposalPageId) {
+			setAliasPatch(proposalPatches, ["関連営業提案"], {
+				kind: "relation",
+				ids: uniqueIds([salesProposalPageId]),
+			});
+		}
+		await safeUpdateExistingProperties(notion, proposalPage, proposalPatches);
+
+		if (financePageId) {
+			try {
+				const financePage = await notion.pages.retrieve({ page_id: financePageId });
+				const currentQueueIds = relationIdsFromAliases(financePage.properties ?? {}, [
+					"関連提案シミュレーション",
+					"元提案シミュレーション",
+				]);
+				const currentSalesProposalIds = relationIdsFromProperty(
+					financePage.properties?.["関連営業提案"],
+				);
+				const financePatches: Record<string, SafePatch> = {
+					関連提案シミュレーション: {
+						kind: "relation",
+						ids: uniqueIds([...currentQueueIds, proposalPage.id]),
+					},
+				};
+				if (salesProposalPageId) {
+					financePatches["関連営業提案"] = {
+						kind: "relation",
+						ids: uniqueIds([...currentSalesProposalIds, salesProposalPageId]),
+					};
+				}
+				await safeUpdateExistingProperties(notion, financePage, financePatches);
+			} catch (error) {
+				console.log("proposal simulation finance relation backfill skipped", {
+					proposalPageId: proposalPage.id,
+					financePageId,
+					error: String(error),
+				});
+			}
+		}
+
+		for (const equipmentPageId of relatedEquipmentIds) {
+			try {
+				const equipmentPage = await notion.pages.retrieve({ page_id: equipmentPageId });
+				const currentQueueIds = relationIdsFromProperty(
+					equipmentPage.properties?.["関連提案シミュレーション依頼"],
+				);
+				const currentSalesProposalIds = relationIdsFromProperty(
+					equipmentPage.properties?.["関連営業提案"],
+				);
+				const equipmentPatches: Record<string, SafePatch> = {
+					関連提案シミュレーション依頼: {
+						kind: "relation",
+						ids: uniqueIds([...currentQueueIds, proposalPage.id]),
+					},
+				};
+				if (salesProposalPageId) {
+					equipmentPatches["関連営業提案"] = {
+						kind: "relation",
+						ids: uniqueIds([...currentSalesProposalIds, salesProposalPageId]),
+					};
+				}
+				await safeUpdateExistingProperties(notion, equipmentPage, equipmentPatches);
+			} catch (error) {
+				console.log("proposal simulation equipment relation backfill skipped", {
+					proposalPageId: proposalPage.id,
+					equipmentPageId,
+					error: String(error),
+				});
+			}
+		}
+	} catch (error) {
+		console.log("proposal simulation relation sync skipped", {
+			proposalPageId: proposalPage.id,
+			financePageId,
+			salesProposalPageId,
+			error: String(error),
+		});
 	}
 }
 
