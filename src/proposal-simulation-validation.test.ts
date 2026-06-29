@@ -240,6 +240,9 @@ async function main() {
 			返済期間: numberProp(10),
 			実効税率: numberProp(30),
 			今期利益見込: numberProp(100000000),
+			流動比率: numberProp(220),
+			利益剰余金: numberProp(120000000),
+			自己資本比率: numberProp(55),
 		}),
 	});
 
@@ -249,9 +252,13 @@ async function main() {
 	assert.equal(readyWithFinance.financeSimulation?.annualDepreciation, 10835000);
 	assert.equal(readyWithFinance.financeSimulation?.taxBenefit, 3250500);
 	assert.equal(readyWithFinance.financeSimulation?.timingRank, "S");
+	assert.equal(readyWithFinance.financeSimulation?.salesRubric.totalScore, 15);
+	assert.equal(readyWithFinance.financeSimulation?.salesRubric.route, "C");
 	assert.match(readyWithFinance.summaryLines.join("\n"), /購入タイミング判定: S/);
 	assert.match(readyWithFinance.summaryLines.join("\n"), /年間税効果: ¥3,250,500/);
 	assert.match(readyWithFinance.summaryLines.join("\n"), /商品構成: 金額入力/);
+	assert.match(readyWithFinance.summaryLines.join("\n"), /B\/Sルーブリック: 15点 \/ Cルート/);
+	assert.match(readyWithFinance.pageTwoLines.join("\n"), /資産組み換え・大型投資型提案/);
 
 	const readyWithCompositionRatios = evaluateProposalSimulationDraftForTest({
 		id: "proposal-2h",
@@ -261,6 +268,9 @@ async function main() {
 			権利代比率: numberProp(30),
 			実効税率: numberProp(30),
 			今期利益見込: numberProp(100000000),
+			流動比率: numberProp(150),
+			利益剰余金: numberProp(50000000),
+			自己資本比率: numberProp(35),
 		}),
 	});
 
@@ -273,9 +283,25 @@ async function main() {
 	assert.equal(readyWithCompositionRatios.financeSimulation?.rightsRatio, 30);
 	assert.equal(readyWithCompositionRatios.financeSimulation?.annualDepreciation, 10740000);
 	assert.equal(readyWithCompositionRatios.financeSimulation?.taxBenefit, 3222000);
+	assert.equal(readyWithCompositionRatios.financeSimulation?.salesRubric.totalScore, 11);
+	assert.equal(readyWithCompositionRatios.financeSimulation?.salesRubric.route, "B");
 	assert.match(readyWithCompositionRatios.summaryLines.join("\n"), /構成比: 土地 20% \/ システム 50% \/ 権利代 30%/);
 	assert.match(readyWithCompositionRatios.summaryLines.join("\n"), /営業設計: 権利代比率を上げると5年償却部分が増え/);
+	assert.match(readyWithCompositionRatios.summaryLines.join("\n"), /本業シナジー・自家消費型提案/);
 	assert.match(readyWithCompositionRatios.pageTwoLines.join("\n"), /商品構成: 比率入力/);
+
+	const readyWithoutBsMetrics = evaluateProposalSimulationDraftForTest({
+		id: "proposal-2i",
+		properties: solarRequiredProps({
+			土地代: numberProp(10000000),
+			権利代: numberProp(10000000),
+			実効税率: numberProp(30),
+		}),
+	});
+
+	assert.equal(readyWithoutBsMetrics.financeSimulation?.salesRubric.totalScore, null);
+	assert.equal(readyWithoutBsMetrics.financeSimulation?.salesRubric.route, null);
+	assert.match(readyWithoutBsMetrics.summaryLines.join("\n"), /B\/Sルーブリック: 未判定/);
 
 	const individual = evaluateProposalSimulationDraftForTest({
 		id: "proposal-3",

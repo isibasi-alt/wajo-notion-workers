@@ -14554,7 +14554,24 @@ type FinanceSimulation = {
 	dscr: number | null;
 	timingRank: "S" | "A" | "B" | "C";
 	timingReason: string;
+	salesRubric: BalanceSheetSalesRubric;
 	lines: string[];
+};
+
+type BalanceSheetSalesRubric = {
+	liquidityRatio: number | null;
+	retainedEarnings: number | null;
+	equityRatio: number | null;
+	liquidityScore: number | null;
+	retainedEarningsScore: number | null;
+	equityRatioScore: number | null;
+	totalScore: number | null;
+	route: "A" | "B" | "C" | null;
+	routeTitle: string;
+	reason: string;
+	recommendedModel: string;
+	recommendedLocation: string;
+	killerPhrase: string;
 };
 
 type RunningCostBreakdownItem = {
@@ -15846,7 +15863,12 @@ function buildFinanceSimulationRecordProperties(
 		金利メモ: richText(
 			"入力金利は元利均等返済の年率として扱い、アドオン金利は総支払利息から換算しています。",
 		),
-		ファイナンスメモ: richText("提案シミュレーション実行時に自動連携しました。"),
+		ファイナンスメモ: richText([
+			"提案シミュレーション実行時に自動連携しました。",
+			finance.salesRubric.totalScore !== null
+				? `B/Sルーブリック: ${finance.salesRubric.totalScore}点 / ${finance.salesRubric.route}ルート / ${finance.salesRubric.routeTitle}`
+				: "B/Sルーブリック: 流動比率・利益剰余金・自己資本比率が未入力のため判定保留。",
+		].join("\n")),
 		ファイナンス状態: select("準備完了"),
 	};
 	return Object.fromEntries(
@@ -16495,8 +16517,15 @@ async function buildProposalSimulationPdfBytes(
 	}
 	y -= 6;
 	y = drawSectionTitle(first, y, "提案の結論");
+	const rubricHeadline =
+		draft.financeSimulation && draft.financeSimulation.salesRubric.totalScore !== null
+			? `B/Sルーブリック判定: ${formatBalanceSheetSalesRubricSummary(draft.financeSimulation.salesRubric)}`
+			: null;
 	const conclusionLines = draft.conclusionText
-		? draft.conclusionText.split("\n")
+		? [
+			...draft.conclusionText.split("\n"),
+			...(rubricHeadline ? [rubricHeadline] : []),
+		]
 		: draft.pageOneLines.slice(0, 4);
 	y = drawWrappedLines(first, conclusionLines, y, { size: 9.7, lineGap: 5, maxLines: 7 });
 	y -= 8;
@@ -16577,6 +16606,7 @@ async function buildProposalSimulationPdfBytes(
 	const financeRows: Array<[string, string]> = draft.financeSimulation
 		? [
 			["購入タイミング判定", `${draft.financeSimulation.timingRank} / ${draft.financeSimulation.timingReason}`],
+			["B/Sルーブリック", formatBalanceSheetSalesRubricSummary(draft.financeSimulation.salesRubric)],
 			["税引後キャッシュフロー", formatYen(draft.financeSimulation.afterTaxCashflow)],
 			["年間償却額", formatYen(draft.financeSimulation.annualDepreciation)],
 			["税効果", formatYen(draft.financeSimulation.taxBenefit)],
@@ -16598,6 +16628,22 @@ async function buildProposalSimulationPdfBytes(
 		lineGap: 4,
 		maxLines: draft.proposalKind === "gridBattery" ? 10 : 8,
 	});
+
+	if (draft.financeSimulation) {
+		y -= 10;
+		drawNoteBox(
+			second,
+			y,
+			"B/S提案ルート",
+			[
+				`${draft.financeSimulation.salesRubric.routeTitle} / ${draft.financeSimulation.salesRubric.recommendedModel}`,
+				`推奨場所: ${draft.financeSimulation.salesRubric.recommendedLocation}`,
+				`ひと言: ${draft.financeSimulation.salesRubric.killerPhrase}`,
+			],
+			74,
+		);
+		y -= 86;
+	}
 
 	if (draft.proposalKind !== "gridBattery") {
 		y -= 10;
@@ -17811,6 +17857,7 @@ function buildFinanceSimulation(input: {
 		taxBenefit,
 		annualNetIncome: input.annualNetIncome,
 	});
+	const salesRubric = evaluateBalanceSheetSalesRubric(input.properties, pretaxProfit);
 	const pretaxProfitLine = pretaxProfit !== null
 		? `BS/利益前提: 今期利益見込 ${formatYen(pretaxProfit)} に対し、年間償却額 ${formatYen(annualDepreciation)} を当て込む。`
 		: "BS/利益前提: 今期利益見込が未入力のため、年間償却額を全額使える前提で税効果を表示します。";
@@ -17845,6 +17892,7 @@ function buildFinanceSimulation(input: {
 		dscr,
 		timingRank: timing.rank,
 		timingReason: timing.reason,
+		salesRubric,
 		lines: [
 			"ファイナンス・税効果シミュレーション",
 			`商品構成: ${composition.mode}`,
@@ -17865,10 +17913,159 @@ function buildFinanceSimulation(input: {
 			`税効果後キャッシュフロー: ${formatYen(afterTaxCashflow)}`,
 			`DSCR: ${dscr !== null ? trimTrailingZeros(dscr) : "借入なし"}`,
 			`購入タイミング判定: ${timing.rank} / ${timing.reason}`,
+			`B/Sルーブリック: ${formatBalanceSheetSalesRubricSummary(salesRubric)}`,
+			...buildBalanceSheetSalesRubricLines(salesRubric),
 			...composition.strategyLines,
 			"注釈: 本資料はシミュレーション資料です。実際の会計・税務処理は、貴社顧問税理士へご確認ください。",
 		],
 	};
+}
+
+function evaluateBalanceSheetSalesRubric(
+	properties: Record<string, unknown>,
+	pretaxProfit: number | null,
+): BalanceSheetSalesRubric {
+	const liquidityRatio = readFirstNumberByAliases(properties, [
+		"流動比率",
+		"Current Ratio",
+	]);
+	const retainedEarnings = readFirstNumberByAliases(properties, [
+		"利益剰余金",
+		"繰越利益剰余金",
+		"Retained Earnings",
+	]);
+	const equityRatio = readFirstNumberByAliases(properties, [
+		"自己資本比率",
+		"Equity Ratio",
+	]);
+	const liquidityScore = scoreLiquidityRatio(liquidityRatio);
+	const retainedEarningsScore = scoreRetainedEarnings(retainedEarnings, pretaxProfit);
+	const equityRatioScore = scoreEquityRatio(equityRatio);
+	const hasAllScores =
+		liquidityScore !== null &&
+		retainedEarningsScore !== null &&
+		equityRatioScore !== null;
+	if (!hasAllScores) {
+		return {
+			liquidityRatio,
+			retainedEarnings,
+			equityRatio,
+			liquidityScore,
+			retainedEarningsScore,
+			equityRatioScore,
+			totalScore: null,
+			route: null,
+			routeTitle: "判定保留",
+			reason: "流動比率・利益剰余金・自己資本比率の3指標が揃っていないため、B/Sルーブリック判定は保留です。",
+			recommendedModel: "B/S3指標を確認後に判定",
+			recommendedLocation: "未判定",
+			killerPhrase: "決算書の3指標が揃い次第、投資余力に合わせて提案ルートを確定します。",
+		};
+	}
+	const totalScore = liquidityScore + retainedEarningsScore + equityRatioScore;
+	if (totalScore <= 6) {
+		return {
+			liquidityRatio,
+			retainedEarnings,
+			equityRatio,
+			liquidityScore,
+			retainedEarningsScore,
+			equityRatioScore,
+			totalScore,
+			route: "A",
+			routeTitle: "防衛・ノーリスク型提案",
+			reason: "本業の資金繰りを優先すべき局面です。現金を外へ出さず、固定費削減だけを狙う提案が適しています。",
+			recommendedModel: "PPA（初期費用ゼロ・屋根貸し）",
+			recommendedLocation: "自社工場・倉庫・オフィスの屋根",
+			killerPhrase: "社長、今の財務状況であれば、現金を一歩も外に出さずに固定費だけを削るノーリスク型がベストです。",
+		};
+	}
+	if (totalScore <= 11) {
+		return {
+			liquidityRatio,
+			retainedEarnings,
+			equityRatio,
+			liquidityScore,
+			retainedEarningsScore,
+			equityRatioScore,
+			totalScore,
+			route: "B",
+			routeTitle: "本業シナジー・自家消費型提案",
+			reason: "本業は安定しており、電気代と法人税を削減しながら、無理のない融資返済に収める提案が適しています。",
+			recommendedModel: "自社購入型（融資併用）の自家消費太陽光",
+			recommendedLocation: "自社工場・オフィス・倉庫の屋根上",
+			killerPhrase: "社長、毎年支払っている電気代と法人税を、自社を稼がせる固定資産へ組み替えましょう。",
+		};
+	}
+	return {
+		liquidityRatio,
+		retainedEarnings,
+		equityRatio,
+		liquidityScore,
+		retainedEarningsScore,
+		equityRatioScore,
+		totalScore,
+		route: "C",
+		routeTitle: "資産組み換え・大型投資型提案",
+		reason: "投資余力が厚く、税務と資本効率の観点から大型投資を組み立てやすい財務状態です。",
+		recommendedModel: "投資型太陽光（フルローンまたは現金購入）",
+		recommendedLocation: "日射量が多く出力抑制リスクの低い野立て候補地",
+		killerPhrase: "社長、眠っているキャッシュや高い与信を、20年間の別財布収益資産に組み替えましょう。",
+	};
+}
+
+function scoreLiquidityRatio(value: number | null): number | null {
+	if (value === null || !Number.isFinite(value)) return null;
+	if (value < 100) return 1;
+	if (value < 120) return 2;
+	if (value <= 180) return 3;
+	if (value < 200) return 4;
+	return 5;
+}
+
+function scoreRetainedEarnings(value: number | null, pretaxProfit: number | null): number | null {
+	const retained = value;
+	const profit = pretaxProfit ?? null;
+	if ((retained !== null && retained <= 0) && (profit === null || profit <= 0)) return 1;
+	if ((retained !== null && retained >= 100_000_000) || (profit !== null && profit >= 100_000_000)) return 5;
+	if ((retained !== null && retained >= 30_000_000) || (profit !== null && profit >= 30_000_000)) return 3;
+	if ((retained !== null && retained > 0) || (profit !== null && profit > 0)) return 2;
+	return null;
+}
+
+function scoreEquityRatio(value: number | null): number | null {
+	if (value === null || !Number.isFinite(value)) return null;
+	if (value < 15) return 1;
+	if (value < 20) return 2;
+	if (value <= 40) return 3;
+	if (value < 50) return 4;
+	return 5;
+}
+
+function formatBalanceSheetSalesRubricSummary(rubric: BalanceSheetSalesRubric): string {
+	if (rubric.totalScore === null || !rubric.route) return "未判定";
+	return `${rubric.totalScore}点 / ${rubric.route}ルート / ${rubric.routeTitle}`;
+}
+
+function buildBalanceSheetSalesRubricLines(rubric: BalanceSheetSalesRubric): string[] {
+	return [
+		`B/S内訳: 流動比率 ${formatRubricMetric(rubric.liquidityRatio, "%")} (${formatRubricScore(rubric.liquidityScore)}) / 利益剰余金 ${formatRubricMetric(rubric.retainedEarnings, "円")} (${formatRubricScore(rubric.retainedEarningsScore)}) / 自己資本比率 ${formatRubricMetric(rubric.equityRatio, "%")} (${formatRubricScore(rubric.equityRatioScore)})`,
+		`提案ルート: ${rubric.routeTitle}`,
+		`提案モデル: ${rubric.recommendedModel}`,
+		`設置場所: ${rubric.recommendedLocation}`,
+		`判定理由: ${rubric.reason}`,
+		`営業ひと言: ${rubric.killerPhrase}`,
+	];
+}
+
+function formatRubricMetric(value: number | null, unit: string): string {
+	if (value === null || !Number.isFinite(value)) return "未入力";
+	if (unit === "円") return formatYen(value);
+	return `${trimTrailingZeros(value)}${unit}`;
+}
+
+function formatRubricScore(value: number | null): string {
+	return value !== null ? `${value}点` : "未採点";
 }
 
 function buildProductComposition(
