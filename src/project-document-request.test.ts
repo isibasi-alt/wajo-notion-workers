@@ -214,6 +214,8 @@ function makeNotion(options: {
 	const updates: Array<Record<string, unknown>> = [];
 	const comments: Array<Record<string, unknown>> = [];
 	const queries: Array<Record<string, unknown>> = [];
+	const appends: Array<Record<string, unknown>> = [];
+	const fileUploads: Array<Record<string, unknown>> = [];
 	const notion = {
 		dataSources: {
 			query: async (args: Record<string, unknown>) => {
@@ -269,8 +271,30 @@ function makeNotion(options: {
 				return {};
 			},
 		},
+		fileUploads: {
+			create: async (args: Record<string, unknown>) => {
+				fileUploads.push({ action: "create", ...args });
+				return { id: `file-upload-${fileUploads.length}` };
+			},
+			send: async (args: Record<string, unknown>) => {
+				fileUploads.push({ action: "send", ...args });
+				return {};
+			},
+			complete: async (args: Record<string, unknown>) => {
+				fileUploads.push({ action: "complete", ...args });
+				return {};
+			},
+		},
+		blocks: {
+			children: {
+				append: async (args: Record<string, unknown>) => {
+					appends.push(args);
+					return {};
+				},
+			},
+		},
 	};
-	return { notion, creates, updates, comments, queries };
+	return { notion, creates, updates, comments, queries, appends, fileUploads };
 }
 
 async function main() {
@@ -412,6 +436,9 @@ async function main() {
 		(grossProps.予定粗利の根拠 as { select: { name: string } }).select.name,
 		"価格あり",
 	);
+	const projectPdfAppend = simulationCase.appends.find((append) => append.block_id === "project-1");
+	assert.ok(projectPdfAppend);
+	assert.match(JSON.stringify(projectPdfAppend), /"type":"pdf"/);
 
 	const existingCase = makeNotion({
 		projectRequestIds: ["request-existing"],

@@ -14875,7 +14875,7 @@ async function processProposalSimulation(
 			);
 		}
 		await safeUpdateExistingProperties(notion, page, patches);
-		await updateRelatedProjectProposalResult(notion, page, draft, pdfExport.fileUrl);
+		await updateRelatedProjectProposalResult(notion, page, draft, pdfExport);
 		await createPageComment(
 			notion,
 			page.id,
@@ -15729,7 +15729,7 @@ async function updateRelatedProjectProposalResult(
 	notion: NotionClient,
 	proposalPage: Page,
 	draft: ProposalSimulationDraft,
-	pdfUrl: string | null,
+	pdfExport: ProposalPdfExportResult,
 ): Promise<void> {
 	const relatedProjectIds = relationIdsFromProperty(proposalPage.properties?.["関連案件"]);
 	if (relatedProjectIds.length === 0) return;
@@ -15737,8 +15737,8 @@ async function updateRelatedProjectProposalResult(
 		try {
 			const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
 			const memoLines = [
-				pdfUrl
-					? `提案PDFを作成しました。${pdfUrl}`
+				pdfExport.fileUrl
+					? `提案PDFを作成しました。${pdfExport.fileUrl}`
 					: "提案シミュレーションを作成しました。",
 				draft.grossProfit !== null
 					? `予定粗利額を販売価格 - 仕入れ価格で自動更新: ${formatYen(draft.grossProfit)}`
@@ -15750,14 +15750,23 @@ async function updateRelatedProjectProposalResult(
 					value: memoLines.join("\n"),
 				},
 			};
-			if (pdfUrl) {
-				patches.提案PDFリンク = { kind: "text", value: pdfUrl };
+			if (pdfExport.fileUrl) {
+				setAliasPatch(patches, PROPOSAL_PDF_URL_PROPERTY_ALIASES, {
+					kind: "text",
+					value: pdfExport.fileUrl,
+				});
 			}
 			if (draft.grossProfit !== null) {
 				patches.予定粗利額 = { kind: "number", value: draft.grossProfit };
 				patches.予定粗利の根拠 = { kind: "select", value: "価格あり" };
 			}
 			await safeUpdateExistingProperties(notion, projectPage, patches);
+			if (pdfExport.fileUploadId && notion.blocks?.children?.append) {
+				await notion.blocks.children.append({
+					block_id: projectPageId,
+					children: buildProposalPdfBlocks(pdfExport.fileUploadId, pdfExport.fileName),
+				});
+			}
 		} catch (error) {
 			console.log("related project proposal result update skipped", {
 				projectPageId,
@@ -15772,10 +15781,44 @@ type ProposalPdfExportResult = {
 	destination: "property" | "page_block" | "none";
 	message: string;
 	fileName: string;
+	fileUploadId?: string | null;
 	fileUrl: string | null;
 };
 
 type ResidentDocumentPdfExportResult = ProposalPdfExportResult;
+
+function buildProposalPdfBlocks(
+	fileUploadId: string,
+	fileName: string,
+): Array<Record<string, unknown>> {
+	return [
+		{
+			object: "block",
+			type: "heading_3",
+			heading_3: {
+				rich_text: [
+					{
+						type: "text",
+						text: { content: "提案シミュレーションPDF" },
+					},
+				],
+			},
+		},
+		{
+			object: "block",
+			type: "pdf",
+			pdf: {
+				file_upload: { id: fileUploadId },
+				caption: [
+					{
+						type: "text",
+						text: { content: fileName },
+					},
+				],
+			},
+		},
+	];
+}
 
 async function exportProposalSimulationPdf(
 	notion: NotionClient,
@@ -15864,6 +15907,7 @@ async function exportProposalSimulationPdf(
 				destination: "property",
 				message: `PDFを保存しました（${filePropertyName}）。`,
 				fileName,
+				fileUploadId,
 				fileUrl,
 			};
 		}
@@ -15871,33 +15915,7 @@ async function exportProposalSimulationPdf(
 		if (notion.blocks?.children?.append) {
 			await notion.blocks.children.append({
 				block_id: page.id,
-				children: [
-					{
-						object: "block",
-						type: "heading_3",
-						heading_3: {
-							rich_text: [
-								{
-									type: "text",
-									text: { content: "提案シミュレーションPDF" },
-								},
-							],
-						},
-					},
-					{
-						object: "block",
-						type: "pdf",
-						pdf: {
-							file_upload: { id: fileUploadId },
-							caption: [
-								{
-									type: "text",
-									text: { content: fileName },
-								},
-							],
-						},
-					},
-				],
+				children: buildProposalPdfBlocks(fileUploadId, fileName),
 			});
 			return {
 				attached: true,
@@ -15905,6 +15923,7 @@ async function exportProposalSimulationPdf(
 				message:
 					"PDF保存先プロパティが無かったため、同じレコード本文の末尾にPDFを追加しました。",
 				fileName,
+				fileUploadId,
 				fileUrl: null,
 			};
 		}
@@ -15915,6 +15934,7 @@ async function exportProposalSimulationPdf(
 			message:
 				"PDFアップロードは完了しましたが、保存先が未設定です。files型の「提案PDF」を追加してください。",
 			fileName,
+			fileUploadId,
 			fileUrl,
 		};
 	} catch (error) {
