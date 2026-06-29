@@ -16368,8 +16368,19 @@ async function buildProposalSimulationPdfBytes(
 	};
 
 	const drawDetailRows = (page: PDFPage, y: number, rows: Array<[string, string]>) => {
-		const rowHeight = 24;
+		const labelWidth = 148;
+		const valueX = left + labelWidth + 18;
+		const valueWidth = contentWidth - labelWidth - 28;
+		const labelSize = 8.8;
+		const valueSize = 8.8;
+		const lineGap = 3.5;
 		for (const [label, value] of rows) {
+			const labelLines = wrapPdfText(label, fonts.regular, labelSize, labelWidth - 12).slice(0, 2);
+			const valueLines = wrapPdfText(value, fonts.bold, valueSize, valueWidth).slice(0, 3);
+			const lineCount = Math.max(labelLines.length, valueLines.length, 1);
+			const textBlockHeight = lineCount * valueSize + (lineCount - 1) * lineGap;
+			const rowHeight = Math.max(24, textBlockHeight + 10);
+			const textTopY = y - 2;
 			page.drawRectangle({
 				x: left,
 				y: y - rowHeight + 4,
@@ -16377,21 +16388,28 @@ async function buildProposalSimulationPdfBytes(
 				height: rowHeight,
 				color: rgb(0.98, 0.99, 0.99),
 			});
-			page.drawText(label, {
-				x: left + 10,
-				y,
-				size: 8.8,
-				font: fonts.regular,
-				color: colors.muted,
-			});
-			const line = wrapPdfText(value, fonts.bold, 8.8, contentWidth - 180).slice(0, 1)[0] ?? "";
-			page.drawText(line, {
-				x: left + 170,
-				y,
-				size: 8.8,
-				font: fonts.bold,
-				color: colors.text,
-			});
+			let labelY = textTopY;
+			for (const line of labelLines) {
+				page.drawText(line, {
+					x: left + 10,
+					y: labelY,
+					size: labelSize,
+					font: fonts.regular,
+					color: colors.muted,
+				});
+				labelY -= labelSize + lineGap;
+			}
+			let valueY = textTopY;
+			for (const line of valueLines) {
+				page.drawText(line, {
+					x: valueX,
+					y: valueY,
+					size: valueSize,
+					font: fonts.bold,
+					color: colors.text,
+				});
+				valueY -= valueSize + lineGap;
+			}
 			y -= rowHeight + 4;
 		}
 		return y;
