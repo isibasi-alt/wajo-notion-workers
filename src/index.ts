@@ -16915,66 +16915,40 @@ async function buildProposalSimulationPdfBytes(
 		y -= 22;
 	}
 	y -= 6;
-	y = drawSectionTitle(first, y, "提案の結論");
-	const rubricHeadline =
-		draft.financeSimulation && draft.financeSimulation.salesRubric.totalScore !== null
-			? `B/Sルーブリック判定: ${formatBalanceSheetSalesRubricSummary(draft.financeSimulation.salesRubric)}`
-			: null;
-	const conclusionLines = draft.conclusionText
-		? [
-			...draft.conclusionText.split("\n"),
-			...(rubricHeadline ? [rubricHeadline] : []),
-		]
-		: draft.pageOneLines.slice(0, 4);
-	y = drawWrappedLines(first, conclusionLines, y, { size: 9.7, lineGap: 5, maxLines: 7 });
+	y = drawSectionTitle(first, y, "概要");
+	y = drawWrappedLines(first, buildProposalCoverIntroLines(draft), y, {
+		size: 9.7,
+		lineGap: 5,
+		maxLines: 7,
+	});
 	y -= 8;
 
 	const cardGap = 12;
 	const cardWidth = (contentWidth - cardGap) / 2;
-	drawMetricCard(first, left, y, cardWidth, 64, "販売価格", formatOptionalYen(draft.salePrice));
-	drawMetricCard(first, left + cardWidth + cardGap, y, cardWidth, 64, "仕入れ価格", formatOptionalYen(draft.purchaseCost));
+	const coverCardRows = buildProposalCoverCards(draft);
+	drawMetricCard(first, left, y, cardWidth, 64, coverCardRows[0]?.label ?? "提案タイプ", coverCardRows[0]?.value ?? proposalKindJapaneseLabel(draft.proposalKind));
+	drawMetricCard(first, left + cardWidth + cardGap, y, cardWidth, 64, coverCardRows[1]?.label ?? "区分", coverCardRows[1]?.value ?? "未入力");
 	y -= 76;
-	drawMetricCard(first, left, y, cardWidth, 64, "年間手残り", formatOptionalYen(draft.annualNetIncome));
+	drawMetricCard(first, left, y, cardWidth, 64, coverCardRows[2]?.label ?? "容量", coverCardRows[2]?.value ?? "未入力");
 	drawMetricCard(
 		first,
 		left + cardWidth + cardGap,
 		y,
 		cardWidth,
 		64,
-		"想定利回り / 回収年数",
-		`${draft.expectedYield !== null ? `${trimTrailingZeros(draft.expectedYield)}%` : "算出不可"} / ${draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"}`,
+		coverCardRows[3]?.label ?? "運用前提",
+		coverCardRows[3]?.value ?? "未入力",
 	);
 	y -= 84;
 
-	y = drawSectionTitle(first, y, "主要前提");
-	y = drawDetailRows(first, y, [
-		["年間売電収入", formatOptionalYen(draft.annualIncome)],
-		["年間維持費", formatOptionalYen(draft.runningCost)],
-		["残存FIT年数", draft.fitRemainingYears !== null ? `${trimTrailingZeros(draft.fitRemainingYears)}年` : "未入力"],
-		["出力抑制前提", `${draft.curtailmentScenario}${draft.curtailmentScenario === "抑制あり" ? ` / ${trimTrailingZeros(draft.curtailmentRate)}%` : ""}`],
-		["残存FIT総手残り", draft.fitTotalNetCashflow !== null ? formatYen(draft.fitTotalNetCashflow) : "算出不可"],
-		["想定粗利", draft.grossProfit !== null ? formatYen(draft.grossProfit) : "算出不可"],
-	]);
+	y = drawSectionTitle(first, y, "公開可の概要情報");
+	y = drawDetailRows(first, y, buildProposalCoverSafeRows(draft));
 	y -= 6;
-	y = drawComparisonBarChart(
-		first,
-		y,
-		"収益イメージ",
-		buildProposalChartItems(draft),
-		88,
-	);
-	y = drawComparisonBarChart(
-		first,
-		y,
-		draft.financeSimulation ? "投資構成" : "価格イメージ",
-		buildProposalInvestmentChartItems(draft),
-		88,
-	);
 	drawNoteBox(
 		first,
 		y,
-		"今回の読み解き",
-		buildProposalInsightLines(draft),
+		"取扱情報",
+		buildProposalCoverHandlingLines(draft),
 		64,
 	);
 	drawFooter(first);
@@ -17120,6 +17094,88 @@ function buildProposalFinanceSummaryLines(draft: ProposalSimulationDraft): strin
 		`商品構成: 土地 ${trimTrailingZeros(finance.landRatio)}% / システム ${trimTrailingZeros(finance.systemRatio)}% / 権利代 ${trimTrailingZeros(finance.rightsRatio)}%`,
 		debtLine,
 		`税効果 ${formatYen(finance.taxBenefit)} / 税引後CF ${formatYen(finance.afterTaxCashflow)} / DSCR ${dscrLabel}`,
+	];
+}
+
+function buildProposalCoverIntroLines(draft: ProposalSimulationDraft): string[] {
+	const details = draft.solarDetails;
+	const area = details?.powerArea || "対象エリア確認中";
+	const voltage = details?.voltageClass || "区分確認中";
+	const dcCapacityKw = details?.dcCapacityKw ?? null;
+	const scaleLine = dcCapacityKw !== null
+		? `${trimTrailingZeros(dcCapacityKw)}kW規模の${voltage}案件として、設備条件と運用前提を先に確認する資料です。`
+		: `${voltage}案件として、設備条件と運用前提を先に確認する資料です。`;
+	const locationLine = `対象エリアは ${area} を前提に整理しています。正確な収益条件と金額条件は後続ページにまとめます。`;
+	if (draft.proposalKind === "gridBattery") {
+		return [
+			"本資料は、系統用蓄電池候補について、系統条件・設備条件・運用条件を先に整理するための概要資料です。",
+			scaleLine,
+			locationLine,
+		];
+	}
+	if (draft.proposalKind === "esg" || draft.annualReductionAmount !== null || draft.reductionRate !== null) {
+		return [
+			"本資料は、自家消費や脱炭素対応を含めて、社内検討の初期判断に使うための概要資料です。",
+			scaleLine,
+			locationLine,
+		];
+	}
+	const finance = draft.financeSimulation;
+	const companyStateLine =
+		finance?.timingRank === "S" || finance?.timingRank === "A"
+			? "財務条件が整う企業では、導入判断を前向きに進めやすい前提です。"
+			: "財務条件や導入優先度は企業ごとに異なるため、判断材料を段階的に整理します。";
+	return [
+		"本資料は、太陽光発電所の設備条件・立地条件・運用条件を先に把握するための概要資料です。",
+		scaleLine,
+		companyStateLine,
+	];
+}
+
+function buildProposalCoverCards(
+	draft: ProposalSimulationDraft,
+): Array<{ label: string; value: string }> {
+	const details = draft.solarDetails;
+	const typeValue =
+		draft.proposalKind === "esg" || draft.annualReductionAmount !== null || draft.reductionRate !== null
+			? `${proposalKindJapaneseLabel(draft.proposalKind)} / 自家消費検討`
+			: proposalKindJapaneseLabel(draft.proposalKind);
+	return [
+		{ label: "提案タイプ", value: typeValue },
+		{
+			label: "区分 / エリア",
+			value: `${details?.voltageClass || "未入力"} / ${details?.powerArea || "未入力"}`,
+		},
+		{
+			label: "設備規模",
+			value: `DC ${formatDecimalForPdf(details?.dcCapacityKw ?? null, 1)}kW / PCS ${formatDecimalForPdf(details?.pcsCapacityKw ?? null, 1)}kW`,
+		},
+		{
+			label: "運用前提",
+			value: `${details?.fitFipType || "未入力"} / 残存 ${formatDecimalForPdf(details?.remainingSalesYears ?? draft.fitRemainingYears ?? null, 1)}年`,
+		},
+	];
+}
+
+function buildProposalCoverSafeRows(draft: ProposalSimulationDraft): Array<[string, string]> {
+	const details = draft.solarDetails;
+	return [
+		["パネル情報", details ? `${details.panelMaker} / ${details.panelModel} / ${formatDecimalForPdf(details.panelCount, 0)}枚` : "未入力"],
+		["PCS情報", details ? `${details.powerConditionerMaker} / ${details.powerConditionerModel} / ${formatDecimalForPdf(details.pcsCapacityKw, 1)}kW` : "未入力"],
+		["売電制度", details ? `${details.fitFipType} / 残存${formatDecimalForPdf(details.remainingSalesYears, 1)}年` : "未入力"],
+		["稼働状況", details ? `連系開始日 ${details.gridConnectionDate} / 稼働年数 ${formatOperationYearsForPdf(details.operationYears)}` : "未入力"],
+		["出力抑制前提", `${draft.curtailmentScenario}${draft.curtailmentScenario === "抑制あり" ? ` / ${trimTrailingZeros(draft.curtailmentRate)}%` : ""}`],
+		["公開範囲", "本ページは金額・利回り・売電収入を載せない概要面です"],
+	];
+}
+
+function buildProposalCoverHandlingLines(draft: ProposalSimulationDraft): string[] {
+	const details = draft.solarDetails;
+	const locationScope = details?.powerArea ? `対象エリアは ${details.powerArea} です。` : "対象エリアは確認中です。";
+	return [
+		"1ページ目は、机上に置いても支障が出にくい設備・制度・運用前提だけを載せています。",
+		"販売価格、売電金額、利回り、税効果、借入条件は2ページ目以降で確認します。",
+		locationScope,
 	];
 }
 
