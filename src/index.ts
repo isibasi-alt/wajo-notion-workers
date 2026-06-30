@@ -17194,7 +17194,7 @@ async function buildProposalSimulationPdfBytes(
 		yTop: number,
 		title: string,
 		items: Array<{ label: string; value: number }>,
-		height = 108,
+		height = 96,
 	) => {
 		page.drawRectangle({
 			x: left,
@@ -17216,8 +17216,8 @@ async function buildProposalSimulationPdfBytes(
 		const trackLeft = left + 18;
 		const trackRight = pageWidth - right - 18;
 		const trackWidth = trackRight - trackLeft;
-		const rowGap = 24;
-		const baseY = yTop - 44;
+		const rowGap = items.length >= 4 ? 16 : 18;
+		const baseY = yTop - 40;
 		const barColors = [rgb(0.12, 0.43, 0.39), rgb(0.62, 0.70, 0.72), rgb(0.19, 0.56, 0.47), rgb(0.80, 0.64, 0.30)];
 		items.forEach((item, index) => {
 			const rowY = baseY - index * rowGap;
@@ -17392,8 +17392,13 @@ async function buildProposalSimulationPdfBytes(
 		return yTop - height - 10;
 	};
 
-	const drawSitePhotoFrame = async (page: PDFPage, yTop: number, sitePhotos: ProposalSitePhoto[]) => {
-		const height = 170;
+	const drawSitePhotoFrame = async (
+		page: PDFPage,
+		yTop: number,
+		sitePhotos: ProposalSitePhoto[],
+		options?: { height?: number },
+	) => {
+		const height = options?.height ?? 170;
 		const boxY = yTop - height;
 		page.drawRectangle({
 			x: left,
@@ -17407,7 +17412,7 @@ async function buildProposalSimulationPdfBytes(
 		const gap = 14;
 		const innerWidth = contentWidth - 28;
 		const slotWidth = (innerWidth - gap) / 2;
-		const slotHeight = 126;
+		const slotHeight = Math.max(92, height - 44);
 		for (let index = 0; index < 2; index += 1) {
 			const slotX = left + 14 + index * (slotWidth + gap);
 			const slotY = boxY + 24;
@@ -17566,15 +17571,15 @@ async function buildProposalSimulationPdfBytes(
 		y,
 		"ファイナンス要約",
 		buildProposalFinanceSummaryLines(draft),
-		52,
+		48,
 	);
-	y -= 62;
+	y -= 56;
 	y = drawHorizontalValueBars(
 		second,
 		y,
 		"収益フロー",
 		buildProposalChartItems(draft),
-		92,
+		88,
 	);
 	const financeRows = buildProposalPdfFinanceRows(draft);
 	const primaryFinanceLabels = new Set([
@@ -17584,9 +17589,6 @@ async function buildProposalSimulationPdfBytes(
 		"Cを下回らない理由",
 		"NPV",
 		"IRR",
-		"税効果",
-		"税引後キャッシュフロー",
-		"DSCR",
 	]);
 	y = drawDetailRows(
 		second,
@@ -17695,7 +17697,7 @@ async function buildProposalSimulationPdfBytes(
 			y,
 			"投資構成 / 価格イメージ",
 			buildProposalInvestmentChartItems(draft),
-			94,
+			84,
 		);
 		y = drawTrendChart(
 			fourth,
@@ -17709,7 +17711,7 @@ async function buildProposalSimulationPdfBytes(
 				},
 			],
 			{
-				height: 150,
+				height: 122,
 				formatter: (value) => formatCompactYenForPdf(value),
 				subtitle: "売電手残り、返済、減価償却による税効果を合わせた年次推移です。",
 			},
@@ -17719,12 +17721,27 @@ async function buildProposalSimulationPdfBytes(
 			y,
 			"B/S提案ルート",
 			buildProposalPdfRubricBoxLines(draft),
-			68,
+			54,
 		);
-		y -= 80;
+		y -= 64;
+		y = drawSectionTitle(fourth, y, "ファイナンス詳細");
+		const secondaryFinanceLabels = new Set([
+			"税効果",
+			"税引後キャッシュフロー",
+			"DSCR",
+			"借入条件",
+			"年間元本返済額",
+			"年間利息額",
+		]);
+		y = drawDetailRows(
+			fourth,
+			y,
+			financeRows.filter(([label]) => secondaryFinanceLabels.has(label)),
+		);
+		y -= 2;
 
 		y = drawSectionTitle(fourth, y, "現場写真");
-		await drawSitePhotoFrame(fourth, y, draft.sitePhotos);
+		await drawSitePhotoFrame(fourth, y, draft.sitePhotos, { height: 146 });
 		drawFooter(fourth);
 	}
 
