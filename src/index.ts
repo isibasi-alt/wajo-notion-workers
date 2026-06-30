@@ -4403,14 +4403,17 @@ worker.webhook("processBusinessCardImageWebhook", {
 			await processBusinessCardImage(
 				{
 					imageBase64,
-					routing: firstString(body.routing, body["振り分け"]),
+					routing: firstString(body.routing, body.intakeGuess, body["振り分け"]),
 					engagementIntent: firstString(
 						body.engagementIntent,
+						body.pursueIntent,
 						body.relationshipIntent,
 						body.followIntent,
 						body["営業判断"],
 						body["熱量"],
 					),
+					intakeGuess: firstString(body.intakeGuess, body.routing),
+					pursueIntent: firstString(body.pursueIntent, body.engagementIntent),
 					assigneeUserId: firstString(
 						body.assigneeUserId,
 						body["担当者"],
@@ -4428,35 +4431,46 @@ worker.tool("processBusinessCardImage", {
 	title: "WAJO 名刺画像インテイク",
 	description:
 		"名刺画像(base64)からOCR→名刺ページ作成→振り分け→企業連携を実行します。activeでも商談準備レポートは自動作成せず、企業マスター高密度化までに止めます。",
-	schema: j.object({
-		imageBase64: j.string().describe("名刺画像のbase64(データURL可)"),
-		routing: j
-			.string()
-			.describe("撮影時の振り分け: 企業 / 社外顧問 / あとで。空なら企業扱い"),
-		engagementIntent: j
-			.string()
-			.describe("営業判断: 本気で追う / 名刺だけ保存。空なら本気で追う"),
-		assigneeUserId: j.string().describe("担当営業のNotionユーザーID。空なら未設定"),
-		dryRun: j.boolean().describe("trueならOCRのみ実行し書き込みません"),
-	}),
-	outputSchema: j.object({
+		schema: j.object({
+			imageBase64: j.string().describe("名刺画像のbase64(データURL可)"),
+			routing: j
+				.string()
+				.describe("撮影時の振り分け: 企業 / 社外顧問 / あとで。空なら企業扱い"),
+			intakeGuess: j
+				.string()
+				.describe("補助: company / broker_or_person / undecidable。routingと同等の意図"),
+			engagementIntent: j
+				.string()
+				.describe("営業判断: 本気で追う / 名刺だけ保存。空なら本気で追う"),
+			pursueIntent: j
+				.string()
+				.describe("補助: pursue / not_pursue。engagementIntentと同等の意図"),
+			assigneeUserId: j.string().describe("担当営業のNotionユーザーID。空なら未設定"),
+			dryRun: j.boolean().describe("trueならOCRのみ実行し書き込みません"),
+		}),
+		outputSchema: j.object({
 		pageId: j.string().nullable(),
 		action: j.string(),
 		companyId: j.string().nullable(),
 		message: j.string(),
-	}),
-	execute: async ({ imageBase64, routing, engagementIntent, assigneeUserId, dryRun }, { notion }) => {
-		return processBusinessCardImage(
-			{
-				imageBase64,
-				routing: routing || undefined,
-				engagementIntent: engagementIntent || undefined,
-				assigneeUserId: assigneeUserId || undefined,
-				dryRun,
-			},
-			notion as unknown as NotionClient,
+		}),
+		execute: async (
+			{ imageBase64, routing, intakeGuess, engagementIntent, pursueIntent, assigneeUserId, dryRun },
+			{ notion },
+		) => {
+			return processBusinessCardImage(
+				{
+					imageBase64,
+					routing: routing || undefined,
+					engagementIntent: engagementIntent || undefined,
+					intakeGuess: intakeGuess || routing || undefined,
+					pursueIntent: pursueIntent || engagementIntent || undefined,
+					assigneeUserId: assigneeUserId || undefined,
+					dryRun,
+				},
+				notion as unknown as NotionClient,
 		);
-	},
+		},
 });
 
 worker.webhook("processBusinessCardWebhook", {
@@ -6171,7 +6185,12 @@ function normalizeCardRouting(value: string | undefined): "company" | "broker" |
 	const raw = String(value ?? "").trim();
 	const normalized = raw.toLowerCase();
 	if (normalized === "company") return "company";
+	if (normalized === "company_or_person") return "company";
+	if (normalized === "broker_or_person") return "broker";
+	if (normalized === "broker-or-person") return "broker";
 	if (normalized === "broker") return "broker";
+	if (normalized === "undecidable") return "later";
+	if (normalized === "undecided") return "later";
 	if (normalized === "later") return "later";
 	const v = raw;
 	if (v.includes("社外顧問") || v.includes("ブローカー") || v.includes("🤝")) return "broker";
@@ -6185,7 +6204,9 @@ function normalizeCardEngagement(value: string | undefined): "active" | "save-on
 	const normalized = raw.toLowerCase();
 	const compact = normalized.replace(/[\s_]+/g, "-");
 	if (normalized === "active") return "active";
+	if (normalized === "pursue") return "active";
 	if (compact === "save-only" || normalized === "saveonly") return "save-only";
+	if (normalized === "not_pursue") return "save-only";
 	const v = raw;
 	if (
 		v.includes("名刺だけ") ||
@@ -6215,6 +6236,7 @@ function readBusinessCardRunOptions(body: unknown): {
 		firstString(
 			record.routing,
 			record.route,
+			record.intakeGuess,
 			record.分岐,
 			record.入力,
 			record.対象,
@@ -6224,6 +6246,7 @@ function readBusinessCardRunOptions(body: unknown): {
 	const engagement = normalizeCardEngagement(
 		firstString(
 			record.engagementIntent,
+			record.pursueIntent,
 			record.relationshipIntent,
 			record.followIntent,
 			record["営業判断"],
@@ -6877,7 +6900,9 @@ async function researchExternalAdvisorPublicWeb(
 type BusinessCardImageInput = {
 	imageBase64: string;
 	routing?: string;
+	intakeGuess?: string;
 	engagementIntent?: string;
+	pursueIntent?: string;
 	assigneeUserId?: string;
 	dryRun: boolean;
 };
@@ -6905,8 +6930,8 @@ async function processBusinessCardImage(
 	const commaIndex = raw.indexOf(",");
 	const base64 = raw.startsWith("data:") && commaIndex >= 0 ? raw.slice(commaIndex + 1) : raw;
 	const dataUrl = raw.startsWith("data:") ? raw : `data:image/jpeg;base64,${base64}`;
-	const routing = normalizeCardRouting(input.routing);
-	const engagement = normalizeCardEngagement(input.engagementIntent);
+	const routing = normalizeCardRouting(firstString(input.intakeGuess, input.routing));
+	const engagement = normalizeCardEngagement(firstString(input.pursueIntent, input.engagementIntent));
 	const engagementLabel = engagement === "active" ? "本気で追う" : "名刺だけ保存";
 
 	// サイズ上限(base64で約14MB≒画像10MB)。巨大ペイロードは早期に明示エラー
