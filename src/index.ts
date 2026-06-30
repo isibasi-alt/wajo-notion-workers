@@ -14521,6 +14521,7 @@ type ProposalSimulationDraft = {
 	fitRemainingYears: number | null;
 	curtailmentScenario: CurtailmentScenario;
 	curtailmentRate: number;
+	panelDegradationRate: number;
 	runningCost: number;
 	annualNetIncome: number | null;
 	solarDetails: SolarProposalDetails | null;
@@ -16867,7 +16868,7 @@ async function buildProposalSimulationPdfBytes(
 		panelStrong: rgb(0.9, 0.95, 0.94),
 	};
 
-	const totalPages = draft.proposalKind === "gridBattery" ? 2 : 3;
+	const totalPages = draft.proposalKind === "gridBattery" ? 2 : 4;
 	const drawText = (
 		page: PDFPage,
 		text: string,
@@ -17188,6 +17189,209 @@ async function buildProposalSimulationPdfBytes(
 		return yTop - height - 8;
 	};
 
+	const drawHorizontalValueBars = (
+		page: PDFPage,
+		yTop: number,
+		title: string,
+		items: Array<{ label: string; value: number }>,
+		height = 108,
+	) => {
+		page.drawRectangle({
+			x: left,
+			y: yTop - height,
+			width: contentWidth,
+			height,
+			color: rgb(0.985, 0.992, 0.994),
+			borderColor: colors.line,
+			borderWidth: 0.6,
+		});
+		drawText(page, title, {
+			x: left + 12,
+			y: yTop - 18,
+			size: 9,
+			font: fonts.bold,
+			color: colors.teal,
+		});
+		const maxValue = Math.max(...items.map((item) => Math.abs(item.value)), 1);
+		const trackLeft = left + 18;
+		const trackRight = pageWidth - right - 18;
+		const trackWidth = trackRight - trackLeft;
+		const rowGap = 24;
+		const baseY = yTop - 44;
+		const barColors = [rgb(0.12, 0.43, 0.39), rgb(0.62, 0.70, 0.72), rgb(0.19, 0.56, 0.47), rgb(0.80, 0.64, 0.30)];
+		items.forEach((item, index) => {
+			const rowY = baseY - index * rowGap;
+			const fillWidth = Math.max(4, (Math.max(item.value, 0) / maxValue) * trackWidth);
+			page.drawRectangle({
+				x: trackLeft,
+				y: rowY - 8,
+				width: trackWidth,
+				height: 10,
+				color: rgb(0.93, 0.95, 0.96),
+			});
+			page.drawRectangle({
+				x: trackLeft,
+				y: rowY - 8,
+				width: fillWidth,
+				height: 10,
+				color: barColors[index % barColors.length]!,
+			});
+			drawText(page, item.label, {
+				x: trackLeft,
+				y: rowY + 9,
+				size: 7.6,
+				font: fonts.regular,
+				color: colors.muted,
+			});
+			drawText(page, formatYen(item.value), {
+				x: trackLeft + fillWidth + 6,
+				y: rowY + 2,
+				size: 8.3,
+				font: fonts.bold,
+				color: colors.text,
+			});
+		});
+		return yTop - height - 8;
+	};
+
+	type ProposalTrendPoint = { label: string; value: number };
+	type ProposalTrendSeries = { label: string; color: ReturnType<typeof rgb>; points: ProposalTrendPoint[] };
+
+	const drawTrendChart = (
+		page: PDFPage,
+		yTop: number,
+		title: string,
+		series: ProposalTrendSeries[],
+		options?: { height?: number; formatter?: (value: number) => string; subtitle?: string },
+	) => {
+		const height = options?.height ?? 148;
+		const formatter = options?.formatter ?? ((value: number) => formatYen(value));
+		page.drawRectangle({
+			x: left,
+			y: yTop - height,
+			width: contentWidth,
+			height,
+			color: rgb(0.985, 0.992, 0.994),
+			borderColor: colors.line,
+			borderWidth: 0.6,
+		});
+		drawText(page, title, {
+			x: left + 12,
+			y: yTop - 18,
+			size: 9,
+			font: fonts.bold,
+			color: colors.teal,
+		});
+		if (options?.subtitle) {
+			drawText(page, options.subtitle, {
+				x: left + 12,
+				y: yTop - 31,
+				size: 7.2,
+				font: fonts.regular,
+				color: colors.muted,
+			});
+		}
+		const chartLeft = left + 36;
+		const chartBottom = yTop - height + 26;
+		const chartTop = yTop - 48;
+		const chartHeight = chartTop - chartBottom;
+		const chartWidth = contentWidth - 58;
+		const pointCount = Math.max(...series.map((item) => item.points.length), 1);
+		const values = series.flatMap((item) => item.points.map((point) => point.value));
+		const maxValue = Math.max(...values, 1);
+		const minValue = Math.min(...values, 0);
+		const range = Math.max(maxValue - minValue, 1);
+		const zeroY = chartBottom + ((0 - minValue) / range) * chartHeight;
+
+		for (let i = 0; i < 4; i += 1) {
+			const ratio = i / 3;
+			const yLine = chartBottom + chartHeight * ratio;
+			page.drawLine({
+				start: { x: chartLeft, y: yLine },
+				end: { x: chartLeft + chartWidth, y: yLine },
+				thickness: 0.5,
+				color: rgb(0.88, 0.91, 0.92),
+			});
+			const value = minValue + range * ratio;
+			drawText(page, formatter(value), {
+				x: left + 8,
+				y: yLine - 2,
+				size: 6.8,
+				font: fonts.regular,
+				color: colors.muted,
+			});
+		}
+		page.drawLine({
+			start: { x: chartLeft, y: zeroY },
+			end: { x: chartLeft + chartWidth, y: zeroY },
+			thickness: 0.7,
+			color: colors.line,
+		});
+
+		series.forEach((item, seriesIndex) => {
+			let previous: { x: number; y: number } | null = null;
+			item.points.forEach((point, index) => {
+				const x = chartLeft + (pointCount === 1 ? chartWidth / 2 : (chartWidth * index) / Math.max(pointCount - 1, 1));
+				const yPoint = chartBottom + ((point.value - minValue) / range) * chartHeight;
+				if (previous) {
+					page.drawLine({
+						start: previous,
+						end: { x, y: yPoint },
+						thickness: 1.8,
+						color: item.color,
+					});
+				}
+				page.drawCircle({
+					x,
+					y: yPoint,
+					size: 2.6,
+					color: item.color,
+				});
+				if (index === item.points.length - 1 || index === 0) {
+					drawText(page, formatter(point.value), {
+						x: x + (index === item.points.length - 1 ? -12 : 2),
+						y: yPoint + 6,
+						size: 6.8,
+						font: fonts.bold,
+						color: colors.text,
+					});
+				}
+				if (seriesIndex === series.length - 1) {
+					drawText(page, point.label, {
+						x: x - 8,
+						y: chartBottom - 12,
+						size: 6.6,
+						font: fonts.regular,
+						color: colors.muted,
+					});
+				}
+				previous = { x, y: yPoint };
+			});
+		});
+
+		let legendX = left + 12;
+		const legendY = yTop - height + 8;
+		series.forEach((item) => {
+			page.drawRectangle({
+				x: legendX,
+				y: legendY,
+				width: 8,
+				height: 8,
+				color: item.color,
+			});
+			drawText(page, item.label, {
+				x: legendX + 12,
+				y: legendY + 1,
+				size: 6.8,
+				font: fonts.regular,
+				color: colors.muted,
+			});
+			legendX += 12 + Math.min(120, fonts.regular.widthOfTextAtSize(item.label, 6.8) + 18);
+		});
+
+		return yTop - height - 10;
+	};
+
 	const drawSitePhotoFrame = async (page: PDFPage, yTop: number, sitePhotos: ProposalSitePhoto[]) => {
 		const height = 170;
 		const boxY = yTop - height;
@@ -17285,37 +17489,38 @@ async function buildProposalSimulationPdfBytes(
 	y = drawWrappedLines(first, buildProposalCoverIntroLines(draft), y, {
 		size: 9.1,
 		lineGap: 3.4,
-		maxLines: 6,
+		maxLines: 5,
 	});
-	y -= 6;
+	y -= 8;
 
-	const cardGap = 12;
-	const cardWidth = (contentWidth - cardGap) / 2;
+	const cardGap = 10;
+	const cardWidth = (contentWidth - cardGap * 2) / 3;
 	const coverCardRows = buildProposalCoverCards(draft);
-	drawMetricCard(first, left, y, cardWidth, 58, coverCardRows[0]?.label ?? "提案タイプ", coverCardRows[0]?.value ?? proposalKindJapaneseLabel(draft.proposalKind));
-	drawMetricCard(first, left + cardWidth + cardGap, y, cardWidth, 58, coverCardRows[1]?.label ?? "区分", coverCardRows[1]?.value ?? "未入力");
-	y -= 68;
-	drawMetricCard(first, left, y, cardWidth, 58, coverCardRows[2]?.label ?? "容量", coverCardRows[2]?.value ?? "未入力");
-	drawMetricCard(
-		first,
-		left + cardWidth + cardGap,
-		y,
-		cardWidth,
-		58,
-		coverCardRows[3]?.label ?? "運用前提",
-		coverCardRows[3]?.value ?? "未入力",
-	);
-	y -= 70;
+	for (let row = 0; row < 2; row += 1) {
+		for (let col = 0; col < 3; col += 1) {
+			const index = row * 3 + col;
+			drawMetricCard(
+				first,
+				left + col * (cardWidth + cardGap),
+				y,
+				cardWidth,
+				54,
+				coverCardRows[index]?.label ?? "未入力",
+				coverCardRows[index]?.value ?? "未入力",
+			);
+		}
+		y -= 64;
+	}
 
-	y = drawSectionTitle(first, y, "公開可の概要情報");
+	y = drawSectionTitle(first, y, "設備・制度の見どころ");
 	y = drawDetailRows(first, y, buildProposalCoverSafeRows(draft));
-	y -= 6;
+	y -= 4;
 	drawNoteBox(
 		first,
 		y,
-		"取扱情報",
+		"投資ハイライト",
 		buildProposalCoverHandlingLines(draft),
-		64,
+		86,
 	);
 	drawFooter(first);
 
@@ -17364,12 +17569,12 @@ async function buildProposalSimulationPdfBytes(
 		52,
 	);
 	y -= 62;
-	y = drawComparisonBarChart(
+	y = drawHorizontalValueBars(
 		second,
 		y,
-		"収益イメージ",
+		"収益フロー",
 		buildProposalChartItems(draft),
-		74,
+		92,
 	);
 	const financeRows = buildProposalPdfFinanceRows(draft);
 	const primaryFinanceLabels = new Set([
@@ -17414,6 +17619,71 @@ async function buildProposalSimulationPdfBytes(
 		drawHeader(
 			third,
 			3,
+			"将来推移シミュレーション",
+			`${draft.titleLabel || proposalKindJapaneseLabel(draft.proposalKind)} / 売電推移`,
+			"WAJO提案資料 / 将来推移",
+		);
+
+		y = pageHeight - 126;
+		y = drawTrendChart(
+			third,
+			y,
+			"残存FIT期間の売電量推移",
+			[
+				{
+					label: "年間売電量",
+					color: rgb(0.12, 0.43, 0.39),
+					points: buildProposalAnnualGenerationTrend(draft),
+				},
+			],
+			{
+				height: 154,
+				formatter: formatProposalMwhForPdf,
+				subtitle: `劣化率 ${trimTrailingZeros(draft.panelDegradationRate)}% / 年 を前提にした残存期間の推移です。`,
+			},
+		);
+		y = drawTrendChart(
+			third,
+			y,
+			"経年劣化を加味した売電金額の推移",
+			[
+				{
+					label: "年間売電収入",
+					color: rgb(0.19, 0.56, 0.47),
+					points: buildProposalAnnualRevenueTrend(draft),
+				},
+				{
+					label: "年間手残り",
+					color: rgb(0.80, 0.64, 0.30),
+					points: buildProposalAnnualNetTrend(draft),
+				},
+			],
+			{
+				height: 168,
+				formatter: (value) => formatCompactYenForPdf(value),
+				subtitle: "出力抑制とパネル経年劣化を前提に、売電収入と手残りの落ち方を見せます。",
+			},
+		);
+		const unitPriceLabel =
+			draft.solarDetails?.unitPrice !== null && draft.solarDetails?.unitPrice !== undefined
+				? `${trimTrailingZeros(draft.solarDetails.unitPrice)}円/kWh`
+				: "未入力";
+		drawNoteBox(
+			third,
+			y,
+			"推移の読み方",
+			[
+				`売電単価 ${unitPriceLabel} / 残存FIT ${draft.fitRemainingYears !== null ? `${trimTrailingZeros(draft.fitRemainingYears)}年` : "未入力"} / 出力抑制 ${draft.curtailmentScenario}${draft.curtailmentScenario === "抑制あり" ? ` ${trimTrailingZeros(draft.curtailmentRate)}%` : ""}`,
+				"今の発電量がずっと続く前提ではなく、劣化を入れて先細りを見せることで、現実に近い見え方へ寄せています。",
+			],
+			68,
+		);
+		drawFooter(third);
+
+		const fourth = pdf.addPage([pageWidth, pageHeight]);
+		drawHeader(
+			fourth,
+			4,
 			"詳細根拠・確認事項",
 			`${draft.titleLabel || proposalKindJapaneseLabel(draft.proposalKind)} / 根拠と写真`,
 			"WAJO提案資料 / 根拠と確認事項",
@@ -17421,39 +17691,41 @@ async function buildProposalSimulationPdfBytes(
 
 		y = pageHeight - 126;
 		y = drawComparisonBarChart(
-			third,
+			fourth,
 			y,
 			"投資構成 / 価格イメージ",
 			buildProposalInvestmentChartItems(draft),
 			94,
 		);
-		y = drawSectionTitle(third, y, "ファイナンス詳細");
-		const secondaryFinanceRows = financeRows
-			.filter(([label]) => !primaryFinanceLabels.has(label))
-			.slice(0, 8);
-		y = drawDetailRows(third, y, secondaryFinanceRows);
-
-		y -= 4;
-		y = drawSectionTitle(third, y, "補足・リスク");
-		y = drawWrappedLines(third, draft.pageTwoLines.slice(-6), y, {
-			size: 8.5,
-			lineGap: 3.5,
-			maxLines: 8,
-		});
-
-		y -= 8;
+		y = drawTrendChart(
+			fourth,
+			y,
+			"減価償却を加味した経済メリット推移（1〜5年）",
+			[
+				{
+					label: "税引後CF",
+					color: rgb(0.12, 0.43, 0.39),
+					points: buildProposalEconomicBenefitTrend(draft),
+				},
+			],
+			{
+				height: 150,
+				formatter: (value) => formatCompactYenForPdf(value),
+				subtitle: "売電手残り、返済、減価償却による税効果を合わせた年次推移です。",
+			},
+		);
 		drawNoteBox(
-			third,
+			fourth,
 			y,
 			"B/S提案ルート",
 			buildProposalPdfRubricBoxLines(draft),
-			70,
+			68,
 		);
-		y -= 82;
+		y -= 80;
 
-		y = drawSectionTitle(third, y, "現場写真");
-		await drawSitePhotoFrame(third, y, draft.sitePhotos);
-		drawFooter(third);
+		y = drawSectionTitle(fourth, y, "現場写真");
+		await drawSitePhotoFrame(fourth, y, draft.sitePhotos);
+		drawFooter(fourth);
 	}
 
 	return pdf.save();
@@ -17557,7 +17829,7 @@ function buildProposalCoverIntroLines(draft: ProposalSimulationDraft): string[] 
 	const scaleLine = dcCapacityKw !== null
 		? `${trimTrailingZeros(dcCapacityKw)}kW規模の${voltage}案件として、設備条件と運用前提を先に確認する資料です。`
 		: `${voltage}案件として、設備条件と運用前提を先に確認する資料です。`;
-	const locationLine = `対象エリアは ${area} を前提に整理しています。正確な収益条件と金額条件は後続ページにまとめます。`;
+	const locationLine = `対象エリアは ${area} を前提に整理しています。売電条件、収益推移、税効果は後続ページで数字まで見せます。`;
 	if (draft.proposalKind === "gridBattery") {
 		return [
 			"本資料は、系統用蓄電池候補について、系統条件・設備条件・運用条件を先に整理するための概要資料です。",
@@ -17578,9 +17850,10 @@ function buildProposalCoverIntroLines(draft: ProposalSimulationDraft): string[] 
 			? "財務条件が整う企業では、導入判断を前向きに進めやすい前提です。"
 			: "財務条件や導入優先度は企業ごとに異なるため、判断材料を段階的に整理します。";
 	return [
-		"本資料は、太陽光発電所の設備条件・立地条件・運用条件を先に把握するための概要資料です。",
+		"本資料は、太陽光発電所を『売り物』として魅力と根拠の両方を伝えるための提案資料です。",
 		scaleLine,
 		companyStateLine,
+		locationLine,
 	];
 }
 
@@ -17588,48 +17861,45 @@ function buildProposalCoverCards(
 	draft: ProposalSimulationDraft,
 ): Array<{ label: string; value: string }> {
 	const details = draft.solarDetails;
-	const typeValue =
-		draft.proposalKind === "esg" || draft.annualReductionAmount !== null || draft.reductionRate !== null
-			? `${proposalKindJapaneseLabel(draft.proposalKind)} / 自家消費検討`
-			: proposalKindJapaneseLabel(draft.proposalKind);
+	const financeLabel = draft.financeSimulation
+		? `${draft.financeSimulation.timingRank}判定`
+		: "判定保留";
 	return [
-		{ label: "提案タイプ", value: typeValue },
+		{ label: "販売価格", value: formatOptionalYen(draft.salePrice) },
+		{ label: "表面利回り", value: draft.expectedYield !== null ? `${trimTrailingZeros(draft.expectedYield)}%` : "算出中" },
+		{ label: "年間売電収入", value: formatOptionalYen(draft.annualIncome) },
 		{
-			label: "区分 / エリア",
-			value: `${details?.voltageClass || "未入力"} / ${details?.powerArea || "未入力"}`,
+			label: "年間手残り",
+			value: formatOptionalYen(draft.annualNetIncome),
 		},
 		{
-			label: "設備規模",
-			value: `DC ${formatDecimalForPdf(details?.dcCapacityKw ?? null, 1)}kW / PCS ${formatDecimalForPdf(details?.pcsCapacityKw ?? null, 1)}kW`,
+			label: "FIT残存",
+			value: `${formatDecimalForPdf(details?.remainingSalesYears ?? draft.fitRemainingYears ?? null, 1)}年`,
 		},
 		{
-			label: "運用前提",
-			value: `${details?.fitFipType || "未入力"} / 残存 ${formatDecimalForPdf(details?.remainingSalesYears ?? draft.fitRemainingYears ?? null, 1)}年`,
+			label: "投資判定",
+			value: financeLabel,
 		},
 	];
 }
 
 function buildProposalCoverSafeRows(draft: ProposalSimulationDraft): Array<[string, string]> {
 	const details = draft.solarDetails;
-	return [
+	return nonEmptyLinesAsRows([
 		["パネル情報", details ? `${details.panelMaker} / ${details.panelModel}` : "未入力"],
+		["パネルの見どころ", details?.panelPublicComment || "未入力"],
 		["パネル枚数 / DC", details ? `総枚数 ${formatFullWidthIntegerForPdf(details.panelCount)}枚 / DC ${formatDecimalForPdf(details.dcCapacityKw, 1)}kW` : "未入力"],
 		["PCS情報", details ? `${details.powerConditionerMaker} / ${details.powerConditionerModel} / ${formatDecimalForPdf(details.pcsCapacityKw, 1)}kW` : "未入力"],
-		["売電制度", details ? `${details.fitFipType} / 残存${formatDecimalForPdf(details.remainingSalesYears, 1)}年` : "未入力"],
+		["PCSの見どころ", details?.powerConditionerPublicComment || "未入力"],
+		["売電制度", details ? `${details.fitFipType} / ${formatDecimalForPdf(details.unitPrice, 2)}円/kWh / 残存${formatDecimalForPdf(details.remainingSalesYears, 1)}年` : "未入力"],
 		["稼働状況", details ? `連系開始日 ${details.gridConnectionDate} / 稼働年数 ${formatOperationYearsForPdf(details.operationYears)}` : "未入力"],
 		["出力抑制前提", `${draft.curtailmentScenario}${draft.curtailmentScenario === "抑制あり" ? ` / ${trimTrailingZeros(draft.curtailmentRate)}%` : ""}`],
-		["公開範囲", "本ページは金額・利回り・売電収入を載せない概要面です"],
-	];
+		["所在地 / エリア", details ? `${details.location} / ${details.powerArea}` : "未入力"],
+	]);
 }
 
 function buildProposalCoverHandlingLines(draft: ProposalSimulationDraft): string[] {
-	const details = draft.solarDetails;
-	const locationScope = details?.powerArea ? `対象エリアは ${details.powerArea} です。` : "対象エリアは確認中です。";
-	return [
-		"1ページ目は、机上に置いても支障が出にくい設備・制度・運用前提だけを載せています。",
-		"販売価格、売電金額、利回り、税効果、借入条件は2ページ目以降で確認します。",
-		locationScope,
-	];
+	return buildProposalInsightLines(draft);
 }
 
 function buildProposalPdfRubricMetricsLine(rubric: BalanceSheetSalesRubric): string {
@@ -17679,6 +17949,78 @@ function buildProposalInvestmentChartItems(
 		{ label: "仕入れ価格", value: draft.purchaseCost ?? 0 },
 		{ label: "想定粗利", value: draft.grossProfit ?? 0 },
 	];
+}
+
+function buildProposalAnnualGenerationTrend(draft: ProposalSimulationDraft): Array<{ label: string; value: number }> {
+	const details = draft.solarDetails;
+	if (!details?.unitPrice || details.unitPrice <= 0 || draft.annualIncome === null) return [];
+	const years = Math.max(1, Math.min(12, Math.round(draft.fitRemainingYears ?? 12)));
+	const firstYearGenerationKwh = draft.annualIncome / details.unitPrice;
+	return Array.from({ length: years }, (_, index) => {
+		const factor = Math.max(0, Math.pow(1 - draft.panelDegradationRate / 100, index));
+		return {
+			label: `${index + 1}年`,
+			value: roundTo(firstYearGenerationKwh * factor, 0),
+		};
+	});
+}
+
+function buildProposalAnnualRevenueTrend(draft: ProposalSimulationDraft): Array<{ label: string; value: number }> {
+	if (draft.annualIncome === null) return [];
+	const years = Math.max(1, Math.min(12, Math.round(draft.fitRemainingYears ?? 12)));
+	return Array.from({ length: years }, (_, index) => {
+		const factor = Math.max(0, Math.pow(1 - draft.panelDegradationRate / 100, index));
+		return {
+			label: `${index + 1}年`,
+			value: roundTo(draft.annualIncome! * factor, 0),
+		};
+	});
+}
+
+function buildProposalAnnualNetTrend(draft: ProposalSimulationDraft): Array<{ label: string; value: number }> {
+	if (draft.annualIncome === null || draft.annualNetIncome === null) return [];
+	const years = Math.max(1, Math.min(12, Math.round(draft.fitRemainingYears ?? 12)));
+	return Array.from({ length: years }, (_, index) => {
+		const factor = Math.max(0, Math.pow(1 - draft.panelDegradationRate / 100, index));
+		const annualRevenue = draft.annualIncome! * factor;
+		return {
+			label: `${index + 1}年`,
+			value: roundTo(annualRevenue - draft.runningCost, 0),
+		};
+	});
+}
+
+function buildProposalEconomicBenefitTrend(draft: ProposalSimulationDraft): Array<{ label: string; value: number }> {
+	const finance = draft.financeSimulation;
+	if (!finance || draft.annualIncome === null) return [];
+	return Array.from({ length: 5 }, (_, index) => {
+		const year = index + 1;
+		const factor = Math.max(0, Math.pow(1 - draft.panelDegradationRate / 100, index));
+		const annualRevenue = draft.annualIncome! * factor;
+		const annualNet = annualRevenue - draft.runningCost;
+		const annualDepreciation =
+			finance.annualSystemDepreciation + (year <= finance.rightsDepreciationYears ? finance.annualRightsDepreciation : 0);
+		const depreciationBase = finance.pretaxProfit !== null
+			? Math.min(annualDepreciation, Math.max(finance.pretaxProfit, 0))
+			: annualDepreciation;
+		const taxBenefit = roundTo(depreciationBase * (finance.effectiveTaxRate / 100), 0);
+		const afterTaxCf = roundTo(annualNet - finance.annualDebtService + taxBenefit, 0);
+		return {
+			label: `${year}年`,
+			value: afterTaxCf,
+		};
+	});
+}
+
+function formatCompactYenForPdf(value: number): string {
+	const abs = Math.abs(value);
+	if (abs >= 100000000) return `${value < 0 ? "-" : ""}${trimTrailingZeros(abs / 100000000)}億円`;
+	if (abs >= 10000) return `${value < 0 ? "-" : ""}${trimTrailingZeros(abs / 10000)}万円`;
+	return formatYen(value);
+}
+
+function formatProposalMwhForPdf(value: number): string {
+	return `${trimTrailingZeros(value / 1000)}MWh`;
 }
 
 function buildProposalInsightLines(draft: ProposalSimulationDraft): string[] {
@@ -18645,6 +18987,12 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 				0,
 			)
 			: null;
+	const panelDegradationRate = readFirstNumberByAliases(properties, [
+		"パネル劣化率",
+		"パネル経年劣化率",
+		"経年劣化率",
+		"劣化率",
+	]) ?? DEFAULT_SOLAR_PANEL_DEGRADATION_RATE;
 	const runningCostInput = readRunningCostInput(properties);
 	const runningCost = runningCostInput.total ?? 0;
 	const solarDetails = isGridBattery
@@ -18733,6 +19081,7 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 			fitRemainingYears,
 			curtailmentScenario,
 			curtailmentRate,
+			panelDegradationRate,
 			runningCost,
 			annualNetIncome: null,
 			solarDetails,
@@ -18844,6 +19193,7 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 		fitRemainingYears,
 		curtailmentScenario,
 		curtailmentRate,
+		panelDegradationRate,
 		runningCost,
 		annualNetIncome,
 		solarDetails,
@@ -19946,6 +20296,10 @@ function buildTwoPageProposalLines(input: {
 
 function nonEmptyLines(lines: string[]): string[] {
 	return lines.filter((line) => line.trim().length > 0);
+}
+
+function nonEmptyLinesAsRows(rows: Array<[string, string]>): Array<[string, string]> {
+	return rows.filter(([label, value]) => label.trim().length > 0 && value.trim().length > 0);
 }
 
 function buildSolarSiteLine(details: SolarProposalDetails | null): string {
