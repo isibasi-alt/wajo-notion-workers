@@ -152,7 +152,7 @@ async function main() {
 		"proposal-2",
 	);
 	const solarPdf = await PDFDocument.load(solarPdfBytes);
-	assert.equal(solarPdf.getPageCount(), 2);
+	assert.equal(solarPdf.getPageCount(), 3);
 
 	const missingPanelMaker = evaluateProposalSimulationDraftForTest({
 		id: "proposal-2b",

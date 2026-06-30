@@ -16833,6 +16833,7 @@ async function buildProposalSimulationPdfBytes(
 		panelStrong: rgb(0.9, 0.95, 0.94),
 	};
 
+	const totalPages = draft.proposalKind === "gridBattery" ? 2 : 3;
 	const drawHeader = (page: PDFPage, pageNo: number, title: string, subtitle: string, breadcrumb: string) => {
 		page.drawRectangle({
 			x: 0,
@@ -16869,7 +16870,7 @@ async function buildProposalSimulationPdfBytes(
 			font: fonts.regular,
 			color: rgb(0.78, 0.84, 0.83),
 		});
-		page.drawText(`${pageNo} / 2`, {
+		page.drawText(`${pageNo} / ${totalPages}`, {
 			x: pageWidth - right - 30,
 			y: pageHeight - 36,
 			size: 9,
@@ -17309,33 +17310,83 @@ async function buildProposalSimulationPdfBytes(
 	);
 	y -= 70;
 	const financeRows = buildProposalPdfFinanceRows(draft);
-	y = drawDetailRows(second, y, financeRows);
-
-	y -= 2;
-	y = drawSectionTitle(second, y, "補足・リスク");
-	y = drawWrappedLines(second, draft.pageTwoLines.slice(0, 6), y, {
-		size: 8.7,
-		lineGap: 4,
-		maxLines: draft.proposalKind === "gridBattery" ? 10 : 8,
-	});
-
-	y -= 10;
-	drawNoteBox(
+	const primaryFinanceLabels = new Set([
+		"購入タイミング判定",
+		"NPV",
+		"IRR",
+		"借入条件",
+		"年間元本返済額",
+		"年間利息額",
+		"税効果",
+		"税引後キャッシュフロー",
+		"DSCR",
+		"経済メリット",
+	]);
+	y = drawDetailRows(
 		second,
 		y,
-		"B/S提案ルート",
-		buildProposalPdfRubricBoxLines(draft),
-		74,
+		financeRows.filter(([label]) => primaryFinanceLabels.has(label)),
 	);
-	y -= 86;
 
-	if (draft.proposalKind !== "gridBattery") {
-		y -= 10;
-		y = drawSectionTitle(second, y, "現場写真");
-		await drawSitePhotoFrame(second, y, draft.sitePhotos);
+	if (draft.proposalKind === "gridBattery") {
+		y -= 2;
+		y = drawSectionTitle(second, y, "補足・リスク");
+		y = drawWrappedLines(second, draft.pageTwoLines.slice(0, 6), y, {
+			size: 8.5,
+			lineGap: 3.5,
+			maxLines: 8,
+		});
+		y -= 8;
+		drawNoteBox(
+			second,
+			y,
+			"B/S提案ルート",
+			buildProposalPdfRubricBoxLines(draft),
+			68,
+		);
 	}
 
 	drawFooter(second);
+
+	if (draft.proposalKind !== "gridBattery") {
+		const third = pdf.addPage([pageWidth, pageHeight]);
+		drawHeader(
+			third,
+			3,
+			"詳細根拠・確認事項",
+			`${draft.titleLabel || proposalKindJapaneseLabel(draft.proposalKind)} / 根拠と写真`,
+			"案件 > 提案シミュレーション > 根拠・現場確認",
+		);
+
+		y = pageHeight - 126;
+		y = drawSectionTitle(third, y, "ファイナンス詳細");
+		const secondaryFinanceRows = financeRows
+			.filter(([label]) => !primaryFinanceLabels.has(label))
+			.slice(0, 8);
+		y = drawDetailRows(third, y, secondaryFinanceRows);
+
+		y -= 4;
+		y = drawSectionTitle(third, y, "補足・リスク");
+		y = drawWrappedLines(third, draft.pageTwoLines.slice(-6), y, {
+			size: 8.5,
+			lineGap: 3.5,
+			maxLines: 8,
+		});
+
+		y -= 8;
+		drawNoteBox(
+			third,
+			y,
+			"B/S提案ルート",
+			buildProposalPdfRubricBoxLines(draft),
+			70,
+		);
+		y -= 82;
+
+		y = drawSectionTitle(third, y, "現場写真");
+		await drawSitePhotoFrame(third, y, draft.sitePhotos);
+		drawFooter(third);
+	}
 
 	return pdf.save();
 }
