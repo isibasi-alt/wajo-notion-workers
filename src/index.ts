@@ -14552,6 +14552,11 @@ type FinanceSimulation = {
 	projectIrr: number | null;
 	equityNpv: number | null;
 	equityIrr: number | null;
+	annualPrincipalRepayment: number;
+	annualInterestExpense: number;
+	depreciationYears: number;
+	totalEconomicalBenefit: number;
+	economicBenefit: number;
 	loanAmount: number;
 	interestRate: number;
 	effectiveInterestRate: number | null;
@@ -16206,14 +16211,22 @@ function buildFinanceSimulationRecordProperties(
 	const properties: Record<string, unknown> = {
 		Name: title(`${draft.titleLabel || readGenericPageTitle(proposalPage) || proposalPage.id}｜ファイナンス`),
 		関連提案シミュレーション: relation(proposalPage.id),
-		借入額: { number: finance.loanAmount },
-		金利: { number: finance.interestRate },
-		返済期間: finance.loanYears !== null ? { number: finance.loanYears } : undefined,
-		自己資金: { number: selfFunding },
-		実効税率: { number: finance.effectiveTaxRate },
-		今期利益見込: finance.pretaxProfit !== null ? { number: finance.pretaxProfit } : undefined,
-		土地代: { number: finance.landPrice },
-		システム本体価格: { number: finance.systemPrice },
+			借入額: { number: finance.loanAmount },
+			金利: { number: finance.interestRate },
+			年間元本返済額: { number: finance.annualPrincipalRepayment },
+			年間利息額: { number: finance.annualInterestExpense },
+			返済期間: finance.loanYears !== null ? { number: finance.loanYears } : undefined,
+			自己資金: { number: selfFunding },
+			実効税率: { number: finance.effectiveTaxRate },
+			減価償却年数: { number: finance.depreciationYears },
+			NPV: { number: finance.projectNpv },
+			IRR: { number: finance.projectIrr },
+			経済メリット: { number: finance.economicBenefit },
+			"自己資本NPV": { number: finance.equityNpv },
+			"自己資本IRR": { number: finance.equityIrr },
+			今期利益見込: finance.pretaxProfit !== null ? { number: finance.pretaxProfit } : undefined,
+			土地代: { number: finance.landPrice },
+			システム本体価格: { number: finance.systemPrice },
 		権利代: { number: finance.rightsPrice },
 		年間返済額: { number: finance.annualDebtService },
 		年間償却額: { number: finance.annualDepreciation },
@@ -16239,6 +16252,11 @@ function buildFinanceSimulationRecordProperties(
 		Object.entries(properties).filter(([, value]) => value !== undefined),
 	);
 }
+
+type DebtRepaymentBreakdown = {
+	annualPrincipalRepayment: number;
+	annualInterestExpense: number;
+};
 
 type ProposalPdfExportResult = {
 	attached: boolean;
@@ -17099,12 +17117,18 @@ function buildProposalPdfFinanceRows(draft: ProposalSimulationDraft): Array<[str
 		return [
 			["購入タイミング判定", "未判定"],
 			["B/Sルーブリック", "未判定"],
+			["年間元本返済額", "未入力"],
+			["年間利息額", "未入力"],
 			["土地代", "未入力 / 償却対象外"],
 			["システム本体価格", "未入力 / 17年償却"],
 			["権利代", "未入力 / 5年償却"],
+			["NPV", "未入力"],
+			["IRR", "未入力"],
 			["実効税率", "未入力"],
 			["借入条件", "未入力"],
+			["減価償却年数", "未入力"],
 			["年間償却額", "未入力"],
+			["経済メリット", "未入力"],
 			["税効果", "未入力"],
 			["税引後キャッシュフロー", "未入力"],
 			["DSCR", "未入力"],
@@ -17114,12 +17138,18 @@ function buildProposalPdfFinanceRows(draft: ProposalSimulationDraft): Array<[str
 	return [
 		["購入タイミング判定", `${finance.timingRank} / ${finance.timingReason}`],
 		["B/Sルーブリック", formatBalanceSheetSalesRubricSummary(finance.salesRubric)],
+		["年間元本返済額", formatYen(finance.annualPrincipalRepayment)],
+		["年間利息額", formatYen(finance.annualInterestExpense)],
 		["土地代", `${formatYen(finance.landPrice)} / 償却対象外`],
 		["システム本体価格", `${formatYen(finance.systemPrice)} / 17年償却`],
 		["権利代", `${formatYen(finance.rightsPrice)} / 5年償却`],
+		["NPV", finance.projectNpv !== null ? formatYen(finance.projectNpv) : "未入力"],
+		["IRR", finance.projectIrr !== null ? `${trimTrailingZeros(finance.projectIrr)}%` : "未入力"],
 		["実効税率", `${trimTrailingZeros(finance.effectiveTaxRate)}%`],
 		["借入条件", `${finance.loanAmount > 0 ? formatYen(finance.loanAmount) : "借入なし"} / 金利 ${trimTrailingZeros(finance.interestRate)}% / ${finance.loanYears !== null ? `${trimTrailingZeros(finance.loanYears)}年返済` : "返済期間未入力"}`],
+		["減価償却年数", `${trimTrailingZeros(finance.depreciationYears)}年`],
 		["年間償却額", formatYen(finance.annualDepreciation)],
+		["経済メリット", formatYen(finance.economicBenefit)],
 		["税効果", formatYen(finance.taxBenefit)],
 		["税引後キャッシュフロー", formatYen(finance.afterTaxCashflow)],
 		["DSCR", finance.dscr !== null ? trimTrailingZeros(finance.dscr) : "未入力"],
@@ -17152,6 +17182,8 @@ function buildProposalFinanceSummaryLines(draft: ProposalSimulationDraft): strin
 		];
 	}
 	const finance = draft.financeSimulation;
+	const npv = finance.projectNpv !== null ? formatYen(finance.projectNpv) : "算出不可";
+	const irr = finance.projectIrr !== null ? `${trimTrailingZeros(finance.projectIrr)}%` : "算出不可";
 	const debtLine = finance.loanAmount > 0
 		? `借入 ${formatYen(finance.loanAmount)} / 金利 ${trimTrailingZeros(finance.interestRate)}% / 年間返済 ${formatYen(finance.annualDebtService)}`
 		: "借入なし / 自己資金前提で返済負担なし";
@@ -17159,8 +17191,11 @@ function buildProposalFinanceSummaryLines(draft: ProposalSimulationDraft): strin
 	return [
 		`投資判定 ${finance.timingRank} / ${finance.timingReason}`,
 		`商品構成: 土地 ${trimTrailingZeros(finance.landRatio)}% / システム ${trimTrailingZeros(finance.systemRatio)}% / 権利代 ${trimTrailingZeros(finance.rightsRatio)}%`,
+		`NPV/IRR: ${npv} / ${irr}`,
 		debtLine,
+		`返済分解: 元本 ${formatYen(finance.annualPrincipalRepayment)} / 利息 ${formatYen(finance.annualInterestExpense)} / 合計 ${formatYen(finance.annualDebtService)}`,
 		`税効果 ${formatYen(finance.taxBenefit)} / 税引後CF ${formatYen(finance.afterTaxCashflow)} / DSCR ${dscrLabel}`,
+		`経済メリット（概算） ${formatYen(finance.economicBenefit)} / 減価償却年数 ${trimTrailingZeros(finance.depreciationYears)}年`,
 	];
 }
 
@@ -18471,6 +18506,7 @@ function buildFinanceSimulation(input: {
 }): FinanceSimulation {
 	const composition = buildProductComposition(input.properties, input.salePrice);
 	const { landPrice, systemPrice, rightsPrice } = composition;
+	const investmentBase = Math.max(0, input.salePrice);
 	const effectiveTaxRate = readFirstNumberByAliases(input.properties, [
 		"実効税率",
 		"法人実効税率",
@@ -18502,6 +18538,12 @@ function buildFinanceSimulation(input: {
 		"ローン年数",
 	]);
 	const annualDebtService = calculateAnnualDebtService(loanAmount, interestRate, loanYears);
+	const debtRepayBreakdown = buildAnnualDebtRepaymentComponents(
+		loanAmount,
+		interestRate,
+		loanYears,
+		annualDebtService,
+	);
 	const effectiveInterestRate = loanAmount > 0 && loanYears && loanYears > 0
 		? interestRate
 		: null;
@@ -18510,15 +18552,54 @@ function buildFinanceSimulation(input: {
 		annualDebtService,
 		loanYears,
 	);
+	const discountRate = readFirstNumberByAliases(input.properties, [
+		"割引率",
+		"プロジェクト割引率",
+	]) ?? 5;
 	const annualSystemDepreciation = roundTo(systemPrice * 0.059, 0);
 	const annualRightsDepreciation = roundTo(rightsPrice / 5, 0);
 	const annualDepreciation = annualSystemDepreciation + annualRightsDepreciation;
+	const depreciationYears = roundTo(
+			systemPrice + rightsPrice > 0
+				? (systemPrice * 17 + rightsPrice * 5) / (systemPrice + rightsPrice)
+				: 0,
+		2,
+	);
 	const depreciationBase = pretaxProfit !== null
 		? Math.min(annualDepreciation, Math.max(pretaxProfit, 0))
 		: annualDepreciation;
 	const taxBenefit = roundTo(depreciationBase * (effectiveTaxRate / 100), 0);
 	const cashflowAfterDebt = roundTo(input.annualNetIncome - annualDebtService, 0);
 	const afterTaxCashflow = roundTo(cashflowAfterDebt + taxBenefit, 0);
+	const loanYearsForCalc = loanYears && loanYears > 0 ? loanYears : 20;
+	const horizonYears = input.fitRemainingYears && input.fitRemainingYears > 0
+		? Math.min(input.fitRemainingYears, 30)
+		: loanYearsForCalc;
+	const projectCashflowYears = Math.max(1, Math.min(40, Math.floor(horizonYears)));
+	const projectNpv = calculateNpv(
+		investmentBase,
+		input.annualNetIncome + taxBenefit,
+		projectCashflowYears,
+		Math.max(0, discountRate),
+	);
+	const projectIrr = calculateApproxIrr(
+		investmentBase,
+		input.annualNetIncome + taxBenefit,
+		projectCashflowYears,
+	);
+	const equityInvest = Math.max(0, investmentBase - loanAmount);
+	const equityNpv = calculateNpv(
+		equityInvest,
+		afterTaxCashflow,
+		projectCashflowYears,
+		Math.max(0, discountRate),
+	);
+	const equityIrr = calculateApproxIrr(
+		equityInvest,
+		afterTaxCashflow,
+		projectCashflowYears,
+	);
+	const totalEconomicalBenefit = roundTo(afterTaxCashflow * projectCashflowYears, 0);
 	const dscr = annualDebtService > 0
 		? roundTo(input.annualNetIncome / annualDebtService, 2)
 		: null;
@@ -18551,9 +18632,18 @@ function buildFinanceSimulation(input: {
 		annualSystemDepreciation,
 		annualRightsDepreciation,
 		annualDepreciation,
+		depreciationYears,
+		economicBenefit: totalEconomicalBenefit,
+		totalEconomicalBenefit,
 		effectiveTaxRate,
 		pretaxProfit,
 		taxBenefit,
+		projectNpv,
+		projectIrr,
+		equityNpv,
+		equityIrr,
+		annualPrincipalRepayment: debtRepayBreakdown.annualPrincipalRepayment,
+		annualInterestExpense: debtRepayBreakdown.annualInterestExpense,
 		loanAmount,
 		interestRate,
 		effectiveInterestRate,
@@ -18896,6 +18986,132 @@ function calculateAddOnInterestRate(
 	const totalRepayment = annualDebtService * loanYears;
 	const totalInterest = Math.max(0, totalRepayment - loanAmount);
 	return roundTo((totalInterest / (loanAmount * loanYears)) * 100, 2);
+}
+
+function buildAnnualDebtRepaymentComponents(
+	loanAmount: number,
+	interestRate: number,
+	loanYears: number | null,
+	annualDebtService: number,
+): DebtRepaymentBreakdown {
+	if (loanAmount <= 0 || !loanYears || loanYears <= 0) {
+		return {
+			annualPrincipalRepayment: 0,
+			annualInterestExpense: 0,
+		};
+	}
+	if (annualDebtService <= 0) {
+		return {
+			annualPrincipalRepayment: 0,
+			annualInterestExpense: 0,
+		};
+	}
+
+	const rate = interestRate / 100;
+	let remaining = loanAmount;
+	let firstYearInterest = 0;
+	let firstYearPrincipal = 0;
+	const sampleYears = Math.max(1, Math.min(2, loanYears));
+	for (let year = 0; year < sampleYears; year += 1) {
+		const yearInterest = roundTo(Math.max(0, remaining * rate), 0);
+		const yearPrincipal = Math.max(0, annualDebtService - yearInterest);
+		const cappedPrincipal = Math.min(remaining, yearPrincipal);
+		if (year === 0) {
+			firstYearPrincipal = cappedPrincipal;
+		}
+		firstYearInterest += yearInterest;
+		const remainingNext = Math.max(0, remaining - cappedPrincipal);
+		remaining = remainingNext;
+	}
+	const annualPrincipalRepayment = roundTo(firstYearPrincipal, 0);
+	return {
+		annualPrincipalRepayment,
+		annualInterestExpense: roundTo(firstYearInterest / sampleYears, 0),
+	};
+}
+
+function calculateNpv(
+	initialInvestment: number,
+	annualNetCashflow: number,
+	years: number,
+	discountRatePercent: number,
+): number | null {
+	if (!Number.isFinite(initialInvestment) || !Number.isFinite(annualNetCashflow) || !Number.isFinite(years)) {
+		return null;
+	}
+	if (initialInvestment <= 0 || years <= 0) return null;
+	if (discountRatePercent < -90) return null;
+
+	const rate = Math.max(-0.99, discountRatePercent / 100);
+	let npv = -initialInvestment;
+	for (let year = 1; year <= years; year += 1) {
+		const denominator = Math.pow(1 + rate, year);
+		if (denominator === 0) return null;
+		npv += annualNetCashflow / denominator;
+	}
+	return roundTo(npv, 0);
+}
+
+function calculateApproxIrr(
+	initialInvestment: number,
+	annualNetCashflow: number,
+	years: number,
+): number | null {
+	if (!Number.isFinite(initialInvestment) || !Number.isFinite(annualNetCashflow) || !Number.isFinite(years)) {
+		return null;
+	}
+	if (initialInvestment <= 0 || years <= 0) return null;
+	if (annualNetCashflow === 0) return null;
+
+	const npv = (rate: number): number => {
+		let sum = -initialInvestment;
+		for (let year = 1; year <= years; year += 1) {
+			sum += annualNetCashflow / Math.pow(1 + rate, year);
+		}
+		return sum;
+	};
+
+	let low = -0.99;
+	let high = 0.8;
+	let lowValue = npv(low);
+	let highValue = npv(high);
+	let iterCount = 0;
+	const maxIter = 80;
+
+	if (!Number.isFinite(lowValue) || !Number.isFinite(highValue)) return null;
+	if (lowValue > 0 && highValue > 0) return null;
+	if (lowValue < 0 && highValue < 0) {
+		while (iterCount < maxIter && high < 5) {
+			low = high;
+			lowValue = highValue;
+			high = Math.min(high + 1, 5);
+			highValue = npv(high);
+			iterCount += 1;
+			if (highValue < 0) return null;
+		}
+		if (high >= 5 && highValue > 0) return null;
+	}
+	iterCount = 0;
+	while (iterCount < maxIter && !(highValue === 0)) {
+		const mid = (low + high) / 2;
+		const midValue = npv(mid);
+		if (midValue === 0) {
+			low = mid;
+			high = mid;
+			break;
+		}
+		if (lowValue * midValue < 0) {
+			high = mid;
+			highValue = midValue;
+		} else {
+			low = mid;
+			lowValue = midValue;
+		}
+		if (Math.abs(high - low) < 1e-6) break;
+		iterCount += 1;
+	}
+	const irr = (low + high) / 2;
+	return roundTo(Math.max(-99, irr) * 100, 2);
 }
 
 function judgeFinanceTiming(input: {
