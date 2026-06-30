@@ -17133,59 +17133,157 @@ async function buildProposalSimulationPdfBytes(
 			font: fonts.bold,
 			color: colors.teal,
 		});
-		const chartLeft = left + 18;
-		const chartBottom = yTop - height + 18;
-		const chartWidth = contentWidth - 36;
-		const chartHeight = height - 42;
-		const maxValue = Math.max(...items.map((item) => Math.abs(item.value)), 1);
-		const barGap = 12;
-		const barWidth = (chartWidth - barGap * (items.length - 1)) / items.length;
-		const barColors = [rgb(0.12, 0.43, 0.39), rgb(0.62, 0.70, 0.72), rgb(0.19, 0.56, 0.47), rgb(0.80, 0.64, 0.30)];
-
-		page.drawLine({
-			start: { x: chartLeft, y: chartBottom },
-			end: { x: chartLeft + chartWidth, y: chartBottom },
-			thickness: 0.6,
-			color: colors.line,
-		});
+		const total = Math.max(
+			items.reduce((sum, item) => sum + Math.max(0, item.value), 0),
+			1,
+		);
+		const cardGap = 10;
+		const cardTop = yTop - 34;
+		const cardHeight = height - 42;
+		const cardWidth = (contentWidth - 24 - cardGap * (items.length - 1)) / Math.max(items.length, 1);
+		const barColors = [
+			rgb(0.12, 0.43, 0.39),
+			rgb(0.62, 0.70, 0.72),
+			rgb(0.80, 0.64, 0.30),
+			rgb(0.19, 0.56, 0.47),
+		];
 
 		items.forEach((item, index) => {
-			const normalizedHeight = (Math.max(item.value, 0) / maxValue) * (chartHeight - 22);
-			const x = chartLeft + index * (barWidth + barGap);
+			const x = left + 12 + index * (cardWidth + cardGap);
+			const y = cardTop - cardHeight;
+			const ratio = Math.max(0, item.value) / total;
+			const fillWidth = Math.max(0, (cardWidth - 18) * ratio);
+			const valueText = formatYen(item.value);
+			const ratioText = `${trimTrailingZeros(roundTo(ratio * 100, 1))}%`;
+			page.drawRectangle({
+				x,
+				y,
+				width: cardWidth,
+				height: cardHeight,
+				color: rgb(1, 1, 1),
+				borderColor: rgb(0.86, 0.9, 0.9),
+				borderWidth: 0.6,
+			});
+			drawText(page, item.label, {
+				x: x + 8,
+				y: y + cardHeight - 13,
+				size: 7.3,
+				font: fonts.regular,
+				color: colors.muted,
+			});
+			drawText(page, valueText, {
+				x: x + 8,
+				y: y + cardHeight - 25,
+				size: 8.4,
+				font: fonts.bold,
+				color: colors.text,
+			});
+			drawText(page, ratioText, {
+				x: x + 8,
+				y: y + 9,
+				size: 7.2,
+				font: fonts.bold,
+				color: barColors[index % barColors.length]!,
+			});
+			page.drawRectangle({
+				x: x + 8,
+				y: y + 3,
+				width: cardWidth - 16,
+				height: 4,
+				color: rgb(0.9, 0.94, 0.94),
+			});
+			if (fillWidth > 0) {
+				page.drawRectangle({
+					x: x + 8,
+					y: y + 3,
+					width: fillWidth,
+					height: 4,
+					color: barColors[index % barColors.length]!,
+				});
+			}
+		});
+
+		return yTop - height - 8;
+	};
+
+	const drawCompactBarTrendChart = (
+		page: PDFPage,
+		yTop: number,
+		title: string,
+		points: ProposalTrendPoint[],
+		options?: { height?: number; formatter?: (value: number) => string; subtitle?: string },
+	) => {
+		const height = options?.height ?? 126;
+		const formatter = options?.formatter ?? ((value: number) => formatYen(value));
+		page.drawRectangle({
+			x: left,
+			y: yTop - height,
+			width: contentWidth,
+			height,
+			color: rgb(0.985, 0.992, 0.994),
+			borderColor: colors.line,
+			borderWidth: 0.6,
+		});
+		drawText(page, title, {
+			x: left + 12,
+			y: yTop - 18,
+			size: 9,
+			font: fonts.bold,
+			color: colors.teal,
+		});
+		if (options?.subtitle) {
+			drawText(page, options.subtitle, {
+				x: left + 12,
+				y: yTop - 31,
+				size: 7.2,
+				font: fonts.regular,
+				color: colors.muted,
+			});
+		}
+		const chartLeft = left + 36;
+		const chartBottom = yTop - height + 28;
+		const chartTop = yTop - 48;
+		const chartHeight = chartTop - chartBottom;
+		const chartWidth = contentWidth - 72;
+		const maxValue = Math.max(...points.map((point) => Math.max(0, point.value)), 1);
+		const gap = 12;
+		const barWidth = Math.min(44, (chartWidth - gap * (points.length - 1)) / Math.max(points.length, 1));
+		const totalWidth = barWidth * points.length + gap * (points.length - 1);
+		const startX = chartLeft + Math.max(0, (chartWidth - totalWidth) / 2);
+		for (let i = 0; i < 3; i += 1) {
+			const yLine = chartBottom + chartHeight * (i / 2);
+			page.drawLine({
+				start: { x: chartLeft, y: yLine },
+				end: { x: chartLeft + chartWidth, y: yLine },
+				thickness: 0.45,
+				color: rgb(0.88, 0.91, 0.92),
+			});
+		}
+		points.forEach((point, index) => {
+			const x = startX + index * (barWidth + gap);
+			const barHeight = Math.max(2, (Math.max(0, point.value) / maxValue) * chartHeight);
 			page.drawRectangle({
 				x,
 				y: chartBottom,
 				width: barWidth,
-				height: Math.max(normalizedHeight, 2),
-				color: barColors[index % barColors.length]!,
+				height: barHeight,
+				color: index === 0 ? rgb(0.12, 0.43, 0.39) : rgb(0.19, 0.56, 0.47),
 			});
-			const labelLines = wrapPdfText(item.label, fonts.regular, 7.2, barWidth).slice(0, 2);
-			let labelY = chartBottom - 11;
-			for (const line of labelLines) {
-				drawText(page, line, {
-					x,
-					y: labelY,
-					size: 7.2,
-					font: fonts.regular,
-					color: colors.muted,
-				});
-				labelY -= 8.5;
-			}
-			const valueLabel = formatYen(item.value);
-			const valueLines = wrapPdfText(valueLabel, fonts.bold, 7.8, barWidth + 8).slice(0, 2);
-			let valueY = chartBottom + Math.max(normalizedHeight, 2) + 4;
-			for (const line of valueLines) {
-				drawText(page, line, {
-					x,
-					y: valueY,
-					size: 7.8,
-					font: fonts.bold,
-					color: colors.text,
-				});
-				valueY -= 9;
-			}
+			drawText(page, formatter(point.value), {
+				x: x - 2,
+				y: chartBottom + barHeight + 5,
+				size: 6.8,
+				font: fonts.bold,
+				color: colors.text,
+			});
+			drawText(page, point.label, {
+				x: x + 4,
+				y: chartBottom - 13,
+				size: 6.8,
+				font: fonts.regular,
+				color: colors.muted,
+			});
 		});
-
 		return yTop - height - 8;
 	};
 
@@ -17699,17 +17797,11 @@ async function buildProposalSimulationPdfBytes(
 			buildProposalInvestmentChartItems(draft),
 			84,
 		);
-		y = drawTrendChart(
+		y = drawCompactBarTrendChart(
 			fourth,
 			y,
 			"減価償却を加味した経済メリット推移（1〜5年）",
-			[
-				{
-					label: "税引後CF",
-					color: rgb(0.12, 0.43, 0.39),
-					points: buildProposalEconomicBenefitTrend(draft),
-				},
-			],
+			buildProposalEconomicBenefitTrend(draft),
 			{
 				height: 122,
 				formatter: (value) => formatCompactYenForPdf(value),
