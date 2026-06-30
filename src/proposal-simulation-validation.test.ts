@@ -139,7 +139,8 @@ async function main() {
 	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /連系開始日 2021-06-01/);
 	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /稼働年数/);
 	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /残存FIT年数: 14年/);
-	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /出力抑制前提: 抑制なし/);
+	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /出力抑制前提: 抑制データ未設定/);
+	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /V1\.5で収支反映/);
 	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /残存FIT期間内の総手残り: ¥562,800,000/);
 	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /土地は償却対象外です/);
 	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /システム本体は17年で償却します/);
@@ -227,7 +228,8 @@ async function main() {
 	assert.equal(readyWithCurtailment.annualNetIncome, 35880000);
 	assert.equal(readyWithCurtailment.expectedYield, 29.9);
 	assert.equal(readyWithCurtailment.fitTotalNetCashflow, 502320000);
-	assert.match(readyWithCurtailment.summaryLines.join("\n"), /出力抑制前提: 抑制あり/);
+	assert.match(readyWithCurtailment.summaryLines.join("\n"), /出力抑制前提: 抑制データあり \/ 10%/);
+	assert.match(readyWithCurtailment.summaryLines.join("\n"), /V1は文章表示/);
 	assert.match(readyWithCurtailment.summaryLines.join("\n"), /出力抑制率: 10%/);
 
 	const readyWithFinance = evaluateProposalSimulationDraftForTest({

@@ -16236,7 +16236,7 @@ function buildSalesProposalEnablementSections(
 		`想定利回り: ${draft.expectedYield !== null ? `${trimTrailingZeros(draft.expectedYield)}%` : "算出不可"}`,
 		`想定回収年数: ${draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"}`,
 		`FIT/FIP: ${fitLine}`,
-		`出力抑制: ${draft.curtailmentScenario}${draft.curtailmentScenario === "抑制あり" ? ` / ${trimTrailingZeros(draft.curtailmentRate)}%` : ""}`,
+		`出力抑制: ${formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)}`,
 		`NPV: ${finance?.projectNpv !== null && finance?.projectNpv !== undefined ? formatYen(finance.projectNpv) : "未算出"}`,
 		`IRR: ${finance?.projectIrr !== null && finance?.projectIrr !== undefined ? `${trimTrailingZeros(finance.projectIrr)}%` : "未算出"}`,
 		`DSCR: ${finance?.dscr !== null && finance?.dscr !== undefined ? trimTrailingZeros(finance.dscr) : "借入なし/未算出"}`,
@@ -16264,7 +16264,7 @@ function buildSalesProposalEnablementSections(
 		`切り返し: 設備情報は ${equipmentLine} です。事故歴・整備履歴・残リスクは和上側で確認した範囲と未確認を分けて説明します。`,
 		"",
 		"反論: 出力抑制や地域条件が読めない。",
-		`切り返し: 今回の抑制前提は ${draft.curtailmentScenario}${draft.curtailmentScenario === "抑制あり" ? ` / ${trimTrailingZeros(draft.curtailmentRate)}%` : ""} です。地域とFIT/FIP条件によって変わるため、資料では前提として明示します。`,
+		`切り返し: 今回の抑制前提は ${formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)} です。地域とFIT/FIP条件によって変わるため、資料では前提として明示します。`,
 		"",
 		"反論: 税務メリットは本当に使えるのか。",
 		finance
@@ -17115,7 +17115,7 @@ async function buildProposalSimulationPdfBytes(
 		yTop: number,
 		title: string,
 		items: Array<{ label: string; value: number }>,
-		height = 104,
+		height = 118,
 	) => {
 		page.drawRectangle({
 			x: left,
@@ -17133,14 +17133,16 @@ async function buildProposalSimulationPdfBytes(
 			font: fonts.bold,
 			color: colors.teal,
 		});
+		const chartLeft = left + 54;
+		const chartRight = pageWidth - right - 18;
+		const chartWidth = chartRight - chartLeft;
+		const chartBottom = yTop - height + 28;
+		const chartTop = yTop - 40;
+		const chartHeight = chartTop - chartBottom;
 		const total = Math.max(
 			items.reduce((sum, item) => sum + Math.max(0, item.value), 0),
 			1,
 		);
-		const cardGap = 10;
-		const cardTop = yTop - 34;
-		const cardHeight = height - 42;
-		const cardWidth = (contentWidth - 24 - cardGap * (items.length - 1)) / Math.max(items.length, 1);
 		const barColors = [
 			rgb(0.12, 0.43, 0.39),
 			rgb(0.62, 0.70, 0.72),
@@ -17148,59 +17150,71 @@ async function buildProposalSimulationPdfBytes(
 			rgb(0.19, 0.56, 0.47),
 		];
 
+		[0, 50, 100].forEach((percent) => {
+			const yLine = chartBottom + chartHeight * (percent / 100);
+			page.drawLine({
+				start: { x: chartLeft, y: yLine },
+				end: { x: chartRight, y: yLine },
+				thickness: 0.45,
+				color: rgb(0.88, 0.91, 0.92),
+			});
+			drawText(page, `${percent}%`, {
+				x: left + 18,
+				y: yLine - 3,
+				size: 6.8,
+				font: fonts.regular,
+				color: colors.muted,
+			});
+		});
+
+		const gap = 28;
+		const barWidth = Math.min(58, (chartWidth - gap * (items.length - 1)) / Math.max(items.length, 1));
+		const totalWidth = barWidth * items.length + gap * (items.length - 1);
+		const startX = chartLeft + Math.max(0, (chartWidth - totalWidth) / 2);
 		items.forEach((item, index) => {
-			const x = left + 12 + index * (cardWidth + cardGap);
-			const y = cardTop - cardHeight;
 			const ratio = Math.max(0, item.value) / total;
-			const fillWidth = Math.max(0, (cardWidth - 18) * ratio);
+			const x = startX + index * (barWidth + gap);
+			const barHeight = Math.max(item.value > 0 ? 3 : 1.2, chartHeight * ratio);
 			const valueText = formatYen(item.value);
 			const ratioText = `${trimTrailingZeros(roundTo(ratio * 100, 1))}%`;
 			page.drawRectangle({
 				x,
-				y,
-				width: cardWidth,
-				height: cardHeight,
-				color: rgb(1, 1, 1),
-				borderColor: rgb(0.86, 0.9, 0.9),
-				borderWidth: 0.6,
+				y: chartBottom,
+				width: barWidth,
+				height: chartHeight,
+				color: rgb(0.93, 0.95, 0.96),
 			});
-			drawText(page, item.label, {
-				x: x + 8,
-				y: y + cardHeight - 13,
-				size: 7.3,
-				font: fonts.regular,
-				color: colors.muted,
+			page.drawRectangle({
+				x,
+				y: chartBottom,
+				width: barWidth,
+				height: barHeight,
+				color: barColors[index % barColors.length]!,
 			});
+			const valueWidth = fonts.bold.widthOfTextAtSize(valueText, 7.2);
 			drawText(page, valueText, {
-				x: x + 8,
-				y: y + cardHeight - 25,
-				size: 8.4,
+				x: x + barWidth / 2 - valueWidth / 2,
+				y: chartBottom + barHeight + 5,
+				size: 7.2,
 				font: fonts.bold,
 				color: colors.text,
 			});
+			const ratioWidth = fonts.bold.widthOfTextAtSize(ratioText, 6.8);
 			drawText(page, ratioText, {
-				x: x + 8,
-				y: y + 9,
-				size: 7.2,
+				x: x + barWidth / 2 - ratioWidth / 2,
+				y: chartBottom - 10,
+				size: 6.8,
 				font: fonts.bold,
 				color: barColors[index % barColors.length]!,
 			});
-			page.drawRectangle({
-				x: x + 8,
-				y: y + 3,
-				width: cardWidth - 16,
-				height: 4,
-				color: rgb(0.9, 0.94, 0.94),
+			const labelWidth = fonts.regular.widthOfTextAtSize(item.label, 6.8);
+			drawText(page, item.label, {
+				x: x + barWidth / 2 - labelWidth / 2,
+				y: chartBottom - 22,
+				size: 6.8,
+				font: fonts.regular,
+				color: colors.muted,
 			});
-			if (fillWidth > 0) {
-				page.drawRectangle({
-					x: x + 8,
-					y: y + 3,
-					width: fillWidth,
-					height: 4,
-					color: barColors[index % barColors.length]!,
-				});
-			}
 		});
 
 		return yTop - height - 8;
@@ -17311,7 +17325,8 @@ async function buildProposalSimulationPdfBytes(
 			color: colors.teal,
 		});
 		const maxValue = Math.max(...items.map((item) => Math.abs(item.value)), 1);
-		const trackLeft = left + 18;
+		const labelLeft = left + 18;
+		const trackLeft = left + 126;
 		const trackRight = pageWidth - right - 18;
 		const trackWidth = trackRight - trackLeft;
 		const rowGap = items.length >= 4 ? 16 : 18;
@@ -17320,6 +17335,13 @@ async function buildProposalSimulationPdfBytes(
 		items.forEach((item, index) => {
 			const rowY = baseY - index * rowGap;
 			const fillWidth = Math.max(4, (Math.max(item.value, 0) / maxValue) * trackWidth);
+			drawText(page, item.label, {
+				x: labelLeft,
+				y: rowY - 2,
+				size: 7.6,
+				font: fonts.regular,
+				color: colors.muted,
+			});
 			page.drawRectangle({
 				x: trackLeft,
 				y: rowY - 8,
@@ -17334,15 +17356,11 @@ async function buildProposalSimulationPdfBytes(
 				height: 10,
 				color: barColors[index % barColors.length]!,
 			});
-			drawText(page, item.label, {
-				x: trackLeft,
-				y: rowY + 9,
-				size: 7.6,
-				font: fonts.regular,
-				color: colors.muted,
-			});
+			const valueText = formatYen(item.value);
+			const valueWidth = fonts.bold.widthOfTextAtSize(valueText, 8.3);
+			const valueX = Math.min(trackRight - valueWidth, trackLeft + fillWidth + 6);
 			drawText(page, formatYen(item.value), {
-				x: trackLeft + fillWidth + 6,
+				x: valueX,
 				y: rowY + 2,
 				size: 8.3,
 				font: fonts.bold,
@@ -17360,10 +17378,11 @@ async function buildProposalSimulationPdfBytes(
 		yTop: number,
 		title: string,
 		series: ProposalTrendSeries[],
-		options?: { height?: number; formatter?: (value: number) => string; subtitle?: string },
+		options?: { height?: number; formatter?: (value: number) => string; subtitle?: string; valueLabels?: "endpoints" | "all" },
 	) => {
 		const height = options?.height ?? 148;
 		const formatter = options?.formatter ?? ((value: number) => formatYen(value));
+		const valueLabels = options?.valueLabels ?? "endpoints";
 		page.drawRectangle({
 			x: left,
 			y: yTop - height,
@@ -17445,11 +17464,22 @@ async function buildProposalSimulationPdfBytes(
 					size: 2.6,
 					color: item.color,
 				});
-				if (index === item.points.length - 1 || index === 0) {
-					drawText(page, formatter(point.value), {
-						x: x + (index === item.points.length - 1 ? -12 : 2),
-						y: yPoint + 6,
-						size: 6.8,
+				if (valueLabels === "all" || index === item.points.length - 1 || index === 0) {
+					const valueText = formatter(point.value);
+					const labelSize = valueLabels === "all" ? 5.2 : 6.8;
+					const labelWidth = fonts.bold.widthOfTextAtSize(valueText, labelSize);
+					const xOffset = valueLabels === "all" ? -labelWidth / 2 : index === item.points.length - 1 ? -12 : 2;
+					const safeX = Math.max(left + 8, Math.min(pageWidth - right - labelWidth, x + xOffset));
+					const yOffset =
+						valueLabels === "all"
+							? seriesIndex % 2 === 0
+								? 6
+								: -10
+							: 6;
+					drawText(page, valueText, {
+						x: safeX,
+						y: yPoint + yOffset,
+						size: labelSize,
 						font: fonts.bold,
 						color: colors.text,
 					});
@@ -17740,6 +17770,7 @@ async function buildProposalSimulationPdfBytes(
 				height: 154,
 				formatter: formatProposalMwhForPdf,
 				subtitle: `劣化率 ${trimTrailingZeros(draft.panelDegradationRate)}% / 年 を前提にした残存期間の推移です。`,
+				valueLabels: "all",
 			},
 		);
 		y = drawTrendChart(
@@ -17762,6 +17793,7 @@ async function buildProposalSimulationPdfBytes(
 				height: 168,
 				formatter: (value) => formatCompactYenForPdf(value),
 				subtitle: "出力抑制とパネル経年劣化を前提に、売電収入と手残りの落ち方を見せます。",
+				valueLabels: "all",
 			},
 		);
 		const unitPriceLabel =
@@ -17773,7 +17805,7 @@ async function buildProposalSimulationPdfBytes(
 			y,
 			"推移の読み方",
 			[
-				`売電単価 ${unitPriceLabel} / 残存FIT ${draft.fitRemainingYears !== null ? `${trimTrailingZeros(draft.fitRemainingYears)}年` : "未入力"} / 出力抑制 ${draft.curtailmentScenario}${draft.curtailmentScenario === "抑制あり" ? ` ${trimTrailingZeros(draft.curtailmentRate)}%` : ""}`,
+				`売電単価 ${unitPriceLabel} / 残存FIT ${draft.fitRemainingYears !== null ? `${trimTrailingZeros(draft.fitRemainingYears)}年` : "未入力"} / 出力抑制 ${formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)}`,
 				"今の発電量がずっと続く前提ではなく、劣化を入れて先細りを見せることで、現実に近い見え方へ寄せています。",
 			],
 			68,
@@ -18002,7 +18034,7 @@ function buildProposalCoverSafeRows(draft: ProposalSimulationDraft): Array<[stri
 		["PCSの見どころ", details?.powerConditionerPublicComment || "未入力"],
 		["売電制度", details ? `${details.fitFipType} / ${formatDecimalForPdf(details.unitPrice, 2)}円/kWh / 残存${formatDecimalForPdf(details.remainingSalesYears, 1)}年` : "未入力"],
 		["稼働状況", details ? `連系開始日 ${details.gridConnectionDate} / 稼働年数 ${formatOperationYearsForPdf(details.operationYears)}` : "未入力"],
-		["出力抑制前提", `${draft.curtailmentScenario}${draft.curtailmentScenario === "抑制あり" ? ` / ${trimTrailingZeros(draft.curtailmentRate)}%` : ""}`],
+		["出力抑制前提", formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)],
 		["所在地 / エリア", details ? `${details.location} / ${details.powerArea}` : "未入力"],
 	]);
 }
@@ -18334,8 +18366,8 @@ function buildProposalPdfPageTwoLines(draft: ProposalSimulationDraft): string[] 
 			: "";
 	const curtailmentLine =
 		draft.curtailmentScenario === "抑制あり"
-			? `出力抑制前提: 抑制あり / 抑制率 ${trimTrailingZeros(draft.curtailmentRate)}% / 抑制後の年間売電収入 ${formatYenForPdf(draft.annualIncome)}`
-			: `出力抑制前提: 抑制なし / 年間売電収入 ${formatYenForPdf(draft.annualIncome)}`;
+			? `出力抑制前提: ${formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)} / 年間売電収入 ${formatYenForPdf(draft.annualIncome)}`
+			: `出力抑制前提: ${formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)} / 年間売電収入 ${formatYenForPdf(draft.annualIncome)}`;
 	const financeLine = draft.financeSimulation
 		? `財務前提: 税効果 ${formatYenForPdf(draft.financeSimulation.taxBenefit)} / 税引後キャッシュフロー ${formatYenForPdf(draft.financeSimulation.afterTaxCashflow)} / DSCR ${draft.financeSimulation.dscr !== null ? trimTrailingZeros(draft.financeSimulation.dscr) : "未入力"}`
 		: "財務前提: 借入条件、実効税率、償却前提を入れるとDSCRまで算出できます。";
@@ -19334,6 +19366,13 @@ function readCurtailmentScenario(properties: Record<string, unknown>): Curtailme
 	return "抑制なし";
 }
 
+function formatCurtailmentAssumptionLabel(scenario: CurtailmentScenario, rate: number): string {
+	if (scenario === "抑制あり" && rate > 0) {
+		return `抑制データあり / ${trimTrailingZeros(rate)}%（V1は文章表示、V1.5で収支反映）`;
+	}
+	return "抑制データ未設定（地域・FIT条件確認 / V1.5で収支反映）";
+}
+
 function buildFinanceSimulation(input: {
 	properties: Record<string, unknown>;
 	salePrice: number;
@@ -20259,8 +20298,8 @@ function buildProposalSummaryLines(input: {
 	`販売価格: ${formatYen(input.salePrice)}`,
 	`仕入れ価格: ${formatYen(input.purchaseCost)}`,
 	`残存FIT年数: ${input.fitRemainingYears !== null ? `${trimTrailingZeros(input.fitRemainingYears)}年` : "未入力"}`,
-	`出力抑制前提: ${input.curtailmentScenario}`,
-	`出力抑制率: ${input.curtailmentScenario === "抑制あり" ? `${trimTrailingZeros(input.curtailmentRate)}%` : "0%"}`,
+	`出力抑制前提: ${formatCurtailmentAssumptionLabel(input.curtailmentScenario, input.curtailmentRate)}`,
+	`出力抑制率: ${input.curtailmentScenario === "抑制あり" && input.curtailmentRate > 0 ? `${trimTrailingZeros(input.curtailmentRate)}%` : "未設定"}`,
 	`抑制前年間売電収入: ${input.baseAnnualIncome !== null ? formatYen(input.baseAnnualIncome) : "未入力"}`,
 	`年間売電収入: ${formatYen(input.annualIncome)}`,
 	`年間維持費（ランニングコスト）: ${formatYen(input.runningCost)}`,
@@ -20330,7 +20369,7 @@ function buildTwoPageProposalLines(input: {
 	const maintenanceLine = buildMaintenanceBreakdownLine(input.runningCostBreakdown);
 	const mainMetricsLine =
 		`通常営業シミュレーション: 販売価格 ${formatYen(input.salePrice)} / 残存FIT年数 ${input.fitRemainingYears !== null ? `${trimTrailingZeros(input.fitRemainingYears)}年` : "未入力"} / ` +
-		`出力抑制前提 ${input.curtailmentScenario}${input.curtailmentScenario === "抑制あり" ? `（${trimTrailingZeros(input.curtailmentRate)}%）` : ""} / ` +
+		`出力抑制前提 ${formatCurtailmentAssumptionLabel(input.curtailmentScenario, input.curtailmentRate)} / ` +
 		`年間売電収入 ${formatYen(input.annualIncome)} / 年間手残り ${formatYen(input.annualNetIncome)} / 想定利回り ${yieldText} / 残存FIT総手残り ${input.fitTotalNetCashflow !== null ? formatYen(input.fitTotalNetCashflow) : "算出不可"}`;
 	const financeLines = input.financeSimulation?.lines ?? [
 		"ファイナンス・税効果シミュレーション: 土地/システム本体/権利代/融資/税率を入力すると、償却・税効果・DSCR・購入タイミング判定を表示します。",
