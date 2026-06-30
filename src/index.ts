@@ -16047,6 +16047,12 @@ function buildSalesProposalRecordPatches(
 	]);
 	const proposalState = inferSalesProposalState(pdfExport);
 	const actionCategory = inferSalesProposalActionCategory(draft);
+	const enablement = buildSalesProposalEnablementSections(
+		proposalPage,
+		draft,
+		pdfExport,
+		actionCategory,
+	);
 	const reasonLines = [
 		draft.conclusionText,
 		draft.financeSimulation
@@ -16070,6 +16076,13 @@ function buildSalesProposalRecordPatches(
 		案件アクション分類: { kind: "select", value: actionCategory },
 		判定理由: { kind: "text", value: reasonLines.join("\n") },
 		次にやる営業アクション: { kind: "text", value: nextActionLines.join("\n") },
+		営業説明サマリー: { kind: "text", value: enablement.summary },
+		営業がまず見る数字: { kind: "text", value: enablement.keyNumbers },
+		営業トーク下書き: { kind: "text", value: enablement.talkDraft },
+		反論切り返し: { kind: "text", value: enablement.objectionHandling },
+		財務説明メモ: { kind: "text", value: enablement.financeMemo },
+		"和上保証・整備コメント": { kind: "text", value: enablement.wajoWarrantyMemo },
+		未確認・注意点: { kind: "text", value: enablement.riskNotes },
 	};
 	if (pdfExport.fileUrl) {
 		patches.提案PDFリンク = { kind: "text", value: pdfExport.fileUrl };
@@ -16085,6 +16098,161 @@ function buildSalesProposalRecordPatches(
 		patches.関連ファイナンスシミュレーション = { kind: "relation", ids: [financePageId] };
 	}
 	return patches;
+}
+
+function buildSalesProposalEnablementSections(
+	proposalPage: Page,
+	draft: ProposalSimulationDraft,
+	pdfExport: ProposalPdfExportResult,
+	actionCategory: string,
+): {
+	summary: string;
+	keyNumbers: string;
+	talkDraft: string;
+	objectionHandling: string;
+	financeMemo: string;
+	wajoWarrantyMemo: string;
+	riskNotes: string;
+} {
+	const properties = proposalPage.properties ?? {};
+	const finance = draft.financeSimulation;
+	const rank = inferSalesProposalRank(draft);
+	const details = draft.solarDetails;
+	const rubricSummary = finance ? formatBalanceSheetSalesRubricSummary(finance.salesRubric) : "未判定";
+	const fitLine = details
+		? `${details.fitFipType} / 売電単価 ${formatNumberWithUnit(details.unitPrice, "円/kWh")} / 残存 ${formatNumberWithUnit(details.remainingSalesYears ?? draft.fitRemainingYears, "年")}`
+		: `残存FIT ${draft.fitRemainingYears !== null ? `${trimTrailingZeros(draft.fitRemainingYears)}年` : "未入力"}`;
+	const equipmentLine = details
+		? `${details.panelMaker || "パネルメーカー未入力"} ${details.panelModel || "型式未入力"} / ${formatNumberWithUnit(details.panelCount, "枚")} / DC ${formatNumberWithUnit(details.dcCapacityKw, "kW")} / PCS ${formatNumberWithUnit(details.pcsCapacityKw, "kW")}`
+		: "設備詳細未入力";
+	const wajoMemo = buildWajoWarrantyMemoFromProposalProperties(properties);
+	const missing = buildProposalEnablementMissingNotes(draft, wajoMemo);
+	const summary = [
+		`一言結論: ${draft.conclusionText}`,
+		`投資判定: ${rank} / ${actionCategory}`,
+		"判定の意味: 発電所そのものの品質評価ではなく、現時点の価格・収益・融資・税効果・B/S前提を合わせた「今この条件で提案するべきか」の投資判定です。",
+		`提案タイプ: ${proposalKindJapaneseLabel(draft.proposalKind)}`,
+		`B/Sルーブリック: ${rubricSummary}`,
+		pdfExport.fileUrl ? `顧客向けPDF: ${pdfExport.fileUrl}` : "顧客向けPDF: files型の提案PDFを確認",
+	].join("\n");
+	const keyNumbers = [
+		`販売価格: ${formatOptionalYen(draft.salePrice)}`,
+		`仕入れ価格: ${formatOptionalYen(draft.purchaseCost)}`,
+		`年間売電収入: ${formatOptionalYen(draft.annualIncome)}`,
+		`年間手残り: ${formatOptionalYen(draft.annualNetIncome)}`,
+		`想定利回り: ${draft.expectedYield !== null ? `${trimTrailingZeros(draft.expectedYield)}%` : "算出不可"}`,
+		`想定回収年数: ${draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"}`,
+		`FIT/FIP: ${fitLine}`,
+		`出力抑制: ${draft.curtailmentScenario}${draft.curtailmentScenario === "抑制あり" ? ` / ${trimTrailingZeros(draft.curtailmentRate)}%` : ""}`,
+		`NPV: ${finance?.projectNpv !== null && finance?.projectNpv !== undefined ? formatYen(finance.projectNpv) : "未算出"}`,
+		`IRR: ${finance?.projectIrr !== null && finance?.projectIrr !== undefined ? `${trimTrailingZeros(finance.projectIrr)}%` : "未算出"}`,
+		`DSCR: ${finance?.dscr !== null && finance?.dscr !== undefined ? trimTrailingZeros(finance.dscr) : "借入なし/未算出"}`,
+		`税効果: ${finance ? formatYen(finance.taxBenefit) : "未算出"}`,
+		`経済メリット: ${finance ? formatYen(finance.economicBenefit) : "未算出"}`,
+	].join("\n");
+	const talkDraft = [
+		"冒頭:",
+		`この資料では、利回りだけではなく「今この条件で買うべきか」を判定しています。今回の判定は ${rank} です。`,
+		"",
+		"説明順:",
+		"1. まずFIT/FIP、売電単価、残存期間、抑制前提を確認します。",
+		`2. 次に年間手残り ${formatOptionalYen(draft.annualNetIncome)} と回収年数 ${draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"} を見ます。`,
+		finance
+			? `3. その上で、融資・税効果込みでは NPV ${finance.projectNpv !== null ? formatYen(finance.projectNpv) : "未算出"} / IRR ${finance.projectIrr !== null ? `${trimTrailingZeros(finance.projectIrr)}%` : "未算出"} / 経済メリット ${formatYen(finance.economicBenefit)} として見ます。`
+			: "3. 融資・税効果・B/S情報が入れば、F/CシミュレーションとしてNPV・IRR・税効果まで出せます。",
+		`4. 設備面は ${equipmentLine} を根拠に確認します。`,
+		`5. 最後に、和上が見た整備・保証材料を確認し、残リスクを隠さず説明します。`,
+	].join("\n");
+	const objectionHandling = [
+		"反論: 利回りだけ見ると迷う。",
+		`切り返し: 今回は利回り単体ではなく、FIT残存期間、返済、税効果、B/Sタイミングを合わせた投資判定として ${rank} を出しています。`,
+		"",
+		"反論: 設備が古い、壊れないか不安。",
+		`切り返し: 設備情報は ${equipmentLine} です。事故歴・整備履歴・残リスクは和上側で確認した範囲と未確認を分けて説明します。`,
+		"",
+		"反論: 出力抑制や地域条件が読めない。",
+		`切り返し: 今回の抑制前提は ${draft.curtailmentScenario}${draft.curtailmentScenario === "抑制あり" ? ` / ${trimTrailingZeros(draft.curtailmentRate)}%` : ""} です。地域とFIT/FIP条件によって変わるため、資料では前提として明示します。`,
+		"",
+		"反論: 税務メリットは本当に使えるのか。",
+		finance
+			? `切り返し: 本資料では実効税率 ${trimTrailingZeros(finance.effectiveTaxRate)}%、年間償却 ${formatYen(finance.annualDepreciation)}、税効果 ${formatYen(finance.taxBenefit)} として試算しています。実処理は顧問税理士確認前提です。`
+			: "切り返し: 税率、融資、利益見込を入れると税効果まで試算できます。実処理は顧問税理士確認前提です。",
+	].join("\n");
+	const financeMemo = finance
+		? [
+				`商品構成: 土地 ${formatYen(finance.landPrice)} / システム ${formatYen(finance.systemPrice)} / 権利代 ${formatYen(finance.rightsPrice)}`,
+				`償却: システム17年 / 権利代5年 / 年間償却 ${formatYen(finance.annualDepreciation)} / 減価償却年数 ${trimTrailingZeros(finance.depreciationYears)}年`,
+				`融資: 借入 ${formatYen(finance.loanAmount)} / 金利 ${trimTrailingZeros(finance.interestRate)}% / 年間返済 ${formatYen(finance.annualDebtService)} / 元本 ${formatYen(finance.annualPrincipalRepayment)} / 利息 ${formatYen(finance.annualInterestExpense)}`,
+				`税効果後CF: ${formatYen(finance.afterTaxCashflow)} / DSCR ${finance.dscr !== null ? trimTrailingZeros(finance.dscr) : "借入なし"} / 購入タイミング ${finance.timingRank}`,
+				`B/S提案: ${rubricSummary} / ${finance.salesRubric.recommendedModel} / ${finance.salesRubric.recommendedLocation}`,
+				`営業ひと言: ${finance.salesRubric.killerPhrase}`,
+		  ].join("\n")
+		: "ファイナンス情報未入力。金利、借入額、返済期間、税率、B/S3指標が入るとF/Cシミュレーションとして説明できます。";
+	return {
+		summary,
+		keyNumbers,
+		talkDraft,
+		objectionHandling,
+		financeMemo,
+		wajoWarrantyMemo: wajoMemo.memo,
+		riskNotes: missing.join("\n"),
+	};
+}
+
+function buildWajoWarrantyMemoFromProposalProperties(properties: Record<string, unknown>): {
+	memo: string;
+	hasConcreteWajoCheck: boolean;
+} {
+	const accident = readFirstTextByAliases(properties, ["事故歴判定", "事故歴"]);
+	const maintenanceRank = readFirstTextByAliases(properties, ["和上整備判定", "整備判定"]);
+	const warrantyRank = readFirstTextByAliases(properties, ["保証判定"]);
+	const maintenanceSummary = readFirstTextByAliases(properties, ["和上整備サマリー", "整備サマリー"]);
+	const warrantyComment = readFirstTextByAliases(properties, ["和上保証コメント", "和上保証・整備コメント"]);
+	const remainingRisk = readFirstTextByAliases(properties, ["残リスク", "未対策事項"]);
+	const checked = [
+		readFirstTextByAliases(properties, ["草刈り実施"]),
+		readFirstTextByAliases(properties, ["電気点検実施"]),
+		readFirstTextByAliases(properties, ["パネル清掃実施"]),
+		readFirstTextByAliases(properties, ["地盤調査実施"]),
+	].filter(Boolean);
+	const lines = [
+		`事故歴判定: ${accident || "未確認"}`,
+		`和上整備判定: ${maintenanceRank || "未確認"}`,
+		`保証判定: ${warrantyRank || "要確認"}`,
+		maintenanceSummary ? `整備サマリー: ${maintenanceSummary}` : "整備サマリー: 未入力",
+		warrantyComment ? `和上保証コメント: ${warrantyComment}` : "和上保証コメント: 未入力",
+		remainingRisk ? `残リスク: ${remainingRisk}` : "残リスク: 未入力",
+		checked.length > 0 ? `実施チェック: ${checked.join(" / ")}` : "実施チェック: 草刈り・電気点検・パネル清掃・地盤調査は未確認",
+		"説明方針: 和上が確認・整備した事実だけを強く言い、未確認部分は未確認として出します。",
+	];
+	return {
+		memo: lines.join("\n"),
+		hasConcreteWajoCheck: Boolean(
+			accident ||
+			maintenanceRank ||
+			warrantyRank ||
+			maintenanceSummary ||
+			warrantyComment ||
+			remainingRisk ||
+			checked.length > 0
+		),
+	};
+}
+
+function buildProposalEnablementMissingNotes(
+	draft: ProposalSimulationDraft,
+	wajoMemo: { hasConcreteWajoCheck: boolean },
+): string[] {
+	const notes: string[] = [];
+	if (!draft.solarDetails?.unitPrice) notes.push("売電単価が未入力または未確認です。FIT/FIP・単価は提案前に必ず確認します。");
+	if (!draft.solarDetails?.gridConnectionDate) notes.push("連系開始日が未入力です。残存FIT年数と稼働年数の根拠として確認します。");
+	if (!draft.solarDetails?.panelMaker || !draft.solarDetails?.panelModel) notes.push("パネルメーカー・型式が未入力です。メーカー公表の一言コメントを添えられる状態にします。");
+	if (!draft.solarDetails?.powerConditionerMaker || !draft.solarDetails?.powerConditionerModel) notes.push("パワコンメーカー・型式が未入力です。交換時期・製品特徴の説明前提として確認します。");
+	if (draft.curtailmentScenario === "抑制あり" && draft.curtailmentRate <= 0) notes.push("出力抑制ありの前提ですが、抑制率が0%です。地域・FIT/FIP条件と合わせて確認します。");
+	if (!draft.financeSimulation) notes.push("金利・借入額・返済期間・税率・B/S情報が未入力のため、F/Cシミュレーションは未確定です。");
+	if (!wajoMemo.hasConcreteWajoCheck) notes.push("事故歴判定・和上整備判定・保証コメントが未入力です。和上保証書として使う前に設備詳細DB側を確認します。");
+	if (notes.length === 0) notes.push("主要前提は入力済みです。最終提出前にPDF本文とNotionの入力値の一致を確認します。");
+	return notes;
 }
 
 function buildSalesProposalRecordCreateProperties(
