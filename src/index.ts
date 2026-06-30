@@ -1163,6 +1163,11 @@ const RESIDENT_DOCUMENT_PDF_URL_PROPERTY_ALIASES = [
 	"PDF URL",
 ];
 
+const DEFAULT_SOLAR_PANEL_DEGRADATION_RATE = 0.5;
+const DEFAULT_SOLAR_LOAN_RATIO = 80;
+const DEFAULT_SOLAR_INTEREST_RATE = 1;
+const DEFAULT_SOLAR_LOAN_YEARS = 15;
+
 type NotionClient = {
 	dataSources: {
 		query: (args: Record<string, unknown>) => Promise<QueryResponse>;
@@ -14878,7 +14883,45 @@ async function processProposalSimulation(
 				{ kind: "number", value: draft.fitTotalNetCashflow },
 			);
 		}
+		const panelDegradationRate = readFirstNumberByAliases(page.properties ?? {}, [
+			"パネル劣化率",
+			"パネル経年劣化率",
+			"経年劣化率",
+			"劣化率",
+		]) ?? DEFAULT_SOLAR_PANEL_DEGRADATION_RATE;
+		setAliasPatch(
+			patches,
+			["パネル劣化率", "パネル経年劣化率", "経年劣化率", "劣化率"],
+			{ kind: "number", value: panelDegradationRate },
+		);
 		if (draft.financeSimulation) {
+			setAliasPatch(
+				patches,
+				["借入額", "融資額", "借入金額", "ローン金額"],
+				{ kind: "number", value: draft.financeSimulation.loanAmount },
+			);
+			setAliasPatch(
+				patches,
+				["金利", "借入金利", "融資金利", "ローン金利"],
+				{ kind: "number", value: draft.financeSimulation.interestRate },
+			);
+			if (draft.financeSimulation.loanYears !== null) {
+				setAliasPatch(
+					patches,
+					["返済期間", "融資期間", "借入期間", "ローン年数"],
+					{ kind: "number", value: draft.financeSimulation.loanYears },
+				);
+			}
+			setAliasPatch(
+				patches,
+				["年間元本返済額", "元本返済金額"],
+				{ kind: "number", value: draft.financeSimulation.annualPrincipalRepayment },
+			);
+			setAliasPatch(
+				patches,
+				["年間利息額", "年間支払利息"],
+				{ kind: "number", value: draft.financeSimulation.annualInterestExpense },
+			);
 			setAliasPatch(
 				patches,
 				["年間償却額", "シミュレーション年間償却額"],
@@ -14901,6 +14944,25 @@ async function processProposalSimulation(
 					{ kind: "number", value: draft.financeSimulation.dscr },
 				);
 			}
+			if (draft.financeSimulation.projectNpv !== null) {
+				setAliasPatch(
+					patches,
+					["NPV", "プロジェクトNPV"],
+					{ kind: "number", value: draft.financeSimulation.projectNpv },
+				);
+			}
+			if (draft.financeSimulation.projectIrr !== null) {
+				setAliasPatch(
+					patches,
+					["IRR", "プロジェクトIRR"],
+					{ kind: "number", value: draft.financeSimulation.projectIrr },
+				);
+			}
+			setAliasPatch(
+				patches,
+				["経済メリット", "総経済メリット", "税効果込み経済メリット"],
+				{ kind: "number", value: draft.financeSimulation.economicBenefit },
+			);
 			setAliasPatch(
 				patches,
 				["購入タイミング判定", "BS判定", "投資判定"],
@@ -18685,24 +18747,38 @@ function buildFinanceSimulation(input: {
 		"償却前利益",
 		"営業利益見込",
 	]);
-	const loanAmount = readFirstNumberByAliases(input.properties, [
+	const loanRatio = Math.max(0, Math.min(
+		readFirstNumberByAliases(input.properties, [
+			"借入比率",
+			"融資比率",
+			"ローン比率",
+			"借入割合",
+		]) ?? DEFAULT_SOLAR_LOAN_RATIO,
+		100,
+	));
+	const explicitLoanAmount = readFirstNumberByAliases(input.properties, [
 		"借入額",
 		"融資額",
 		"借入金額",
 		"ローン金額",
-	]) ?? 0;
+	]);
+	const loanAmount = explicitLoanAmount ?? roundTo(investmentBase * (loanRatio / 100), 0);
 	const interestRate = readFirstNumberByAliases(input.properties, [
 		"金利",
 		"借入金利",
 		"融資金利",
 		"ローン金利",
-	]) ?? 0;
-	const loanYears = readFirstNumberByAliases(input.properties, [
+	]) ?? (loanAmount > 0 ? DEFAULT_SOLAR_INTEREST_RATE : 0);
+	const explicitLoanYears = readFirstNumberByAliases(input.properties, [
 		"返済期間",
 		"融資期間",
 		"借入期間",
 		"ローン年数",
 	]);
+	const defaultLoanYears = input.fitRemainingYears && input.fitRemainingYears > 0
+		? Math.max(1, Math.min(DEFAULT_SOLAR_LOAN_YEARS, Math.floor(input.fitRemainingYears)))
+		: DEFAULT_SOLAR_LOAN_YEARS;
+	const loanYears = explicitLoanYears ?? (loanAmount > 0 ? defaultLoanYears : null);
 	const annualDebtService = calculateAnnualDebtService(loanAmount, interestRate, loanYears);
 	const debtRepayBreakdown = buildAnnualDebtRepaymentComponents(
 		loanAmount,
@@ -18778,6 +18854,16 @@ function buildFinanceSimulation(input: {
 		annualNetIncome: input.annualNetIncome,
 	});
 	const salesRubric = evaluateBalanceSheetSalesRubric(input.properties, pretaxProfit);
+	const financeAssumptionLine = [
+		explicitLoanAmount === null ? `借入額は標準初期値として販売価格の${trimTrailingZeros(loanRatio)}%で補完` : "",
+		readFirstNumberByAliases(input.properties, [
+			"金利",
+			"借入金利",
+			"融資金利",
+			"ローン金利",
+		]) === null && loanAmount > 0 ? `金利は標準初期値として${trimTrailingZeros(DEFAULT_SOLAR_INTEREST_RATE)}%で補完` : "",
+		explicitLoanYears === null && loanAmount > 0 ? `返済期間は標準初期値として${trimTrailingZeros(loanYears ?? defaultLoanYears)}年で補完` : "",
+	].filter(Boolean).join(" / ");
 	const pretaxProfitLine = pretaxProfit !== null
 		? `BS/利益前提: 今期利益見込 ${formatYen(pretaxProfit)} に対し、年間償却額 ${formatYen(annualDepreciation)} を当て込む。`
 		: "BS/利益前提: 今期利益見込が未入力のため、年間償却額を全額使える前提で税効果を表示します。";
@@ -18837,6 +18923,7 @@ function buildFinanceSimulation(input: {
 			`実効税率: ${trimTrailingZeros(effectiveTaxRate)}%`,
 			`年間税効果: ${formatYen(taxBenefit)}`,
 			debtLine,
+			financeAssumptionLine ? `補完前提: ${financeAssumptionLine}` : "補完前提: 入力値を優先して計算しています。",
 			`NPV: ${projectNpv !== null ? formatYen(projectNpv) : "算出不可"} / IRR: ${projectIrr !== null ? `${trimTrailingZeros(projectIrr)}%` : "算出不可"}`,
 			`返済分解: 年間元本 ${formatYen(debtRepayBreakdown.annualPrincipalRepayment)} / 年間利息 ${formatYen(debtRepayBreakdown.annualInterestExpense)}`,
 			`経済メリット概算: ${formatYen(totalEconomicalBenefit)} / 減価償却年数 ${trimTrailingZeros(depreciationYears)}年`,
