@@ -14548,6 +14548,10 @@ type FinanceSimulation = {
 	effectiveTaxRate: number;
 	pretaxProfit: number | null;
 	taxBenefit: number;
+	projectNpv: number | null;
+	projectIrr: number | null;
+	equityNpv: number | null;
+	equityIrr: number | null;
 	loanAmount: number;
 	interestRate: number;
 	effectiveInterestRate: number | null;
