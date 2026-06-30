@@ -14573,6 +14573,9 @@ type FinanceSimulation = {
 	dscr: number | null;
 	timingRank: "S" | "A" | "B" | "C";
 	timingReason: string;
+	timingHeadline: string;
+	timingUpperGapReason: string;
+	timingFloorReason: string;
 	salesRubric: BalanceSheetSalesRubric;
 	lines: string[];
 };
@@ -14610,6 +14613,8 @@ type SolarProposalDetails = {
 	powerConditionerMaker: string;
 	powerConditionerModel: string;
 	pcsCapacityKw: number | null;
+	panelPublicComment: string;
+	powerConditionerPublicComment: string;
 	fitFipType: string;
 	unitPrice: number | null;
 	remainingSalesYears: number | null;
@@ -17415,9 +17420,11 @@ async function buildProposalSimulationPdfBytes(
 
 function buildProposalPdfFinanceRows(draft: ProposalSimulationDraft): Array<[string, string]> {
 	if (!draft.financeSimulation) {
-		return [
-			["購入タイミング判定", "未判定"],
-			["B/Sルーブリック", "未判定"],
+	return [
+			["今回の投資判定", "未判定"],
+		["S/Aに届かない理由", "未判定"],
+		["Cを下回らない理由", "未判定"],
+		["B/Sルーブリック", "未判定"],
 			["年間元本返済額", "未入力"],
 			["年間利息額", "未入力"],
 			["土地代", "未入力 / 償却対象外"],
@@ -17437,7 +17444,10 @@ function buildProposalPdfFinanceRows(draft: ProposalSimulationDraft): Array<[str
 	}
 	const finance = draft.financeSimulation;
 	return [
-		["購入タイミング判定", `${finance.timingRank} / ${finance.timingReason}`],
+		["今回の投資判定", `${finance.timingRank} / ${finance.timingHeadline}`],
+		["判定理由", finance.timingReason],
+		["S/Aに届かない理由", finance.timingUpperGapReason],
+		["Cを下回らない理由", finance.timingFloorReason],
 		["B/Sルーブリック", formatBalanceSheetSalesRubricSummary(finance.salesRubric)],
 		["年間元本返済額", formatYen(finance.annualPrincipalRepayment)],
 		["年間利息額", formatYen(finance.annualInterestExpense)],
@@ -17922,7 +17932,7 @@ function formatOperationYearsForPdf(value: string): string {
 	if (!match) return pdfSafeValue(value, "Calculated from Notion date");
 	const years = Number(match[1]);
 	const months = match[2] ? Number(match[2]) : 0;
-	return months > 0 ? `${years} years ${months} months` : `${years} years`;
+	return months > 0 ? `${years}年${months}か月` : `${years}年`;
 }
 
 function proposalKindLabelForPdf(kind: ProposalKind): string {
@@ -18979,7 +18989,10 @@ function buildFinanceSimulation(input: {
 		afterTaxCashflow,
 		dscr,
 		timingRank: timing.rank,
+		timingHeadline: timing.headline,
 		timingReason: timing.reason,
+		timingUpperGapReason: timing.whyNotUpper,
+		timingFloorReason: timing.whyNotLower,
 		salesRubric,
 		lines: [
 			"ファイナンス・税効果シミュレーション",
@@ -19004,7 +19017,10 @@ function buildFinanceSimulation(input: {
 			pretaxProfitLine,
 			`税効果後キャッシュフロー: ${formatYen(afterTaxCashflow)}`,
 			`DSCR: ${dscr !== null ? trimTrailingZeros(dscr) : "借入なし"}`,
-			`購入タイミング判定: ${timing.rank} / ${timing.reason}`,
+			`今回の投資判定: ${timing.rank} / ${timing.headline}`,
+			`判定理由: ${timing.reason}`,
+			`S/Aに届かない理由: ${timing.whyNotUpper}`,
+			`Cを下回らない理由: ${timing.whyNotLower}`,
 			`B/Sルーブリック: ${formatBalanceSheetSalesRubricSummary(salesRubric)}`,
 			...buildBalanceSheetSalesRubricLines(salesRubric),
 			...composition.strategyLines,
@@ -19450,7 +19466,13 @@ function judgeFinanceTiming(input: {
 	dscr: number | null;
 	taxBenefit: number;
 	annualNetIncome: number;
-}): { rank: "S" | "A" | "B" | "C"; reason: string } {
+}): {
+	rank: "S" | "A" | "B" | "C";
+	headline: string;
+	reason: string;
+	whyNotUpper: string;
+	whyNotLower: string;
+} {
 	const paybackWithinFit =
 		input.paybackYears !== null &&
 		input.fitRemainingYears !== null &&
@@ -19461,24 +19483,45 @@ function judgeFinanceTiming(input: {
 	if (paybackWithinFit && input.afterTaxCashflow > 0 && dscrStrong && taxEffectStrong) {
 		return {
 			rank: "S",
+			headline: "今の条件で前向きに進めてよい上位案件です。",
 			reason: "残存FIT内で回収でき、返済余力と償却税効果が強いため、今買う理由が明確です。",
+			whyNotUpper: "最上位判定です。",
+			whyNotLower: "残存FIT内回収・税効果後キャッシュフローの確保・DSCR 1.3以上・税効果の強さを満たしています。",
 		};
 	}
 	if (paybackWithinFit && input.afterTaxCashflow > 0 && dscrAcceptable) {
+		const missingTopReasons = [
+			!dscrStrong ? "DSCR 1.3以上までは届いていません。" : "",
+			!taxEffectStrong ? "税効果の厚みがS判定水準までは届いていません。" : "",
+		].filter(Boolean);
 		return {
 			rank: "A",
+			headline: "今の条件でも提案しやすい前向き案件です。",
 			reason: "残存FIT内で回収でき、税効果後キャッシュフローもプラスです。",
+			whyNotUpper: missingTopReasons.join(" ") || "S判定に必要な余裕度のどこかが一段不足しています。",
+			whyNotLower: "残存FIT内回収と税効果後キャッシュフローのプラスは確保できているため、B以下には落ちません。",
 		};
 	}
 	if (input.afterTaxCashflow > 0) {
+		const upperGapReasons = [
+			!paybackWithinFit ? "残存FIT期間内に回収し切る前提になっていません。" : "",
+			!dscrAcceptable ? "返済余力が薄く、DSCR 1.1以上を満たしていません。" : "",
+			!taxEffectStrong ? "税効果がまだ決め手になる水準まで届いていません。" : "",
+		].filter(Boolean);
 		return {
 			rank: "B",
+			headline: "提案は可能ですが、条件調整か追加確認を入れて出すべき案件です。",
 			reason: "税効果後キャッシュフローはプラスですが、回収期間・返済余力・税効果のいずれかに確認余地があります。",
+			whyNotUpper: upperGapReasons.join(" ") || "S/A判定に必要な条件が一部不足しています。",
+			whyNotLower: "税効果後キャッシュフローがマイナスではなく、投資余地が残っているためC判定ではありません。",
 		};
 	}
 	return {
 		rank: "C",
+		headline: "今の条件では提案を急がず、前提の見直しが必要です。",
 		reason: "税効果後キャッシュフローが弱く、購入タイミングとしては再検討が必要です。",
+		whyNotUpper: "税効果後キャッシュフローが弱く、回収と返済の両立に不安があります。",
+		whyNotLower: "下位判定のため該当なしです。",
 	};
 }
 
@@ -19564,6 +19607,19 @@ function buildSolarProposalDetails(
 			"パワコン容量",
 			"AC容量（PCS側kW）",
 		]),
+		panelPublicComment: readFirstTextByAliases(properties, [
+			"パネル公表コメント",
+			"パネル一言コメント",
+			"パネル特徴",
+			"メーカー公表コメント（パネル）",
+		]),
+		powerConditionerPublicComment: readFirstTextByAliases(properties, [
+			"パワコン公表コメント",
+			"PCS公表コメント",
+			"パワコン一言コメント",
+			"PCS特徴",
+			"メーカー公表コメント（PCS）",
+		]),
 		fitFipType: readFirstTextByAliases(properties, [
 			"FIT/FIP区分",
 			"売電区分",
@@ -19619,7 +19675,7 @@ function buildProposalTitle(proposalKind: ProposalKind, titleLabel: string): str
 	if (proposalKind === "gridBattery") {
 		return `【次世代エネルギー投資】系統用蓄電池 事業シミュレーション 御提案書${suffix}`;
 	}
-	return `【法人オーナー向け】黒字対策・即時償却検討型 太陽光発電投資 御提案書${suffix}`;
+	return `【法人オーナー様向け】黒字対策・即時償却検討型 太陽光発電投資 御提案書${suffix}`;
 }
 
 function buildProposalTypeGuideLines(currentKind: ProposalKind): string[] {
