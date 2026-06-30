@@ -254,7 +254,7 @@ async function main() {
 	assert.equal(readyWithFinance.financeSimulation?.timingRank, "S");
 	assert.equal(readyWithFinance.financeSimulation?.salesRubric.totalScore, 15);
 	assert.equal(readyWithFinance.financeSimulation?.salesRubric.route, "C");
-	assert.match(readyWithFinance.summaryLines.join("\n"), /購入タイミング判定: S/);
+	assert.match(readyWithFinance.summaryLines.join("\n"), /今回の投資判定: S/);
 	assert.match(readyWithFinance.summaryLines.join("\n"), /年間税効果: ¥3,250,500/);
 	assert.match(readyWithFinance.summaryLines.join("\n"), /商品構成: 金額入力/);
 	assert.match(readyWithFinance.summaryLines.join("\n"), /B\/Sルーブリック: 15点 \/ Cルート/);
@@ -302,7 +302,7 @@ async function main() {
 	assert.equal(readyWithoutBsMetrics.financeSimulation?.salesRubric.totalScore, null);
 	assert.equal(readyWithoutBsMetrics.financeSimulation?.salesRubric.route, null);
 	assert.match(readyWithoutBsMetrics.summaryLines.join("\n"), /B\/Sルーブリック: 未判定/);
-	assert.match(readyWithoutBsMetrics.pageTwoLines.join("\n"), /未判定/);
+	assert.match(readyWithoutBsMetrics.pageTwoLines.join("\n"), /今回の投資判定/);
 
 	const individual = evaluateProposalSimulationDraftForTest({
 		id: "proposal-3",

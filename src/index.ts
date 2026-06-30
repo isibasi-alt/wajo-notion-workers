@@ -17075,11 +17075,11 @@ async function buildProposalSimulationPdfBytes(
 			font: fonts.bold,
 			color: colors.teal,
 		});
-		drawWrappedLines(page, lines, yTop - 38, {
+		drawWrappedLines(page, lines, yTop - 36, {
 			size: 8.7,
 			width: contentWidth - 24,
 			x: left + 12,
-			lineGap: 4,
+			lineGap: 2.6,
 			maxLines: Math.max(1, Math.floor((height - 38) / 13)),
 		});
 	};
@@ -17240,47 +17240,47 @@ async function buildProposalSimulationPdfBytes(
 		1,
 		"提案シミュレーション",
 		`${draft.titleLabel || proposalKindJapaneseLabel(draft.proposalKind)} / ${generatedDate}`,
-		"案件 > 提案シミュレーション > 提案PDF",
+		"WAJO提案資料 / 概要面",
 	);
 
 	let y = pageHeight - 126;
-	const titleLines = wrapPdfText(draft.proposalTitle, fonts.bold, 18, contentWidth).slice(0, 2);
+	const titleLines = wrapPdfText(draft.proposalTitle, fonts.bold, 16.5, contentWidth).slice(0, 2);
 	for (const line of titleLines) {
 		drawText(first, line, {
 			x: left,
 			y,
-			size: 18,
+			size: 16.5,
 			font: fonts.bold,
 			color: colors.text,
 		});
-		y -= 22;
+		y -= 19;
 	}
-	y -= 6;
+	y -= 2;
 	y = drawSectionTitle(first, y, "概要");
 	y = drawWrappedLines(first, buildProposalCoverIntroLines(draft), y, {
-		size: 9.7,
-		lineGap: 5,
-		maxLines: 7,
+		size: 9.1,
+		lineGap: 3.4,
+		maxLines: 6,
 	});
-	y -= 8;
+	y -= 6;
 
 	const cardGap = 12;
 	const cardWidth = (contentWidth - cardGap) / 2;
 	const coverCardRows = buildProposalCoverCards(draft);
-	drawMetricCard(first, left, y, cardWidth, 64, coverCardRows[0]?.label ?? "提案タイプ", coverCardRows[0]?.value ?? proposalKindJapaneseLabel(draft.proposalKind));
-	drawMetricCard(first, left + cardWidth + cardGap, y, cardWidth, 64, coverCardRows[1]?.label ?? "区分", coverCardRows[1]?.value ?? "未入力");
-	y -= 76;
-	drawMetricCard(first, left, y, cardWidth, 64, coverCardRows[2]?.label ?? "容量", coverCardRows[2]?.value ?? "未入力");
+	drawMetricCard(first, left, y, cardWidth, 58, coverCardRows[0]?.label ?? "提案タイプ", coverCardRows[0]?.value ?? proposalKindJapaneseLabel(draft.proposalKind));
+	drawMetricCard(first, left + cardWidth + cardGap, y, cardWidth, 58, coverCardRows[1]?.label ?? "区分", coverCardRows[1]?.value ?? "未入力");
+	y -= 68;
+	drawMetricCard(first, left, y, cardWidth, 58, coverCardRows[2]?.label ?? "容量", coverCardRows[2]?.value ?? "未入力");
 	drawMetricCard(
 		first,
 		left + cardWidth + cardGap,
 		y,
 		cardWidth,
-		64,
+		58,
 		coverCardRows[3]?.label ?? "運用前提",
 		coverCardRows[3]?.value ?? "未入力",
 	);
-	y -= 84;
+	y -= 70;
 
 	y = drawSectionTitle(first, y, "公開可の概要情報");
 	y = drawDetailRows(first, y, buildProposalCoverSafeRows(draft));
@@ -17300,7 +17300,7 @@ async function buildProposalSimulationPdfBytes(
 		2,
 		"物件情報・税務前提",
 		`${draft.titleLabel || proposalKindJapaneseLabel(draft.proposalKind)} / 詳細確認`,
-		"案件 > 提案シミュレーション > 税務・リスク確認",
+		"WAJO提案資料 / 数字と前提",
 	);
 
 	y = pageHeight - 126;
@@ -17319,10 +17319,13 @@ async function buildProposalSimulationPdfBytes(
 			["発電所名", details?.plantName || "未入力"],
 			["所在地", details?.location || "未入力"],
 			["電力会社エリア / 区分", `${details?.powerArea || "未入力"} / ${details?.voltageClass || "未入力"}`],
-			["パネル", details ? `${details.panelMaker} / ${details.panelModel} / ${formatDecimalForPdf(details.panelCount, 0)}枚 / DC ${formatDecimalForPdf(details.dcCapacityKw, 1)}kW` : "未入力"],
+			["パネル", details ? `${details.panelMaker} / ${details.panelModel}` : "未入力"],
+			["パネル枚数 / DC", details ? `総枚数 ${formatDecimalForPdf(details.panelCount, 0)} / DC ${formatDecimalForPdf(details.dcCapacityKw, 1)}kW` : "未入力"],
 			["PCS", details ? `${details.powerConditionerMaker} / ${details.powerConditionerModel} / ${formatDecimalForPdf(details.pcsCapacityKw, 1)}kW` : "未入力"],
 			["FIT/FIP・売電条件", details ? `${details.fitFipType} / ${formatDecimalForPdf(details.unitPrice, 2)}円/kWh / 残存${formatDecimalForPdf(details.remainingSalesYears, 1)}年` : "未入力"],
 			["連系開始日 / 稼働年数", details ? `${details.gridConnectionDate} / ${formatOperationYearsForPdf(details.operationYears)}` : "未入力"],
+			["パネルひとこと", details?.panelPublicComment || "未入力"],
+			["PCSひとこと", details?.powerConditionerPublicComment || "未入力"],
 		]);
 	}
 
@@ -17333,21 +17336,27 @@ async function buildProposalSimulationPdfBytes(
 		y,
 		"ファイナンス要約",
 		buildProposalFinanceSummaryLines(draft),
-		58,
+		52,
 	);
-	y -= 70;
+	y -= 62;
+	y = drawComparisonBarChart(
+		second,
+		y,
+		"収益イメージ",
+		buildProposalChartItems(draft),
+		74,
+	);
 	const financeRows = buildProposalPdfFinanceRows(draft);
 	const primaryFinanceLabels = new Set([
-		"購入タイミング判定",
+		"今回の投資判定",
+		"判定理由",
+		"S/Aに届かない理由",
+		"Cを下回らない理由",
 		"NPV",
 		"IRR",
-		"借入条件",
-		"年間元本返済額",
-		"年間利息額",
 		"税効果",
 		"税引後キャッシュフロー",
 		"DSCR",
-		"経済メリット",
 	]);
 	y = drawDetailRows(
 		second,
@@ -17382,10 +17391,17 @@ async function buildProposalSimulationPdfBytes(
 			3,
 			"詳細根拠・確認事項",
 			`${draft.titleLabel || proposalKindJapaneseLabel(draft.proposalKind)} / 根拠と写真`,
-			"案件 > 提案シミュレーション > 根拠・現場確認",
+			"WAJO提案資料 / 根拠と確認事項",
 		);
 
 		y = pageHeight - 126;
+		y = drawComparisonBarChart(
+			third,
+			y,
+			"投資構成 / 価格イメージ",
+			buildProposalInvestmentChartItems(draft),
+			94,
+		);
 		y = drawSectionTitle(third, y, "ファイナンス詳細");
 		const secondaryFinanceRows = financeRows
 			.filter(([label]) => !primaryFinanceLabels.has(label))
@@ -17500,13 +17516,11 @@ function buildProposalFinanceSummaryLines(draft: ProposalSimulationDraft): strin
 		: "借入なし / 自己資金前提で返済負担なし";
 	const dscrLabel = finance.dscr !== null ? trimTrailingZeros(finance.dscr) : "未入力";
 	return [
-		`投資判定 ${finance.timingRank} / ${finance.timingReason}`,
-		`商品構成: 土地 ${trimTrailingZeros(finance.landRatio)}% / システム ${trimTrailingZeros(finance.systemRatio)}% / 権利代 ${trimTrailingZeros(finance.rightsRatio)}%`,
+		`今回の投資判定 ${finance.timingRank} / ${finance.timingHeadline}`,
 		`NPV/IRR: ${npv} / ${irr}`,
 		debtLine,
-		`返済分解: 元本 ${formatYen(finance.annualPrincipalRepayment)} / 利息 ${formatYen(finance.annualInterestExpense)} / 合計 ${formatYen(finance.annualDebtService)}`,
 		`税効果 ${formatYen(finance.taxBenefit)} / 税引後CF ${formatYen(finance.afterTaxCashflow)} / DSCR ${dscrLabel}`,
-		`経済メリット（概算） ${formatYen(finance.economicBenefit)} / 減価償却年数 ${trimTrailingZeros(finance.depreciationYears)}年`,
+		`経済メリット（売電 + 税効果） ${formatYen(finance.economicBenefit)} / 減価償却年数 ${trimTrailingZeros(finance.depreciationYears)}年`,
 	];
 }
 
@@ -17573,7 +17587,8 @@ function buildProposalCoverCards(
 function buildProposalCoverSafeRows(draft: ProposalSimulationDraft): Array<[string, string]> {
 	const details = draft.solarDetails;
 	return [
-		["パネル情報", details ? `${details.panelMaker} / ${details.panelModel} / ${formatDecimalForPdf(details.panelCount, 0)}枚` : "未入力"],
+		["パネル情報", details ? `${details.panelMaker} / ${details.panelModel}` : "未入力"],
+		["パネル枚数 / DC", details ? `総枚数 ${formatDecimalForPdf(details.panelCount, 0)} / DC ${formatDecimalForPdf(details.dcCapacityKw, 1)}kW` : "未入力"],
 		["PCS情報", details ? `${details.powerConditionerMaker} / ${details.powerConditionerModel} / ${formatDecimalForPdf(details.pcsCapacityKw, 1)}kW` : "未入力"],
 		["売電制度", details ? `${details.fitFipType} / 残存${formatDecimalForPdf(details.remainingSalesYears, 1)}年` : "未入力"],
 		["稼働状況", details ? `連系開始日 ${details.gridConnectionDate} / 稼働年数 ${formatOperationYearsForPdf(details.operationYears)}` : "未入力"],
@@ -17643,7 +17658,7 @@ function buildProposalInvestmentChartItems(
 
 function buildProposalInsightLines(draft: ProposalSimulationDraft): string[] {
 	const timingLine = draft.financeSimulation
-		? `投資判断: ${draft.financeSimulation.timingRank}判定 / ${draft.financeSimulation.timingReason}`
+		? `投資判断: ${draft.financeSimulation.timingRank}判定 / ${draft.financeSimulation.timingHeadline}`
 		: "投資判断: ファイナンス前提が未入力のため、税効果と返済余力は暫定表示です。";
 	const bsLine = draft.financeSimulation
 		? `B/S提案: ${formatBalanceSheetSalesRubricSummary(draft.financeSimulation.salesRubric)} / ${draft.financeSimulation.salesRubric.recommendedModel}`
@@ -17829,6 +17844,12 @@ function buildProposalPdfPageTwoLines(draft: ProposalSimulationDraft): string[] 
 		];
 	}
 	const details = draft.solarDetails;
+	const panelCommentLine = details?.panelPublicComment
+		? `パネル補足: ${details.panelPublicComment}`
+		: "";
+	const pcsCommentLine = details?.powerConditionerPublicComment
+		? `PCS補足: ${details.powerConditionerPublicComment}`
+		: "";
 	const maintenanceBreakdown =
 		draft.runningCostBreakdown.length > 0
 			? `維持費内訳: ${draft.runningCostBreakdown
@@ -17843,8 +17864,17 @@ function buildProposalPdfPageTwoLines(draft: ProposalSimulationDraft): string[] 
 		? `財務前提: 税効果 ${formatYenForPdf(draft.financeSimulation.taxBenefit)} / 税引後キャッシュフロー ${formatYenForPdf(draft.financeSimulation.afterTaxCashflow)} / DSCR ${draft.financeSimulation.dscr !== null ? trimTrailingZeros(draft.financeSimulation.dscr) : "未入力"}`
 		: "財務前提: 借入条件、実効税率、償却前提を入れるとDSCRまで算出できます。";
 	const timingLine = draft.financeSimulation
-		? `購入タイミング判定: ${draft.financeSimulation.timingRank} / ${draft.financeSimulation.timingReason}`
-		: "購入タイミング判定: 決算書3指標が未入力のため保留";
+		? `今回の投資判定: ${draft.financeSimulation.timingRank} / ${draft.financeSimulation.timingHeadline}`
+		: "今回の投資判定: 決算書3指標が未入力のため保留";
+	const timingReasonLine = draft.financeSimulation
+		? `判定理由: ${draft.financeSimulation.timingReason}`
+		: "";
+	const timingUpperGapLine = draft.financeSimulation
+		? `S/Aに届かない理由: ${draft.financeSimulation.timingUpperGapReason}`
+		: "";
+	const timingFloorLine = draft.financeSimulation
+		? `Cを下回らない理由: ${draft.financeSimulation.timingFloorReason}`
+		: "";
 	return nonEmptyLines([
 		details
 			? `所在地: ${pdfSafeValue(details.location, "Notionで確認")} / 電力会社エリア: ${pdfSafeValue(details.powerArea, "Notionで確認")} / 区分: ${details.voltageClass || englishVoltageClass(details.voltageClass)}`
@@ -17855,6 +17885,8 @@ function buildProposalPdfPageTwoLines(draft: ProposalSimulationDraft): string[] 
 		details
 			? `PCS: ${pdfSafeValue(details.powerConditionerMaker, "PCSメーカー")} / ${pdfSafeValue(details.powerConditionerModel, "型式")} / ${formatDecimalForPdf(details.pcsCapacityKw, 1)}kW`
 			: "",
+		panelCommentLine,
+		pcsCommentLine,
 		details
 			? `売電条件: ${pdfSafeValue(details.fitFipType, "FIT/FIP")} / ${formatDecimalForPdf(details.unitPrice, 2)}円/kWh / 残存 ${formatDecimalForPdf(details.remainingSalesYears, 1)}年`
 			: "",
@@ -17864,6 +17896,9 @@ function buildProposalPdfPageTwoLines(draft: ProposalSimulationDraft): string[] 
 		curtailmentLine,
 		financeLine,
 		timingLine,
+		timingReasonLine,
+		timingUpperGapLine,
+		timingFloorLine,
 		maintenanceBreakdown,
 		"リスク注記: 発電量変動、出力抑制、保険免責、設備故障、融資条件、将来の解体・廃棄費用は提出前に必ず開示します。",
 		"税務注記: 本資料は提案用の試算です。税務判断は購入法人の決算内容と税理士確認を前提に最終確定します。",
