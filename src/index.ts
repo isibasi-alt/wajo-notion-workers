@@ -16816,6 +16816,10 @@ async function buildProposalSimulationPdfBytes(
 	const pdf = await PDFDocument.create();
 	pdf.registerFontkit(fontkit);
 	const fonts = await embedMonthlyEvalPdfFonts(pdf);
+	const latinFonts = {
+		regular: await pdf.embedFont(StandardFonts.Helvetica),
+		bold: await pdf.embedFont(StandardFonts.HelveticaBold),
+	};
 	const pageWidth = 595.28;
 	const pageHeight = 841.89;
 	const left = 40;
@@ -16834,6 +16838,24 @@ async function buildProposalSimulationPdfBytes(
 	};
 
 	const totalPages = draft.proposalKind === "gridBattery" ? 2 : 3;
+	const drawText = (
+		page: PDFPage,
+		text: string,
+		options: { x: number; y: number; size: number; font: PDFFont; color: ReturnType<typeof rgb> },
+	) => {
+		const runs = text.match(/[\x20-\x7E]+|[^\x20-\x7E]+/g) ?? [text];
+		let x = options.x;
+		for (const run of runs) {
+			const font =
+				/^[\x20-\x7E]+$/.test(run)
+					? options.font === fonts.bold
+						? latinFonts.bold
+						: latinFonts.regular
+					: options.font;
+			page.drawText(run, { ...options, x, font });
+			x += font.widthOfTextAtSize(run, options.size);
+		}
+	};
 	const drawHeader = (page: PDFPage, pageNo: number, title: string, subtitle: string, breadcrumb: string) => {
 		page.drawRectangle({
 			x: 0,
@@ -16842,35 +16864,35 @@ async function buildProposalSimulationPdfBytes(
 			height: 88,
 			color: colors.navy,
 		});
-		page.drawText("WAJO Sales OS", {
+		drawText(page, "WAJO Sales OS", {
 			x: left,
 			y: pageHeight - 34,
 			size: 15,
 			font: fonts.bold,
 			color: rgb(1, 1, 1),
 		});
-		page.drawText(title, {
+		drawText(page, title, {
 			x: left,
 			y: pageHeight - 57,
 			size: 11.5,
 			font: fonts.bold,
 			color: rgb(0.9, 0.95, 0.92),
 		});
-		page.drawText(subtitle, {
+		drawText(page, subtitle, {
 			x: left,
 			y: pageHeight - 73,
 			size: 8.5,
 			font: fonts.regular,
 			color: rgb(0.82, 0.88, 0.86),
 		});
-		page.drawText(breadcrumb, {
+		drawText(page, breadcrumb, {
 			x: left,
 			y: pageHeight - 20,
 			size: 7.2,
 			font: fonts.regular,
 			color: rgb(0.78, 0.84, 0.83),
 		});
-		page.drawText(`${pageNo} / ${totalPages}`, {
+		drawText(page, `${pageNo} / ${totalPages}`, {
 			x: pageWidth - right - 30,
 			y: pageHeight - 36,
 			size: 9,
@@ -16880,14 +16902,14 @@ async function buildProposalSimulationPdfBytes(
 	};
 
 	const drawFooter = (page: PDFPage) => {
-		page.drawText(`Record ID: ${pageId}`, {
+		drawText(page, `Record ID: ${pageId}`, {
 			x: left,
 			y: 30,
 			size: 7.5,
 			font: fonts.regular,
 			color: colors.muted,
 		});
-		page.drawText(generatedDate, {
+		drawText(page, generatedDate, {
 			x: pageWidth - right - 62,
 			y: 30,
 			size: 7.5,
@@ -16897,7 +16919,7 @@ async function buildProposalSimulationPdfBytes(
 	};
 
 	const drawSectionTitle = (page: PDFPage, y: number, title: string) => {
-		page.drawText(title, {
+		drawText(page, title, {
 			x: left,
 			y,
 			size: 11,
@@ -16930,7 +16952,7 @@ async function buildProposalSimulationPdfBytes(
 			const wrapped = wrapPdfText(sourceLine, font, size, width);
 			for (const wrappedLine of wrapped) {
 				if (used >= maxLines) return y;
-				page.drawText(wrappedLine, {
+				drawText(page, wrappedLine, {
 					x,
 					y,
 					size,
@@ -16962,7 +16984,7 @@ async function buildProposalSimulationPdfBytes(
 			borderColor: colors.line,
 			borderWidth: 0.6,
 		});
-		page.drawText(label, {
+		drawText(page, label, {
 			x: x + 12,
 			y: yTop - 18,
 			size: 8.2,
@@ -16972,7 +16994,7 @@ async function buildProposalSimulationPdfBytes(
 		const valueLines = wrapPdfText(value, fonts.bold, 13, width - 24).slice(0, 2);
 		let valueY = yTop - 38;
 		for (const line of valueLines) {
-			page.drawText(line, {
+			drawText(page, line, {
 				x: x + 12,
 				y: valueY,
 				size: 13,
@@ -17006,7 +17028,7 @@ async function buildProposalSimulationPdfBytes(
 			});
 			let labelY = textTopY;
 			for (const line of labelLines) {
-				page.drawText(line, {
+				drawText(page, line, {
 					x: left + 10,
 					y: labelY,
 					size: labelSize,
@@ -17017,7 +17039,7 @@ async function buildProposalSimulationPdfBytes(
 			}
 			let valueY = textTopY;
 			for (const line of valueLines) {
-				page.drawText(line, {
+				drawText(page, line, {
 					x: valueX,
 					y: valueY,
 					size: valueSize,
@@ -17041,7 +17063,7 @@ async function buildProposalSimulationPdfBytes(
 			borderColor: colors.line,
 			borderWidth: 0.6,
 		});
-		page.drawText(title, {
+		drawText(page, title, {
 			x: left + 12,
 			y: yTop - 18,
 			size: 9,
@@ -17073,7 +17095,7 @@ async function buildProposalSimulationPdfBytes(
 			borderColor: colors.line,
 			borderWidth: 0.6,
 		});
-		page.drawText(title, {
+		drawText(page, title, {
 			x: left + 12,
 			y: yTop - 18,
 			size: 9,
@@ -17109,7 +17131,7 @@ async function buildProposalSimulationPdfBytes(
 			const labelLines = wrapPdfText(item.label, fonts.regular, 7.2, barWidth).slice(0, 2);
 			let labelY = chartBottom - 11;
 			for (const line of labelLines) {
-				page.drawText(line, {
+				drawText(page, line, {
 					x,
 					y: labelY,
 					size: 7.2,
@@ -17122,7 +17144,7 @@ async function buildProposalSimulationPdfBytes(
 			const valueLines = wrapPdfText(valueLabel, fonts.bold, 7.8, barWidth + 8).slice(0, 2);
 			let valueY = chartBottom + Math.max(normalizedHeight, 2) + 4;
 			for (const line of valueLines) {
-				page.drawText(line, {
+				drawText(page, line, {
 					x,
 					y: valueY,
 					size: 7.8,
@@ -17180,14 +17202,14 @@ async function buildProposalSimulationPdfBytes(
 				}
 			}
 			if (!drewImage) {
-				page.drawText(`現場写真 ${index + 1}`, {
+				drawText(page, `現場写真 ${index + 1}`, {
 					x: slotX + 12,
 					y: slotY + slotHeight / 2 + 6,
 					size: 10,
 					font: fonts.bold,
 					color: colors.muted,
 				});
-				page.drawText("画像未登録", {
+				drawText(page, "画像未登録", {
 					x: slotX + 12,
 					y: slotY + slotHeight / 2 - 10,
 					size: 8,
@@ -17196,7 +17218,7 @@ async function buildProposalSimulationPdfBytes(
 				});
 			}
 			if (sitePhoto?.name) {
-				page.drawText(sitePhoto.name.slice(0, 24), {
+				drawText(page, sitePhoto.name.slice(0, 24), {
 					x: slotX,
 					y: slotY - 11,
 					size: 7,
@@ -17219,7 +17241,7 @@ async function buildProposalSimulationPdfBytes(
 	let y = pageHeight - 126;
 	const titleLines = wrapPdfText(draft.proposalTitle, fonts.bold, 18, contentWidth).slice(0, 2);
 	for (const line of titleLines) {
-		first.drawText(line, {
+		drawText(first, line, {
 			x: left,
 			y,
 			size: 18,
