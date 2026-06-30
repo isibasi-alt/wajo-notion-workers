@@ -13856,7 +13856,7 @@ function buildSalesPerformanceReviewPatches(
 ): Record<string, SafePatch> {
 	const status =
 		review.recommendedStatus === "要確認" && !auditOrTest ? "要確認" : "処理済";
-	const patches: Record<string, SafePatch> = {
+	const patches: Record<string, SafePatch | undefined> = {
 		AI処理状態: { kind: "select", value: status },
 		AI評価メモ: {
 			kind: "text",
@@ -13889,11 +13889,13 @@ function buildSalesPerformanceReviewPatches(
 		"次月テーマ",
 		review.nextMonthImprovements[0] ?? "",
 	);
-	return patches;
+	return Object.fromEntries(
+		Object.entries(patches).filter(([, value]) => value !== undefined),
+	) as Record<string, SafePatch>;
 }
 
 function addSalesPerformanceReviewTextPatch(
-	patches: Record<string, SafePatch>,
+	patches: Record<string, SafePatch | undefined>,
 	properties: Record<string, unknown>,
 	propertyName: string,
 	value: string,
@@ -15996,23 +15998,22 @@ async function syncSalesProposalRecord(
 			page_size: 1,
 		});
 		const existingPage = existing.results[0] ?? null;
-		const properties = buildSalesProposalRecordProperties(
+		const patches = buildSalesProposalRecordPatches(
 			proposalPage,
 			draft,
 			pdfExport,
 			financePageId,
 		);
 		if (existingPage) {
-			await notion.pages.update({
-				page_id: existingPage.id,
-				properties,
-			});
+			await safeUpdateExistingProperties(notion, existingPage, patches);
+			await syncProposalPdfFileProperty(notion, existingPage, pdfExport.fileUploadId);
 			return { pageId: existingPage.id, action: "updated" };
 		}
 		const created = await notion.pages.create({
 			parent: { data_source_id: SALES_PROPOSAL_DATA_SOURCE_ID },
-			properties,
+			properties: buildSalesProposalRecordCreateProperties(patches),
 		});
+		await syncProposalPdfFileProperty(notion, created, pdfExport.fileUploadId);
 		return { pageId: created.id, action: "created" };
 	} catch (error) {
 		console.log("sales proposal sync skipped", {
@@ -16023,12 +16024,12 @@ async function syncSalesProposalRecord(
 	}
 }
 
-function buildSalesProposalRecordProperties(
+function buildSalesProposalRecordPatches(
 	proposalPage: Page,
 	draft: ProposalSimulationDraft,
 	pdfExport: ProposalPdfExportResult,
 	financePageId: string | null,
-): Record<string, unknown> {
+): Record<string, SafePatch> {
 	const relatedProjectIds = relationIdsFromProperty(proposalPage.properties?.["関連案件"]);
 	const relatedEquipmentIds = relationIdsFromAliases(proposalPage.properties ?? {}, [
 		"関連設備詳細",
@@ -16047,36 +16048,98 @@ function buildSalesProposalRecordProperties(
 			: "",
 	].filter(Boolean);
 	const nextActionLines = buildSalesProposalNextActionLines(actionCategory, pdfExport);
-	const properties: Record<string, unknown> = {
-		Name: title(draft.proposalTitle),
-		関連提案シミュレーション依頼: relation(proposalPage.id),
-		提案状態: select(proposalState),
-		シミュレーション種別: select(proposalKindJapaneseLabel(draft.proposalKind)),
-		営業提案用サマリー: richText(
-			[draft.conclusionText, ...draft.summaryLines.slice(0, 6)].join("\n"),
-		),
-		"S/A/B/C判定": select(inferSalesProposalRank(draft)),
-		案件アクション分類: select(actionCategory),
-		判定理由: richText(reasonLines.join("\n")),
-		次にやる営業アクション: richText(nextActionLines.join("\n")),
-		提案PDFリンク: pdfExport.fileUrl ? { url: pdfExport.fileUrl } : undefined,
-		作成した提案PDFを開く: pdfExport.fileUrl ? { url: pdfExport.fileUrl } : undefined,
+	const patches: Record<string, SafePatch> = {
+		Name: { kind: "text", value: draft.proposalTitle },
+		関連提案シミュレーション依頼: { kind: "relation", ids: [proposalPage.id] },
+		提案状態: { kind: "select", value: proposalState },
+		シミュレーション種別: { kind: "select", value: proposalKindJapaneseLabel(draft.proposalKind) },
+		営業提案用サマリー: {
+			kind: "text",
+			value: [draft.conclusionText, ...draft.summaryLines.slice(0, 6)].join("\n"),
+		},
+		"S/A/B/C判定": { kind: "select", value: inferSalesProposalRank(draft) },
+		案件アクション分類: { kind: "select", value: actionCategory },
+		判定理由: { kind: "text", value: reasonLines.join("\n") },
+		次にやる営業アクション: { kind: "text", value: nextActionLines.join("\n") },
 	};
-	if (pdfExport.fileUploadId) {
-		properties.提案PDF = { files: [{ file_upload: { id: pdfExport.fileUploadId } }] };
+	if (pdfExport.fileUrl) {
+		patches.提案PDFリンク = { kind: "text", value: pdfExport.fileUrl };
+		patches.作成した提案PDFを開く = { kind: "text", value: pdfExport.fileUrl };
 	}
 	if (relatedProjectIds.length > 0) {
-		properties.関連案件 = relation(relatedProjectIds[0]!);
+		patches.関連案件 = { kind: "relation", ids: [relatedProjectIds[0]!] };
 	}
 	if (relatedEquipmentIds.length > 0) {
-		properties.関連設備条件 = relation(relatedEquipmentIds[0]!);
+		patches.関連設備条件 = { kind: "relation", ids: [relatedEquipmentIds[0]!] };
 	}
 	if (financePageId) {
-		properties.関連ファイナンスシミュレーション = relation(financePageId);
+		patches.関連ファイナンスシミュレーション = { kind: "relation", ids: [financePageId] };
 	}
-	return Object.fromEntries(
-		Object.entries(properties).filter(([, value]) => value !== undefined),
+	return patches;
+}
+
+function buildSalesProposalRecordCreateProperties(
+	patches: Record<string, SafePatch>,
+): Record<string, Record<string, unknown>> {
+	const properties: Record<string, Record<string, unknown>> = {};
+	for (const [name, patch] of Object.entries(patches)) {
+		if (name === "提案PDFリンク" || name === "作成した提案PDFを開く") {
+			if (patch.kind === "text") {
+				properties[name] = { url: patch.value };
+			}
+			continue;
+		}
+		if (name === "Name") {
+			if (patch.kind === "text") {
+				properties[name] = title(patch.value);
+			}
+			continue;
+		}
+		const createdValue = safePatchToCreatePropertyValue(name, patch);
+		if (Object.keys(createdValue).length > 0) {
+			properties[name] = createdValue;
+		}
+	}
+	return properties;
+}
+
+async function syncProposalPdfFileProperty(
+	notion: NotionClient,
+	targetPage: Page,
+	fileUploadId?: string | null,
+): Promise<void> {
+	if (!fileUploadId) return;
+	const filePropertyName = findFirstFilesPropertyNameByAliases(
+		targetPage.properties ?? {},
+		PROPOSAL_PDF_FILE_PROPERTY_ALIASES,
 	);
+	if (!filePropertyName) {
+		console.log("proposal pdf file property not found", {
+			pageId: targetPage.id,
+		});
+		return;
+	}
+	try {
+		await notion.pages.update({
+			page_id: targetPage.id,
+			properties: {
+				[filePropertyName]: {
+					files: [
+						{
+							type: "file_upload",
+							file_upload: { id: fileUploadId },
+							name: "提案シミュレーション.pdf",
+						},
+					],
+				},
+			},
+		});
+	} catch (error) {
+		console.log("proposal pdf file sync skipped", {
+			pageId: targetPage.id,
+			error: String(error),
+		});
+	}
 }
 
 function inferSalesProposalState(pdfExport: ProposalPdfExportResult): string {
