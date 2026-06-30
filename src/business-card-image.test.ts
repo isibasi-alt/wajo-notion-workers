@@ -47,8 +47,13 @@ async function main() {
 	assert.equal(routing("🤝 社外顧問・ブローカー"), "broker");
 	assert.equal(routing("ブローカー"), "broker");
 	assert.equal(routing("broker"), "broker");
+	assert.equal(routing("company_or_person"), "company");
+	assert.equal(routing("broker_or_person"), "broker");
+	assert.equal(routing("broker-or-person"), "broker");
 	assert.equal(routing("❓ あとで決める"), "later");
 	assert.equal(routing("後で"), "later");
+	assert.equal(routing("undecidable"), "later");
+	assert.equal(routing("undecided"), "later");
 	assert.equal(routing("later"), "later");
 	assert.equal(routing("company"), "company");
 	assert.equal(routing(undefined), "company"); // 未指定は従来通り企業連携
@@ -57,8 +62,10 @@ async function main() {
 	// ── 営業判断(熱量)正規化 ──
 	assert.equal(engagement("本気で追う"), "active");
 	assert.equal(engagement("がっつり組んで情報を取る"), "active");
+	assert.equal(engagement("pursue"), "active");
 	assert.equal(engagement(undefined), "active"); // 未指定は従来通り本流調査
 	assert.equal(engagement("名刺だけ保存"), "save-only");
+	assert.equal(engagement("not_pursue"), "save-only");
 	assert.equal(engagement("今回は流す"), "save-only");
 	assert.equal(engagement("追わない"), "save-only");
 	assert.equal(engagement("active"), "active");
@@ -70,6 +77,13 @@ async function main() {
 	assert.deepEqual(runOptions({ engagementIntent: "名刺だけ保存" }), {
 		routing: "company",
 		engagementIntent: "save-only",
+		deepResearch: false,
+		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: false,
+	});
+	assert.deepEqual(runOptions({ intakeGuess: "broker_or_person" }), {
+		routing: "broker",
+		engagementIntent: "active",
 		deepResearch: false,
 		autoCreateMeetingPrepReport: false,
 		registerExternalAdvisor: false,
@@ -110,6 +124,13 @@ async function main() {
 		registerExternalAdvisor: false,
 	});
 	assert.deepEqual(runOptions({ routing: "company", engagementIntent: "save-only" }), {
+		routing: "company",
+		engagementIntent: "save-only",
+		deepResearch: false,
+		autoCreateMeetingPrepReport: false,
+		registerExternalAdvisor: false,
+	});
+	assert.deepEqual(runOptions({ routing: "company", pursueIntent: "not_pursue" }), {
 		routing: "company",
 		engagementIntent: "save-only",
 		deepResearch: false,

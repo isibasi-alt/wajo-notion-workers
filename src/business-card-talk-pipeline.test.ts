@@ -429,6 +429,15 @@ async function main() {
 	assert.equal(brokerOptions.engagementIntent, "active");
 	assert.equal(brokerOptions.deepResearch, false);
 
+	const intakeAliasOptions = readBusinessCardRunOptionsForTest({
+		intakeGuess: "broker_or_person",
+		pursueIntent: "not_pursue",
+	});
+	assert.equal(intakeAliasOptions.routing, "broker");
+	assert.equal(intakeAliasOptions.engagementIntent, "save-only");
+	assert.equal(intakeAliasOptions.deepResearch, false);
+	assert.equal(intakeAliasOptions.registerExternalAdvisor, false);
+
 	const laterOptions = readBusinessCardRunOptionsForTest({
 		routing: "later",
 		engagementIntent: "active",
