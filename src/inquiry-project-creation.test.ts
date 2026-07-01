@@ -71,7 +71,7 @@ function inquiryPage(projectIds: string[] = []) {
 			紐づき案件: relationProp(projectIds),
 			ステータス: selectProp("担当確定"),
 			進捗フェーズ: selectProp("担当確定"),
-			案件化状態: selectProp("未案件化"),
+			"問い合わせフェーズ（推奨）": selectProp("担当確定"),
 			案件化スコア: numberProp(),
 			案件化近さ: selectProp(""),
 			案件化日: dateProp(),
@@ -251,6 +251,11 @@ async function main() {
 		(inquiryProperties.ステータス as { select: { name: string } }).select.name,
 		"案件化",
 	);
+	assert.equal(
+		(inquiryProperties["問い合わせフェーズ（推奨）"] as { select: { name: string } }).select.name,
+		"案件化候補",
+	);
+	assert.equal("案件化状態" in inquiryProperties, false);
 	assert.match(JSON.stringify(inquiryProperties["営業サマリー"]), /案件化有無: あり/);
 	assert.match(JSON.stringify(inquiryProperties["次の一手"]), /活動を残す/);
 	assert.ok(comments.length >= 1);
@@ -334,7 +339,14 @@ async function main() {
 	assert.match(missingGross.message, /予定粗利額/);
 	const missingGrossUpdate = updates.find((update) => update.page_id === "inquiry-1");
 	assert.ok(missingGrossUpdate);
-	assert.match(JSON.stringify(missingGrossUpdate.properties), /案件化保留/);
+	assert.equal(
+		((missingGrossUpdate.properties as Record<string, unknown>)["問い合わせフェーズ（推奨）"] as {
+			select: { name: string };
+		}).select.name,
+		"要確認",
+	);
+	assert.equal("案件化状態" in (missingGrossUpdate.properties as Record<string, unknown>), false);
+	assert.match(JSON.stringify(missingGrossUpdate.properties), /予定粗利額が未入力/);
 
 	updates.length = 0;
 	creates.length = 0;

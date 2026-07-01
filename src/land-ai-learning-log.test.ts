@@ -43,7 +43,6 @@ function landPage() {
 			近隣住宅確認: selectProp("30m以上"),
 			変電所距離: richTextProp("3.2km"),
 			処理ステータス: selectProp("未処理"),
-			案件化状態: selectProp("未案件化"),
 			AIアクションバケット: selectProp("継続監視"),
 			総合評価: selectProp("C"),
 			AI総合スコア: numberProp(0),

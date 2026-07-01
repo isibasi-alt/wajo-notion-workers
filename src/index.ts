@@ -21495,7 +21495,6 @@ async function processLandCaseCreation(
 	if (!land.name || !land.address) {
 		if (!input.dryRun) {
 			await safeUpdateExistingProperties(notion, land.page, {
-				案件化状態: { kind: "select", value: "案件化保留" },
 				案件化メモ: {
 					kind: "text",
 					value:
@@ -21571,7 +21570,6 @@ async function processLandCaseCreation(
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		await safeUpdateExistingProperties(notion, land.page, {
-			案件化状態: { kind: "select", value: "案件化保留" },
 			案件化メモ: { kind: "text", value: `土地案件化Worker処理失敗: ${message}` },
 		});
 		return {
@@ -21685,7 +21683,6 @@ async function markLandCaseLinked(
 ): Promise<void> {
 	const current = relationIdsFromProperty(land.page.properties?.["関連案件"]);
 	await safeUpdateExistingProperties(notion, land.page, {
-		案件化状態: { kind: "select", value: "案件化済" },
 		案件化日: { kind: "date", value: todayDateJST() },
 		関連案件: { kind: "relation", ids: uniqueStrings([...current, ...projectIds]) },
 		案件化メモ: {
@@ -23934,7 +23931,7 @@ function readLand(page: Page): LandInfo {
 			numberValue(properties["Longitude"]) ??
 			placeCoordinate(properties["GPS情報"], "lon") ??
 			numberFromText(text(properties["経度"]) || text(properties["longitude"])),
-		caseStatus: text(properties["案件化状態"]),
+		caseStatus: relationIdsFromProperty(properties["関連案件"]).length > 0 ? "案件化済" : "未案件化",
 		relatedProjectIds: relationIdsFromProperty(properties["関連案件"]),
 	};
 }
@@ -26161,7 +26158,7 @@ function chooseRoadRating(road: string): string {
 }
 
 function shouldPreserveLandCaseStatus(land: LandInfo): boolean {
-	return land.caseStatus === "案件化済" || land.relatedProjectIds.length > 0;
+	return land.relatedProjectIds.length > 0;
 }
 
 async function markLandProcessing(
@@ -26181,9 +26178,6 @@ async function markLandProcessing(
 			value: "Notion Workerが土地詳細評価を開始。",
 		},
 	};
-	if (!shouldPreserveLandCaseStatus(land)) {
-		patches.案件化状態 = { kind: "select", value: "未案件化" };
-	}
 	await safeUpdateExistingProperties(notion, land.page, patches);
 }
 
@@ -26212,9 +26206,6 @@ async function markLandNeedsReview(
 		Webhook引き継ぎステータス: { kind: "select", value: "要確認で停止" },
 		Webhook引き継ぎメモ: { kind: "text", value: evaluation.reviewMemo },
 	};
-	if (!shouldPreserveLandCaseStatus(land)) {
-		patches.案件化状態 = { kind: "select", value: "未案件化" };
-	}
 	if (
 		evaluation.shouldPatchSubstationDistance !== false &&
 		evaluation.nearestSubstationDistanceKm !== undefined &&
@@ -26242,9 +26233,6 @@ async function markLandFailure(
 		Webhook引き継ぎステータス: { kind: "select", value: "引き継ぎ失敗" },
 		Webhook引き継ぎメモ: { kind: "text", value: `土地Worker処理失敗: ${message}` },
 	};
-	if (!shouldPreserveLandCaseStatus(land)) {
-		patches.案件化状態 = { kind: "select", value: "未案件化" };
-	}
 	await safeUpdateExistingProperties(notion, land.page, patches);
 }
 
@@ -26286,10 +26274,6 @@ async function writeLandEvaluation(
 		},
 		設計上の弱点: { kind: "text", value: evaluation.reviewMemo },
 	};
-	if (!shouldPreserveLandCaseStatus(land)) {
-		patches.案件化状態 = { kind: "select", value: evaluation.caseStatus };
-	}
-
 	const farmlandStatus = land.farmland.trim();
 	if (farmlandStatus) {
 		patches["農地転用可否"] = { kind: "select", value: farmlandStatus };
@@ -26347,7 +26331,7 @@ async function createLandEvaluationLearningLog(
 			? `農転事前判定: ${evaluation.farmlandPreAssessmentText}`
 			: "",
 		`AIアクション: ${evaluation.actionBucket}`,
-		`案件化状態予測: ${evaluation.caseStatus}`,
+		`案件化見立て: ${evaluation.caseStatus}`,
 		evaluation.landEvaluation,
 		evaluation.powerEvaluation,
 	].filter(Boolean).join("\n");
@@ -30439,7 +30423,7 @@ async function processInquiryProjectCreation(
 	if (plannedGrossProfit === null || plannedGrossProfit <= 0) {
 		if (!dryRun) {
 			await safeUpdateExistingProperties(notion, inquiryPage, {
-				案件化状態: { kind: "select", value: "案件化保留" },
+				"問い合わせフェーズ（推奨）": { kind: "select", value: "要確認" },
 				案件化メモ: {
 					kind: "text",
 					value: "予定粗利額が未入力のため、案件管理DBへの新規作成を止めました。",
@@ -30459,7 +30443,7 @@ async function processInquiryProjectCreation(
 	if (!plannedGrossBasis) {
 		if (!dryRun) {
 			await safeUpdateExistingProperties(notion, inquiryPage, {
-				案件化状態: { kind: "select", value: "案件化保留" },
+				"問い合わせフェーズ（推奨）": { kind: "select", value: "要確認" },
 				案件化メモ: {
 					kind: "text",
 					value: "予定粗利の根拠が未入力のため、案件管理DBへの新規作成を止めました。",
@@ -30518,7 +30502,7 @@ async function processInquiryProjectCreation(
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		await safeUpdateExistingProperties(notion, inquiryPage, {
-			案件化状態: { kind: "select", value: "案件化保留" },
+			"問い合わせフェーズ（推奨）": { kind: "select", value: "要確認" },
 			案件化メモ: { kind: "text", value: `問い合わせ案件化Worker処理失敗: ${message}` },
 		});
 		return {
@@ -31366,7 +31350,7 @@ async function markInquiryProjectLinked(
 	const patches: Record<string, SafePatch> = {
 		ステータス: { kind: "select", value: "案件化" },
 		進捗フェーズ: { kind: "select", value: "案件化" },
-		案件化状態: { kind: "select", value: "案件化済" },
+		"問い合わせフェーズ（推奨）": { kind: "select", value: "案件化候補" },
 		案件化日: { kind: "date", value: today },
 		最終アクション日: { kind: "date", value: today },
 		紐づき案件: { kind: "relation", ids: linkedProjectIds },

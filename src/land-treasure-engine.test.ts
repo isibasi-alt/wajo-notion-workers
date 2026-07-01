@@ -44,7 +44,6 @@ function highValueLandPage() {
 			近隣住宅確認: selectProp("30m以上"),
 			送電線の有無: selectProp("近接あり"),
 			処理ステータス: selectProp("未処理"),
-			案件化状態: selectProp("未案件化"),
 			AIアクションバケット: selectProp("継続監視"),
 			総合評価: selectProp("C"),
 			AI総合スコア: numberProp(0),
@@ -108,7 +107,6 @@ function linkedCaseLandPage() {
 		properties: {
 			...page.properties,
 			土地名称: titleProp("【TDD】案件化済み土地は詳細評価で戻さない"),
-			案件化状態: selectProp("案件化済"),
 			関連案件: relationProp(["project-linked-1"]),
 		},
 	};
@@ -133,7 +131,6 @@ function nearSubstationButBlockedPage() {
 			近隣住宅確認: selectProp("30m未満"),
 			送電線の有無: selectProp("近接あり"),
 			処理ステータス: selectProp("未処理"),
-			案件化状態: selectProp("未案件化"),
 			AIアクションバケット: selectProp("継続監視"),
 			総合評価: selectProp("C"),
 			AI総合スコア: numberProp(0),
@@ -164,7 +161,6 @@ function addressOnlyPage() {
 			所在地: richTextProp("岐阜県土岐市土岐津町"),
 			"面積（坪）": numberProp(6000),
 			処理ステータス: selectProp("未処理"),
-			案件化状態: selectProp("未案件化"),
 			AIアクションバケット: selectProp("継続監視"),
 			総合評価: selectProp("C"),
 			AI総合スコア: numberProp(0),
@@ -267,7 +263,7 @@ async function main() {
 		assert.equal(
 			"案件化状態" in properties,
 			false,
-			"案件化済み/関連案件ありの土地は詳細評価で案件化状態を上書きしない",
+			"関連案件ありの土地は詳細評価で旧案件化列を書き戻さない",
 		);
 	}
 	assert.deepEqual(
@@ -746,7 +742,7 @@ async function main() {
 
 	const addressOnlyFinalUpdate = updates.at(-1)?.properties as Record<string, unknown>;
 	assert.deepEqual(addressOnlyFinalUpdate.処理ステータス, { select: { name: "要確認" } });
-	assert.deepEqual(addressOnlyFinalUpdate.案件化状態, { select: { name: "未案件化" } });
+	assert.equal("案件化状態" in addressOnlyFinalUpdate, false);
 	assert.deepEqual(addressOnlyFinalUpdate.総合評価, { select: { name: "C" } });
 	assert.doesNotMatch(addressOnlyMemo, /この土地、?1億|判定が全部出た|即アタック|農転不可|危険|接道OK/);
 
