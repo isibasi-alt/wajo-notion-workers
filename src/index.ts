@@ -14699,6 +14699,9 @@ type SolarProposalDetails = {
 	remainingSalesYears: number | null;
 	gridConnectionDate: string;
 	operationYears: string;
+	curtailmentScenario: CurtailmentScenario;
+	curtailmentRate: number;
+	curtailmentBasisMemo: string;
 };
 
 type ProposalSitePhoto = {
@@ -15875,6 +15878,12 @@ function buildProposalRequestPrefillProperties(
 	if (draft.purchaseCost !== null) prefill.仕入れ価格 = { number: draft.purchaseCost };
 	if (draft.annualIncome !== null) prefill.年間売電収入 = { number: draft.annualIncome };
 	prefill["年間維持費（ランニングコスト）"] = { number: draft.runningCost };
+	if (draft.curtailmentScenario === "抑制あり") {
+		prefill.出力抑制前提 = select("抑制あり");
+	}
+	if (draft.curtailmentRate > 0) {
+		prefill.出力抑制率 = { number: draft.curtailmentRate };
+	}
 	if (details) {
 		prefill.発電所名 = richText(details.plantName);
 		prefill.所在地 = richText(details.location);
@@ -15903,6 +15912,9 @@ function buildProposalRequestPrefillProperties(
 			"稼働開始日",
 		]);
 		if (gridConnectionDate) prefill.連系開始日 = gridConnectionDate;
+		if (details.curtailmentBasisMemo) {
+			prefill.抑制条件 = richText(details.curtailmentBasisMemo);
+		}
 	}
 	const sitePhotos = filesPropertyValueFromImages(draft.sitePhotos);
 	if (sitePhotos) prefill.現場写真 = sitePhotos;
@@ -19314,15 +19326,7 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 	}
 	const curtailmentScenario = readCurtailmentScenario(properties);
 	const curtailmentRate = curtailmentScenario === "抑制あり"
-		? Math.max(0, Math.min(
-			readFirstNumberByAliases(properties, [
-				"出力抑制率",
-				"抑制率",
-				"出力制御率",
-				"想定抑制率",
-			]) ?? 0,
-			100,
-		))
+		? readCurtailmentRate(properties)
 		: 0;
 	const annualIncome =
 		baseAnnualIncome !== null
@@ -19565,16 +19569,37 @@ function readCurtailmentScenario(properties: Record<string, unknown>): Curtailme
 		"出力抑制",
 		"出力制御前提",
 		"抑制前提",
+		"抑制前提区分",
+		"抑制条件",
 	]);
-	if (/あり|有|前提|かかる|抑制あり|出力制御あり/i.test(value)) return "抑制あり";
+	if (/あり|有|前提|かかる|抑制あり|出力制御あり|30時間|365日|指定/i.test(value)) {
+		return "抑制あり";
+	}
+	if (readCurtailmentRate(properties) > 0) return "抑制あり";
 	return "抑制なし";
+}
+
+function readCurtailmentRate(properties: Record<string, unknown>): number {
+	return Math.max(0, Math.min(
+		readFirstNumberByAliases(properties, [
+			"出力抑制率",
+			"抑制率",
+			"出力制御率",
+			"想定抑制率",
+			"標準抑制率",
+		]) ?? 0,
+		100,
+	));
 }
 
 function formatCurtailmentAssumptionLabel(scenario: CurtailmentScenario, rate: number): string {
 	if (scenario === "抑制あり" && rate > 0) {
-		return `抑制データあり / ${trimTrailingZeros(rate)}%（V1は文章表示、V1.5で収支反映）`;
+		return `抑制データあり / ${trimTrailingZeros(rate)}%（収支反映は次のバージョンで対応予定）`;
 	}
-	return "抑制データ未設定（地域・FIT条件確認 / V1.5で収支反映）";
+	if (scenario === "抑制あり") {
+		return "抑制前提あり / 率未設定（収支反映は次のバージョンで対応予定）";
+	}
+	return "抑制データ未設定（地域・FIT条件を確認し、次のバージョンで収支反映予定）";
 }
 
 function buildFinanceSimulation(input: {
@@ -20402,6 +20427,14 @@ function buildSolarProposalDetails(
 		]),
 		gridConnectionDate,
 		operationYears: calculateOperationYearsLabel(gridConnectionDate),
+		curtailmentScenario: readCurtailmentScenario(properties),
+		curtailmentRate: readCurtailmentRate(properties),
+		curtailmentBasisMemo: readFirstTextByAliases(properties, [
+			"抑制根拠メモ",
+			"抑制条件",
+			"出力抑制メモ",
+			"抑制メモ",
+		]),
 	};
 }
 
@@ -20661,15 +20694,23 @@ function buildSolarSiteLine(details: SolarProposalDetails | null): string {
 
 function buildSolarEquipmentLines(details: SolarProposalDetails | null): string[] {
 	if (!details) return [];
-	return [
+	const lines = [
 		`設備: パネルメーカー ${details.panelMaker} / パネル型式 ${details.panelModel} / パネル枚数 ${formatNumberWithUnit(details.panelCount, "枚")} / DC容量 ${formatNumberWithUnit(details.dcCapacityKw, "kW")}`,
 		`パワコン: パワコンメーカー ${details.powerConditionerMaker} / パワコン型式 ${details.powerConditionerModel} / PCS容量 ${formatNumberWithUnit(details.pcsCapacityKw, "kW")}`,
 	];
+	if (details.curtailmentBasisMemo) {
+		lines.push(`抑制条件メモ: ${details.curtailmentBasisMemo}`);
+	}
+	return lines;
 }
 
 function buildSolarRevenueLine(details: SolarProposalDetails | null): string {
 	if (!details) return "";
-	return `売電条件: ${details.fitFipType} / 売電単価 ${formatNumberWithUnit(details.unitPrice, "円/kWh")} / 残存売電期間 ${formatNumberWithUnit(details.remainingSalesYears, "年")} / 連系開始日 ${details.gridConnectionDate} / 稼働年数 ${details.operationYears}`;
+	const curtailmentLine = formatCurtailmentAssumptionLabel(
+		details.curtailmentScenario,
+		details.curtailmentRate,
+	);
+	return `売電条件: ${details.fitFipType} / 売電単価 ${formatNumberWithUnit(details.unitPrice, "円/kWh")} / 残存売電期間 ${formatNumberWithUnit(details.remainingSalesYears, "年")} / 連系開始日 ${details.gridConnectionDate} / 稼働年数 ${details.operationYears} / 出力抑制 ${curtailmentLine}`;
 }
 
 function buildMaintenanceBreakdownLine(items: RunningCostBreakdownItem[]): string {
