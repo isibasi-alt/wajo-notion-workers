@@ -15102,6 +15102,7 @@ async function processProposalSimulation(
 			);
 		}
 		await safeUpdateExistingProperties(notion, page, patches);
+		await syncProposalSimulationEquipmentSnapshot(notion, equipmentPage, draft);
 		const financeSync = await syncFinanceSimulationRecord(notion, sourcePage, draft);
 		const salesProposalSync = await syncSalesProposalRecord(
 			notion,
@@ -16301,6 +16302,152 @@ async function syncProposalSimulationRelations(
 			proposalPageId: proposalPage.id,
 			financePageId,
 			salesProposalPageId,
+			error: String(error),
+		});
+	}
+}
+
+async function syncProposalSimulationEquipmentSnapshot(
+	notion: NotionClient,
+	equipmentPage: Page | null,
+	draft: ProposalSimulationDraft,
+): Promise<void> {
+	if (!equipmentPage) return;
+	try {
+		const details = draft.solarDetails;
+		const patches: Record<string, SafePatch> = {};
+		if (details?.plantName) {
+			setAliasPatch(patches, ["発電所名", "物件名", "案件名"], {
+				kind: "text",
+				value: details.plantName,
+			});
+		}
+		if (details?.location) {
+			setAliasPatch(patches, ["所在地", "発電所住所", "住所"], {
+				kind: "text",
+				value: details.location,
+			});
+		}
+		if (details?.powerArea) {
+			setAliasPatch(patches, ["電力会社エリア", "電力エリア", "管轄電力会社"], {
+				kind: "select",
+				value: details.powerArea,
+			});
+		}
+		if (details?.voltageClass) {
+			setAliasPatch(patches, ["低圧/高圧区分", "電圧区分", "低圧高圧区分"], {
+				kind: "select",
+				value: details.voltageClass,
+			});
+		}
+		if (details?.panelMaker) {
+			setAliasPatch(patches, ["パネルメーカー", "太陽光パネルメーカー", "モジュールメーカー"], {
+				kind: "select",
+				value: details.panelMaker,
+			});
+		}
+		if (details?.panelModel) {
+			setAliasPatch(patches, ["パネル型式", "太陽光パネル型式", "モジュール型式"], {
+				kind: "text",
+				value: details.panelModel,
+			});
+		}
+		if (details?.panelCount !== null && details?.panelCount !== undefined) {
+			setAliasPatch(patches, ["パネル枚数", "モジュール枚数"], {
+				kind: "number",
+				value: details.panelCount,
+			});
+		}
+		if (details?.dcCapacityKw !== null && details?.dcCapacityKw !== undefined) {
+			setAliasPatch(
+				patches,
+				["DC容量（パネル側kW）", "DC容量", "パネル容量kW", "パネル容量", "設備容量（DC）"],
+				{ kind: "number", value: details.dcCapacityKw },
+			);
+		}
+		if (details?.powerConditionerMaker) {
+			setAliasPatch(
+				patches,
+				["パワコンメーカー", "PCSメーカー", "パワーコンディショナメーカー"],
+				{ kind: "select", value: details.powerConditionerMaker },
+			);
+		}
+		if (details?.powerConditionerModel) {
+			setAliasPatch(
+				patches,
+				["パワコン型式", "PCS型式", "パワーコンディショナ型式"],
+				{ kind: "text", value: details.powerConditionerModel },
+			);
+		}
+		if (details?.pcsCapacityKw !== null && details?.pcsCapacityKw !== undefined) {
+			setAliasPatch(
+				patches,
+				["PCS容量（パワコン側kW）", "PCS容量", "パワコン容量", "AC容量（PCS側kW）"],
+				{ kind: "number", value: details.pcsCapacityKw },
+			);
+		}
+		if (details?.fitFipType) {
+			setAliasPatch(patches, ["FIT/FIP区分", "FIT区分", "FIP区分"], {
+				kind: "select",
+				value: details.fitFipType,
+			});
+		}
+		if (details?.unitPrice !== null && details?.unitPrice !== undefined) {
+			setAliasPatch(patches, ["売電単価"], {
+				kind: "select",
+				value: `${trimTrailingZeros(details.unitPrice)}円`,
+			});
+		}
+		if (details?.gridConnectionDate) {
+			setAliasPatch(patches, ["連系開始日", "発電開始日", "売電開始日", "稼働開始日"], {
+				kind: "date",
+				value: details.gridConnectionDate,
+			});
+		}
+		if (draft.annualIncome !== null && draft.annualIncome !== undefined) {
+			setAliasPatch(patches, ["年間売電収入", "年間想定売電収入", "年間売電額"], {
+				kind: "number",
+				value: draft.annualIncome,
+			});
+		}
+		setAliasPatch(
+			patches,
+			["年間維持費（ランニングコスト）", "年間維持費", "年間運用費", "O&M費"],
+			{ kind: "number", value: draft.runningCost },
+		);
+		if (details?.panelPublicComment) {
+			setAliasPatch(patches, ["パネル公表コメント"], {
+				kind: "text",
+				value: details.panelPublicComment,
+			});
+		}
+		if (details?.powerConditionerPublicComment) {
+			setAliasPatch(patches, ["パワコン公表コメント"], {
+				kind: "text",
+				value: details.powerConditionerPublicComment,
+			});
+		}
+		if (!notionPropertyHasValue(equipmentPage.properties?.["抑制前提区分"])) {
+			setAliasPatch(patches, ["抑制前提区分"], {
+				kind: "select",
+				value: draft.curtailmentScenario === "抑制あり" ? "抑制あり" : "未設定",
+			});
+		}
+		setAliasPatch(patches, ["標準抑制率"], {
+			kind: "number",
+			value: draft.curtailmentRate,
+		});
+		if (details?.curtailmentBasisMemo) {
+			setAliasPatch(patches, ["抑制根拠メモ", "抑制条件メモ"], {
+				kind: "text",
+				value: details.curtailmentBasisMemo,
+			});
+		}
+		if (Object.keys(patches).length === 0) return;
+		await safeUpdateExistingProperties(notion, equipmentPage, patches);
+	} catch (error) {
+		console.log("proposal simulation equipment snapshot sync skipped", {
+			equipmentPageId: equipmentPage.id,
 			error: String(error),
 		});
 	}
