@@ -2213,6 +2213,7 @@ type ProjectDocumentRequestConfig = {
 	createdLabel: string;
 	nextActionMessage: string;
 	memo: string;
+	finalizeOnCreate?: boolean;
 	defaultProperties?: Record<string, Record<string, unknown>>;
 };
 
@@ -15100,6 +15101,7 @@ const PROJECT_DOCUMENT_REQUEST_CONFIGS: Record<
 		nextActionMessage:
 			"次は資料作成依頼側で不足項目を補完し、PDF提案化してください。",
 		memo: "案件管理DBから作成しました。必要項目を補完してPDF提案化してください。",
+		finalizeOnCreate: false,
 	},
 	finance: {
 		kind: "finance",
@@ -15111,6 +15113,7 @@ const PROJECT_DOCUMENT_REQUEST_CONFIGS: Record<
 		nextActionMessage:
 			"次は資料作成依頼側で不足項目を補完し、ファイナンスシミュレーションを実行してください。",
 		memo: "案件管理DBから作成しました。必要項目を補完してファイナンス計算に進んでください。",
+		finalizeOnCreate: false,
 	},
 	resident: {
 		kind: "resident",
@@ -15122,6 +15125,7 @@ const PROJECT_DOCUMENT_REQUEST_CONFIGS: Record<
 		nextActionMessage:
 			"次は資料作成依頼側で近隣周知・説明会資料の不足項目を補完してください。",
 		memo: "案件管理DBから作成しました。近隣周知・説明会資料の必須項目を補完してください。",
+		finalizeOnCreate: true,
 		defaultProperties: {
 			周知方法: select("所有者変更周知"),
 		},
@@ -15620,7 +15624,7 @@ async function processProjectDocumentRequest(
 	);
 	if (existingRequest) {
 		const message = `既存の${config.createdLabel}があります: ${projectName}`;
-		const generationResult = input.dryRun
+		const generationResult = input.dryRun || config.finalizeOnCreate === false
 			? null
 			: await finalizeProjectDocumentRequest(
 					notion,
@@ -15630,14 +15634,21 @@ async function processProjectDocumentRequest(
 		const generationMessage = generationResult?.message ?? "";
 		const generationNeedsInput = generationResult?.action === "needs-input";
 		const generationError = generationResult?.action === "error";
+		const existingRequestUrl =
+			typeof (existingRequest as Record<string, unknown>).url === "string"
+				? ((existingRequest as Record<string, unknown>).url as string)
+				: "";
 		if (!input.dryRun) {
 			await createPageComment(
 				notion,
 				projectPage.id,
 				[
 					`📄 ${message}`,
-					`${config.documentType}の資料作成依頼を重複作成しませんでした。`,
+					`${config.documentType}の入力ページを重複作成しませんでした。`,
+					existingRequestUrl ? `開く: ${existingRequestUrl}` : "",
+					missingMessage ? `不足: ${readiness.missingField}` : "",
 					generationMessage,
+					config.nextActionMessage,
 				].filter(Boolean).join("\n"),
 			);
 		}
@@ -15718,7 +15729,7 @@ async function processProjectDocumentRequest(
 			});
 		}
 	}
-	const generationResult = input.dryRun
+	const generationResult = input.dryRun || config.finalizeOnCreate === false
 		? null
 		: await finalizeProjectDocumentRequest(notion, kind, requestPage.id);
 	const generationMessage = generationResult?.message ?? "";
@@ -15752,7 +15763,9 @@ async function processProjectDocumentRequest(
 	return {
 		projectPageId: projectPage.id,
 		requestPageId: requestPage.id,
-		action: requestNeedsInput ? "needs-input" : "created",
+		action: config.finalizeOnCreate === false
+			? "created"
+			: (requestNeedsInput ? "needs-input" : "created"),
 		message: [
 			`${config.createdLabel}を作成しました: ${requestTitle}`,
 			generationMessage,
@@ -15865,8 +15878,8 @@ function buildProposalRequestPrefillProperties(
 	if (details) {
 		prefill.発電所名 = richText(details.plantName);
 		prefill.所在地 = richText(details.location);
-		prefill.電力会社エリア = select(details.powerArea);
-		prefill["低圧/高圧区分"] = select(details.voltageClass);
+		if (details.powerArea) prefill.電力会社エリア = select(details.powerArea);
+		if (details.voltageClass) prefill["低圧/高圧区分"] = select(details.voltageClass);
 		prefill.パネルメーカー = richText(details.panelMaker);
 		prefill.パネル型式 = richText(details.panelModel);
 		if (details.panelCount !== null) prefill.パネル枚数 = { number: details.panelCount };
@@ -15878,7 +15891,7 @@ function buildProposalRequestPrefillProperties(
 		if (details.pcsCapacityKw !== null) {
 			prefill["PCS容量（パワコン側kW）"] = { number: details.pcsCapacityKw };
 		}
-		prefill["FIT/FIP区分"] = select(details.fitFipType);
+		if (details.fitFipType) prefill["FIT/FIP区分"] = select(details.fitFipType);
 		if (details.unitPrice !== null) prefill.売電単価 = { number: details.unitPrice };
 		if (details.remainingSalesYears !== null) {
 			prefill.残存売電期間 = { number: details.remainingSalesYears };
