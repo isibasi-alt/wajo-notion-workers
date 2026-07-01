@@ -14824,7 +14824,40 @@ async function processProposalSimulation(
 	notion: NotionClient,
 ): Promise<ProposalSimulationResult> {
 	const page = await notion.pages.retrieve({ page_id: input.pageId });
-	const draft = evaluateProposalSimulationDraft(page);
+	const relatedEquipmentIds = relationIdsFromAliases(page.properties ?? {}, [
+		"関連設備詳細",
+		"発電所設備詳細",
+		"設備詳細",
+	]);
+	let equipmentPage: Page | null = null;
+	if (relatedEquipmentIds.length > 0) {
+		try {
+			equipmentPage = await notion.pages.retrieve({ page_id: relatedEquipmentIds[0]! });
+		} catch (error) {
+			console.log("proposal simulation equipment direct retrieve skipped", {
+				proposalPageId: page.id,
+				equipmentPageId: relatedEquipmentIds[0],
+				error: String(error),
+			});
+		}
+	}
+	if (!equipmentPage) {
+		const relatedProjectIds = relationIdsFromProperty(page.properties?.["関連案件"]);
+		if (relatedProjectIds.length > 0) {
+			try {
+				const projectPage = await notion.pages.retrieve({ page_id: relatedProjectIds[0]! });
+				equipmentPage = await retrieveProjectEquipmentDetailPage(notion, projectPage);
+			} catch (error) {
+				console.log("proposal simulation equipment project fallback skipped", {
+					proposalPageId: page.id,
+					projectPageId: relatedProjectIds[0],
+					error: String(error),
+				});
+			}
+		}
+	}
+	const sourcePage = mergeProjectWithEquipmentDetail(page, equipmentPage);
+	const draft = evaluateProposalSimulationDraft(sourcePage);
 
 	if (draft.missingField) {
 		const message = buildSequentialMissingMessage(
@@ -14970,7 +15003,7 @@ async function processProposalSimulation(
 				{ kind: "number", value: draft.fitTotalNetCashflow },
 			);
 		}
-		const panelDegradationRate = readFirstNumberByAliases(page.properties ?? {}, [
+		const panelDegradationRate = readFirstNumberByAliases(sourcePage.properties ?? {}, [
 			"パネル劣化率",
 			"パネル経年劣化率",
 			"経年劣化率",
@@ -15057,21 +15090,21 @@ async function processProposalSimulation(
 			);
 		}
 		await safeUpdateExistingProperties(notion, page, patches);
-		const financeSync = await syncFinanceSimulationRecord(notion, page, draft);
+		const financeSync = await syncFinanceSimulationRecord(notion, sourcePage, draft);
 		const salesProposalSync = await syncSalesProposalRecord(
 			notion,
-			page,
+			sourcePage,
 			draft,
 			pdfExport,
 			financeSync?.pageId ?? null,
 		);
 		await syncProposalSimulationRelations(
 			notion,
-			page,
+			sourcePage,
 			financeSync?.pageId ?? null,
 			salesProposalSync?.pageId ?? null,
 		);
-		await updateRelatedProjectProposalResult(notion, page, draft, pdfExport);
+		await updateRelatedProjectProposalResult(notion, sourcePage, draft, pdfExport);
 		await createPageComment(
 			notion,
 			page.id,
