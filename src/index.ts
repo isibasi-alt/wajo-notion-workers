@@ -30268,6 +30268,7 @@ async function processInquiryProjectCreation(
 			try {
 				const existingProjectPage = await notion.pages.retrieve({ page_id: targetProjectId });
 				await enrichProjectFromInquiry(notion, existingProjectPage, inquiryPage, triggerUserId);
+				await initializeProjectScaffolding(notion, targetProjectId);
 			} catch (error) {
 				console.log("inquiry project enrich skipped", String(error));
 			}
@@ -30427,9 +30428,18 @@ async function createProjectFromInquiry(
 	});
 	const projectPage = await notion.pages.retrieve({ page_id: created.id });
 	await enrichProjectFromInquiry(notion, projectPage, inquiryPage, triggerUserId);
+	await initializeProjectScaffolding(notion, created.id, dryRun);
+	return notion.pages.retrieve({ page_id: created.id });
+}
+
+async function initializeProjectScaffolding(
+	notion: NotionClient,
+	projectPageId: string,
+	dryRun = false,
+): Promise<void> {
 	if (!dryRun) {
 		const requestInput = {
-			projectPageId: created.id,
+			projectPageId,
 			dryRun: false,
 		};
 		const initializationErrors: string[] = [];
@@ -30466,7 +30476,7 @@ async function createProjectFromInquiry(
 		if (initializationErrors.length > 0) {
 			await createPageComment(
 				notion,
-				created.id,
+				projectPageId,
 				[
 					`⚠️ 初期化の一部で失敗しました。後続で再実行してください。`,
 					...initializationErrors,
@@ -30474,7 +30484,6 @@ async function createProjectFromInquiry(
 			);
 		}
 	}
-	return notion.pages.retrieve({ page_id: created.id });
 }
 
 // 案件ページ（新規でも、純正ボタンが先に作った既存でも）へ、問い合わせ内容を確実に引き継ぐ。

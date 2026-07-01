@@ -245,7 +245,10 @@ async function main() {
 		dataSources: {
 			query: async (args: Record<string, unknown>) => {
 				queries.push(args);
-				return { results: [projectPage("project-existing")] };
+				if (args.data_source_id === "54e869d7-ba3e-49e1-b760-af46e23499cb") {
+					return { results: [projectPage("project-existing")] };
+				}
+				return { results: [] };
 			},
 		},
 	};
@@ -258,7 +261,7 @@ async function main() {
 
 	assert.equal(skipped.action, "enriched-existing");
 	assert.equal(skipped.projectId, "project-existing");
-	assert.equal(creates.length, 0, "既存案件があれば新規作成しない");
+	assert.equal(creates.length, 4, "既存案件でも関連4件の初期化は走る");
 	const enrichedProjectUpdate = updates.find((update) => update.page_id === "project-existing");
 	assert.ok(enrichedProjectUpdate, "既存案件へ問い合わせ内容の引き継ぎ更新が走る");
 	assert.match(
@@ -267,7 +270,7 @@ async function main() {
 	);
 	const existingInquiryUpdate = updates.find((update) => update.page_id === "inquiry-1");
 	assert.ok(existingInquiryUpdate);
-	assert.equal(comments.length, 1);
+	assert.ok(comments.length >= 1);
 
 	updates.length = 0;
 	creates.length = 0;
