@@ -5470,7 +5470,14 @@ worker.webhook("processProjectFinanceRequestWebhook", {
 				{ projectPageId, dryRun: false },
 				notion as unknown as NotionClient,
 			);
-			if (result.action === "needs-input") throw new Error(result.message);
+			// Finance button is an input-entry waypoint. Missing values should guide the
+			// user to the finance screen, not make the Notion button itself look broken.
+			if (result.action === "needs-input") {
+				console.log("finance request needs input", {
+					projectPageId,
+					message: result.message,
+				});
+			}
 		}
 	},
 });
