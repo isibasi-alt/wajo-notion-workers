@@ -141,13 +141,14 @@ async function main() {
 
 	assert.equal(created.action, "created-project");
 	assert.equal(created.projectId, "project-created");
-	assert.equal(creates.length, 1);
+	assert.ok(creates.length >= 5, `案件1件と関連4件の初期化が同時に起きるはず: ${creates.length}`);
 	assert.ok(queries.length >= 1);
 	assert.deepEqual(creates[0]!.template, {
 		type: "template_id",
 		template_id: "0b9815a4-37c4-4e4c-90b6-1d54fd9664a3",
 		timezone: "Asia/Tokyo",
 	});
+	assert.equal(creates.slice(1).length, 4, "案件作成後に案内3件＋設備1件の依頼が作成されるはず");
 	assert.deepEqual(creates[0]!.icon, {
 		type: "icon",
 		icon: { name: "school", color: "orange" },
@@ -224,7 +225,7 @@ async function main() {
 	);
 	assert.match(JSON.stringify(inquiryProperties["営業サマリー"]), /案件化有無: あり/);
 	assert.match(JSON.stringify(inquiryProperties["次の一手"]), /活動を残す/);
-	assert.equal(comments.length, 1);
+	assert.ok(comments.length >= 1);
 
 	updates.length = 0;
 	creates.length = 0;

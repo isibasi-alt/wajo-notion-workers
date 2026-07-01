@@ -30413,6 +30413,7 @@ async function createProjectFromInquiry(
 	notion: NotionClient,
 	inquiryPage: Page,
 	triggerUserId?: string,
+	dryRun = false,
 ): Promise<Page> {
 	const inquiryTitle = readGenericPageTitle(inquiryPage) || "問い合わせ";
 	const projectName = buildInquiryProjectName(inquiryTitle);
@@ -30426,6 +30427,53 @@ async function createProjectFromInquiry(
 	});
 	const projectPage = await notion.pages.retrieve({ page_id: created.id });
 	await enrichProjectFromInquiry(notion, projectPage, inquiryPage, triggerUserId);
+	if (!dryRun) {
+		const requestInput = {
+			projectPageId: created.id,
+			dryRun: false,
+		};
+		const initializationErrors: string[] = [];
+		await Promise.all([
+			(async () => {
+				try {
+					await processProjectProposalRequest(requestInput, notion);
+				} catch (error) {
+					initializationErrors.push(`提案資料作成依頼: ${String(error)}`);
+				}
+			})(),
+			(async () => {
+				try {
+					await processProjectFinanceRequest(requestInput, notion);
+				} catch (error) {
+					initializationErrors.push(`金融資料作成依頼: ${String(error)}`);
+				}
+			})(),
+			(async () => {
+				try {
+					await processProjectResidentDocumentRequest(requestInput, notion);
+				} catch (error) {
+					initializationErrors.push(`住民説明会資料作成依頼: ${String(error)}`);
+				}
+			})(),
+			(async () => {
+				try {
+					await processProjectEquipmentDetailRequest(requestInput, notion);
+				} catch (error) {
+					initializationErrors.push(`設備詳細作成: ${String(error)}`);
+				}
+			})(),
+		]);
+		if (initializationErrors.length > 0) {
+			await createPageComment(
+				notion,
+				created.id,
+				[
+					`⚠️ 初期化の一部で失敗しました。後続で再実行してください。`,
+					...initializationErrors,
+				].join("\n"),
+			);
+		}
+	}
 	return notion.pages.retrieve({ page_id: created.id });
 }
 
