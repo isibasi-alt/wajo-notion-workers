@@ -140,7 +140,7 @@ async function main() {
 	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /稼働年数/);
 	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /残存FIT年数: 14年/);
 	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /出力抑制前提: 抑制データ未設定/);
-	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /V1\.5で収支反映/);
+	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /次のバージョンで収支反映/);
 	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /残存FIT期間内の総手残り: ¥562,800,000/);
 	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /土地は償却対象外です/);
 	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /システム本体は17年で償却します/);
@@ -202,6 +202,23 @@ async function main() {
 	assert.match(readyWithRunningCostBreakdown.summaryLines.join("\n"), /年間維持費（ランニングコスト）: ¥2,550,000/);
 	assert.match(readyWithRunningCostBreakdown.pageTwoLines.join("\n"), /O&M費 ¥1,200,000/);
 
+	const readyWithWajoSupport = evaluateProposalSimulationDraftForTest({
+		id: "proposal-2d3",
+		properties: solarRequiredProps({
+			事故歴判定: selectProp("軽微修復済"),
+			和上整備判定: selectProp("整備済"),
+			保証判定: selectProp("保証対象"),
+			和上整備サマリー: richTextProp("草刈り、電気点検、パネル清掃まで実施済み。"),
+			和上保証コメント: richTextProp("主要設備は現時点で稼働確認済み。"),
+			残リスク: richTextProp("造成法面は豪雨後の再確認を推奨。"),
+			草刈り実施: selectProp("実施"),
+			電気点検実施: selectProp("実施"),
+		}),
+	});
+
+	assert.match(readyWithWajoSupport.pageTwoLines.join("\n"), /和上確認: 事故歴 軽微修復済 \/ 整備 整備済 \/ 保証 保証対象/);
+	assert.match(readyWithWajoSupport.pageTwoLines.join("\n"), /残リスク: 造成法面は豪雨後の再確認を推奨。/);
+
 	const solarTitleOnly = evaluateProposalSimulationDraftForTest({
 		id: "proposal-2d2",
 		properties: {
@@ -229,7 +246,7 @@ async function main() {
 	assert.equal(readyWithCurtailment.expectedYield, 29.9);
 	assert.equal(readyWithCurtailment.fitTotalNetCashflow, 502320000);
 	assert.match(readyWithCurtailment.summaryLines.join("\n"), /出力抑制前提: 抑制データあり \/ 10%/);
-	assert.match(readyWithCurtailment.summaryLines.join("\n"), /V1は文章表示/);
+	assert.match(readyWithCurtailment.summaryLines.join("\n"), /次のバージョンで対応予定/);
 	assert.match(readyWithCurtailment.summaryLines.join("\n"), /出力抑制率: 10%/);
 
 	const readyWithFinance = evaluateProposalSimulationDraftForTest({

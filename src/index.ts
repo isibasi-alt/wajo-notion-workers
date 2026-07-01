@@ -14578,6 +14578,7 @@ type ProposalSimulationDraft = {
 	runningCost: number;
 	annualNetIncome: number | null;
 	solarDetails: SolarProposalDetails | null;
+	wajoSupport: ProposalWajoSupport;
 	sitePhotos: ProposalSitePhoto[];
 	runningCostBreakdown: RunningCostBreakdownItem[];
 	annualReductionAmount: number | null;
@@ -14707,6 +14708,17 @@ type SolarProposalDetails = {
 type ProposalSitePhoto = {
 	url: string;
 	name: string;
+};
+
+type ProposalWajoSupport = {
+	accidentStatus: string;
+	maintenanceRank: string;
+	warrantyRank: string;
+	maintenanceSummary: string;
+	warrantyComment: string;
+	remainingRisk: string;
+	checkedItems: string[];
+	hasConcreteCheck: boolean;
 };
 
 type ProposalKind = "corporate" | "individual" | "esg" | "gridBattery";
@@ -16491,6 +16503,7 @@ function buildSalesProposalEnablementSections(
 		`DSCR: ${finance?.dscr !== null && finance?.dscr !== undefined ? trimTrailingZeros(finance.dscr) : "借入なし/未算出"}`,
 		`税効果: ${finance ? formatYen(finance.taxBenefit) : "未算出"}`,
 		`経済メリット: ${finance ? formatYen(finance.economicBenefit) : "未算出"}`,
+		`和上確認: ${buildProposalWajoCompactLine(draft.wajoSupport)}`,
 	].join("\n");
 	const talkDraft = [
 		"冒頭:",
@@ -16502,8 +16515,8 @@ function buildSalesProposalEnablementSections(
 		finance
 			? `3. その上で、融資・税効果込みでは NPV ${finance.projectNpv !== null ? formatYen(finance.projectNpv) : "未算出"} / IRR ${finance.projectIrr !== null ? `${trimTrailingZeros(finance.projectIrr)}%` : "未算出"} / 経済メリット ${formatYen(finance.economicBenefit)} として見ます。`
 			: "3. 融資・税効果・B/S情報が入れば、F/CシミュレーションとしてNPV・IRR・税効果まで出せます。",
-		`4. 設備面は ${equipmentLine} を根拠に確認します。`,
-		`5. 最後に、和上が見た整備・保証材料を確認し、残リスクを隠さず説明します。`,
+		`4. 設備面は ${equipmentLine} を根拠に確認します。パネル補足は ${details?.panelPublicComment || "未入力"}、PCS補足は ${details?.powerConditionerPublicComment || "未入力"} です。`,
+		`5. 最後に、和上が見た整備・保証材料として ${buildProposalWajoCompactLine(draft.wajoSupport)} を確認し、残リスク ${draft.wajoSupport.remainingRisk || "未入力"} を隠さず説明します。`,
 	].join("\n");
 	const objectionHandling = [
 		"反論: 利回りだけ見ると迷う。",
@@ -16528,6 +16541,7 @@ function buildSalesProposalEnablementSections(
 				`税効果後CF: ${formatYen(finance.afterTaxCashflow)} / DSCR ${finance.dscr !== null ? trimTrailingZeros(finance.dscr) : "借入なし"} / 購入タイミング ${finance.timingRank}`,
 				`B/S提案: ${rubricSummary} / ${finance.salesRubric.recommendedModel} / ${finance.salesRubric.recommendedLocation}`,
 				`営業ひと言: ${finance.salesRubric.killerPhrase}`,
+				`和上確認: ${buildProposalWajoCompactLine(draft.wajoSupport)} / 残リスク ${draft.wajoSupport.remainingRisk || "未入力"}`,
 		  ].join("\n")
 		: "ファイナンス情報未入力。金利、借入額、返済期間、税率、B/S3指標が入るとF/Cシミュレーションとして説明できます。";
 	return {
@@ -16545,40 +16559,66 @@ function buildWajoWarrantyMemoFromProposalProperties(properties: Record<string, 
 	memo: string;
 	hasConcreteWajoCheck: boolean;
 } {
-	const accident = readFirstTextByAliases(properties, ["事故歴判定", "事故歴"]);
+	const support = readProposalWajoSupport(properties);
+	const lines = [
+		`事故歴判定: ${support.accidentStatus || "未確認"}`,
+		`和上整備判定: ${support.maintenanceRank || "未確認"}`,
+		`保証判定: ${support.warrantyRank || "要確認"}`,
+		support.maintenanceSummary ? `整備サマリー: ${support.maintenanceSummary}` : "整備サマリー: 未入力",
+		support.warrantyComment ? `和上保証コメント: ${support.warrantyComment}` : "和上保証コメント: 未入力",
+		support.remainingRisk ? `残リスク: ${support.remainingRisk}` : "残リスク: 未入力",
+		support.checkedItems.length > 0 ? `実施チェック: ${support.checkedItems.join(" / ")}` : "実施チェック: 草刈り・電気点検・パネル清掃・地盤調査は未確認",
+		"説明方針: 和上が確認・整備した事実だけを強く言い、未確認部分は未確認として出します。",
+	];
+	return {
+		memo: lines.join("\n"),
+		hasConcreteWajoCheck: support.hasConcreteCheck,
+	};
+}
+
+function readProposalWajoSupport(properties: Record<string, unknown>): ProposalWajoSupport {
+	const accidentStatus = readFirstTextByAliases(properties, ["事故歴判定", "事故歴"]);
 	const maintenanceRank = readFirstTextByAliases(properties, ["和上整備判定", "整備判定"]);
 	const warrantyRank = readFirstTextByAliases(properties, ["保証判定"]);
 	const maintenanceSummary = readFirstTextByAliases(properties, ["和上整備サマリー", "整備サマリー"]);
 	const warrantyComment = readFirstTextByAliases(properties, ["和上保証コメント", "和上保証・整備コメント"]);
 	const remainingRisk = readFirstTextByAliases(properties, ["残リスク", "未対策事項"]);
-	const checked = [
+	const checkedItems = [
 		readFirstTextByAliases(properties, ["草刈り実施"]),
 		readFirstTextByAliases(properties, ["電気点検実施"]),
 		readFirstTextByAliases(properties, ["パネル清掃実施"]),
 		readFirstTextByAliases(properties, ["地盤調査実施"]),
 	].filter(Boolean);
-	const lines = [
-		`事故歴判定: ${accident || "未確認"}`,
-		`和上整備判定: ${maintenanceRank || "未確認"}`,
-		`保証判定: ${warrantyRank || "要確認"}`,
-		maintenanceSummary ? `整備サマリー: ${maintenanceSummary}` : "整備サマリー: 未入力",
-		warrantyComment ? `和上保証コメント: ${warrantyComment}` : "和上保証コメント: 未入力",
-		remainingRisk ? `残リスク: ${remainingRisk}` : "残リスク: 未入力",
-		checked.length > 0 ? `実施チェック: ${checked.join(" / ")}` : "実施チェック: 草刈り・電気点検・パネル清掃・地盤調査は未確認",
-		"説明方針: 和上が確認・整備した事実だけを強く言い、未確認部分は未確認として出します。",
-	];
 	return {
-		memo: lines.join("\n"),
-		hasConcreteWajoCheck: Boolean(
-			accident ||
+		accidentStatus,
+		maintenanceRank,
+		warrantyRank,
+		maintenanceSummary,
+		warrantyComment,
+		remainingRisk,
+		checkedItems,
+		hasConcreteCheck: Boolean(
+			accidentStatus ||
 			maintenanceRank ||
 			warrantyRank ||
 			maintenanceSummary ||
 			warrantyComment ||
 			remainingRisk ||
-			checked.length > 0
+			checkedItems.length > 0
 		),
 	};
+}
+
+function buildProposalWajoCompactLine(support: ProposalWajoSupport): string {
+	const parts = [
+		`事故歴 ${support.accidentStatus || "未確認"}`,
+		`整備 ${support.maintenanceRank || "未確認"}`,
+		`保証 ${support.warrantyRank || "要確認"}`,
+	];
+	if (support.checkedItems.length > 0) {
+		parts.push(`実施 ${support.checkedItems.join(" / ")}`);
+	}
+	return parts.join(" / ");
 }
 
 function buildProposalEnablementMissingNotes(
@@ -17938,6 +17978,8 @@ async function buildProposalSimulationPdfBytes(
 			["連系開始日 / 稼働年数", details ? `${details.gridConnectionDate} / ${formatOperationYearsForPdf(details.operationYears)}` : "未入力"],
 			["パネルひとこと", details?.panelPublicComment || "未入力"],
 			["PCSひとこと", details?.powerConditionerPublicComment || "未入力"],
+			["和上確認", buildProposalWajoCompactLine(draft.wajoSupport)],
+			["残リスク", draft.wajoSupport.remainingRisk || "未入力"],
 		]);
 	}
 
@@ -18193,6 +18235,7 @@ function buildProposalFinanceSummaryLines(draft: ProposalSimulationDraft): strin
 			"借入条件、税率、償却前提が未入力のため、ファイナンス要約は暫定表示です。",
 			`販売価格 ${formatOptionalYen(draft.salePrice)} / 年間手残り ${formatOptionalYen(draft.annualNetIncome)}`,
 			`想定利回り ${draft.expectedYield !== null ? `${trimTrailingZeros(draft.expectedYield)}%` : "算出不可"} / 想定回収 ${draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"}`,
+			`和上確認 ${buildProposalWajoCompactLine(draft.wajoSupport)}`,
 		];
 	}
 	const finance = draft.financeSimulation;
@@ -18208,6 +18251,7 @@ function buildProposalFinanceSummaryLines(draft: ProposalSimulationDraft): strin
 		debtLine,
 		`税効果 ${formatYen(finance.taxBenefit)} / 税引後CF ${formatYen(finance.afterTaxCashflow)} / DSCR ${dscrLabel}`,
 		`経済メリット（売電 + 税効果） ${formatYen(finance.economicBenefit)} / 減価償却年数 ${trimTrailingZeros(finance.depreciationYears)}年`,
+		`和上確認 ${buildProposalWajoCompactLine(draft.wajoSupport)} / 残リスク ${draft.wajoSupport.remainingRisk || "未入力"}`,
 	];
 }
 
@@ -18284,7 +18328,7 @@ function buildProposalCoverSafeRows(draft: ProposalSimulationDraft): Array<[stri
 		["売電制度", details ? `${details.fitFipType} / ${formatDecimalForPdf(details.unitPrice, 2)}円/kWh / 残存${formatDecimalForPdf(details.remainingSalesYears, 1)}年` : "未入力"],
 		["稼働状況", details ? `連系開始日 ${details.gridConnectionDate} / 稼働年数 ${formatOperationYearsForPdf(details.operationYears)}` : "未入力"],
 		["出力抑制前提", formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)],
-		["所在地 / エリア", details ? `${details.location} / ${details.powerArea}` : "未入力"],
+		["和上確認", buildProposalWajoCompactLine(draft.wajoSupport)],
 	]);
 }
 
@@ -18426,11 +18470,12 @@ function buildProposalInsightLines(draft: ProposalSimulationDraft): string[] {
 	const taxLine = draft.financeSimulation
 		? `税務と返済: 年間償却 ${formatYen(draft.financeSimulation.annualDepreciation)} / 税効果 ${formatYen(draft.financeSimulation.taxBenefit)} / DSCR ${draft.financeSimulation.dscr !== null ? trimTrailingZeros(draft.financeSimulation.dscr) : "未入力"}`
 		: "税務と返済: 借入条件、税率、償却前提を入れると税引後キャッシュフローまで出力できます。";
+	const wajoLine = `和上確認: ${buildProposalWajoCompactLine(draft.wajoSupport)} / 残リスク ${draft.wajoSupport.remainingRisk || "未入力"}`;
 	const nextActionLine =
 		draft.proposalKind === "gridBattery"
 			? "次アクション: 系統・補助金・運用条件を詰めて、事業化可否を人間が最終判定します。"
 			: "次アクション: 決算書3指標、融資条件、設備資料を揃えて、社内決裁と金融機関説明に耐える最終版へ進めます。";
-	return [timingLine, bsLine, incomeLine, taxLine, nextActionLine];
+	return [timingLine, bsLine, incomeLine, taxLine, wajoLine, nextActionLine];
 }
 
 async function buildResidentDocumentPdfBytes(
@@ -18632,6 +18677,10 @@ function buildProposalPdfPageTwoLines(draft: ProposalSimulationDraft): string[] 
 	const timingFloorLine = draft.financeSimulation
 		? `Cを下回らない理由: ${draft.financeSimulation.timingFloorReason}`
 		: "";
+	const wajoLine = `和上確認: ${buildProposalWajoCompactLine(draft.wajoSupport)}`;
+	const riskLine = draft.wajoSupport.remainingRisk
+		? `残リスク: ${draft.wajoSupport.remainingRisk}`
+		: "";
 	return nonEmptyLines([
 		details
 			? `所在地: ${pdfSafeValue(details.location, "Notionで確認")} / 電力会社エリア: ${pdfSafeValue(details.powerArea, "Notionで確認")} / 区分: ${details.voltageClass || englishVoltageClass(details.voltageClass)}`
@@ -18656,6 +18705,8 @@ function buildProposalPdfPageTwoLines(draft: ProposalSimulationDraft): string[] 
 		timingReasonLine,
 		timingUpperGapLine,
 		timingFloorLine,
+		wajoLine,
+		riskLine,
 		maintenanceBreakdown,
 		"リスク注記: 発電量変動、出力抑制、保険免責、設備故障、融資条件、将来の解体・廃棄費用は提出前に必ず開示します。",
 		"税務注記: 本資料は提案用の試算です。税務判断は購入法人の決算内容と税理士確認を前提に最終確定します。",
@@ -19380,6 +19431,7 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 	const solarDetails = isGridBattery
 		? null
 		: buildSolarProposalDetails(properties, unitPrice);
+	const wajoSupport = readProposalWajoSupport(properties);
 	const fitRemainingYears = isGridBattery
 		? readFirstNumberByAliases(properties, [
 				"残存FIT年数",
@@ -19467,6 +19519,7 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 			runningCost,
 			annualNetIncome: null,
 			solarDetails,
+			wajoSupport,
 			sitePhotos,
 			runningCostBreakdown: runningCostInput.breakdown,
 			annualReductionAmount: null,
@@ -19558,6 +19611,7 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 		co2ReductionTons,
 		subsidyAmount,
 		solarDetails,
+		wajoSupport,
 		runningCostBreakdown: runningCostInput.breakdown,
 	});
 
@@ -19579,6 +19633,7 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 		runningCost,
 		annualNetIncome,
 		solarDetails,
+		wajoSupport,
 		sitePhotos,
 		runningCostBreakdown: runningCostInput.breakdown,
 		annualReductionAmount,
@@ -20610,6 +20665,7 @@ function buildTwoPageProposalLines(input: {
 	co2ReductionTons: number | null;
 	subsidyAmount: number | null;
 	solarDetails: SolarProposalDetails | null;
+	wajoSupport: ProposalWajoSupport;
 	runningCostBreakdown: RunningCostBreakdownItem[];
 }): { pageOneLines: string[]; pageTwoLines: string[] } {
 	const yieldText = input.expectedYield !== null ? `${input.expectedYield}%` : "算出不可";
@@ -20637,6 +20693,8 @@ function buildTwoPageProposalLines(input: {
 	const equipmentLines = buildSolarEquipmentLines(input.solarDetails);
 	const revenueLine = buildSolarRevenueLine(input.solarDetails);
 	const maintenanceLine = buildMaintenanceBreakdownLine(input.runningCostBreakdown);
+	const wajoLine = `和上確認: ${buildProposalWajoCompactLine(input.wajoSupport)}`;
+	const wajoRiskLine = input.wajoSupport.remainingRisk ? `残リスク: ${input.wajoSupport.remainingRisk}` : "";
 	const mainMetricsLine =
 		`通常営業シミュレーション: 販売価格 ${formatYen(input.salePrice)} / 残存FIT年数 ${input.fitRemainingYears !== null ? `${trimTrailingZeros(input.fitRemainingYears)}年` : "未入力"} / ` +
 		`出力抑制前提 ${formatCurtailmentAssumptionLabel(input.curtailmentScenario, input.curtailmentRate)} / ` +
@@ -20659,6 +20717,8 @@ function buildTwoPageProposalLines(input: {
 				...equipmentLines,
 				revenueLine,
 				maintenanceLine,
+				wajoLine,
+				wajoRiskLine,
 				`実質収支: 年間維持費（ランニングコスト） ${formatYen(input.runningCost)} を控除後、年間手残りは ${formatYen(input.annualNetIncome)}、回収年数は ${paybackText} です。`,
 				...financeLines,
 				"発電量変動、出力抑制、保険免責、設備故障、将来の廃棄費用積立を前提に、都合の良い数字だけで判断しない資料にします。",
@@ -20682,6 +20742,8 @@ function buildTwoPageProposalLines(input: {
 				...equipmentLines,
 				revenueLine,
 				maintenanceLine,
+				wajoLine,
+				wajoRiskLine,
 				`経済効果: 年間手残り ${formatYen(input.annualNetIncome)} / 回収年数 ${paybackText}`,
 				...financeLines,
 				"環境価値や非化石価値の主張可否は、契約形態、証書、トラッキング、電力利用形態により変わります。",
@@ -20703,6 +20765,8 @@ function buildTwoPageProposalLines(input: {
 			...equipmentLines,
 			revenueLine,
 			maintenanceLine,
+			wajoLine,
+			wajoRiskLine,
 			`実質収支: 年間維持費（ランニングコスト） ${formatYen(input.runningCost)} を控除後、年間手残りは ${formatYen(input.annualNetIncome)}、回収年数は ${paybackText} です。`,
 			...financeLines,
 			"税務前提: 土地は償却対象外、システム本体は17年償却、権利代は5年償却としてシミュレーションします。",
