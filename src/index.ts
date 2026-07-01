@@ -1171,6 +1171,7 @@ const DEFAULT_SOLAR_LOAN_YEARS = 15;
 type NotionClient = {
 	dataSources: {
 		query: (args: Record<string, unknown>) => Promise<QueryResponse>;
+		retrieve?: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
 	};
 	pages: {
 		create: (args: Record<string, unknown>) => Promise<Page>;
@@ -15176,6 +15177,15 @@ const PROJECT_DOCUMENT_REQUEST_STATUS_ALIASES: Record<ProjectDocumentRequestKind
 	resident: ["資料作成状況", "資料ステータス", "説明会資料ステータス", "進行状況", "進行ステータス"],
 };
 
+const PROJECT_DOCUMENT_REQUEST_DOCUMENT_TYPE_FALLBACKS: Record<
+	ProjectDocumentRequestKind,
+	string[]
+> = {
+	proposal: ["提案書"],
+	finance: ["概要書", "提案書"],
+	resident: ["住民説明会資料", "実務説明会資料"],
+};
+
 function getProjectDocumentRequestPropertyAliases(
 	kind: ProjectDocumentRequestKind,
 	propertyName: string,
@@ -15188,19 +15198,50 @@ function getProjectDocumentRequestPropertyAliases(
 }
 
 function buildProjectDocumentRequestProperties(
+	dataSourceProperties: Record<string, unknown>,
 	kind: ProjectDocumentRequestKind,
 	statusProperty: string,
 	patches: Record<string, SafePatch>,
 ): Record<string, Record<string, unknown>> {
 	const properties: Record<string, Record<string, unknown>> = {};
 	for (const [propertyName, patch] of Object.entries(patches)) {
-		const aliases = [propertyName, ...getProjectDocumentRequestPropertyAliases(kind, propertyName, statusProperty)];
-		const propertyValue = safePatchToCreatePropertyValue(propertyName, patch);
-		for (const alias of aliases) {
-			properties[alias] = propertyValue;
-		}
+		const resolvedName = resolveProjectDocumentRequestPropertyName(
+			dataSourceProperties,
+			kind,
+			propertyName,
+			statusProperty,
+		);
+		if (!resolvedName) continue;
+		const propertyValue = safePatchToCreatePropertyValueForSchema(
+			dataSourceProperties[resolvedName],
+			patch,
+		);
+		if (!propertyValue) continue;
+		properties[resolvedName] = propertyValue;
 	}
 	return properties;
+}
+
+function resolveProjectDocumentRequestPropertyName(
+	properties: Record<string, unknown>,
+	kind: ProjectDocumentRequestKind,
+	propertyName: string,
+	statusProperty: string,
+): string | undefined {
+	const aliases = [
+		propertyName,
+		...getProjectDocumentRequestPropertyAliases(kind, propertyName, statusProperty),
+	];
+	for (const alias of aliases) {
+		if (properties[alias]) return alias;
+	}
+	if (propertyName === "案件名") {
+		return Object.entries(properties).find(([, value]) => {
+			if (!value || typeof value !== "object") return false;
+			return (value as Record<string, unknown>).type === "title";
+		})?.[0];
+	}
+	return undefined;
 }
 
 function buildProjectDocumentRequestExistingPropertyPatch(
@@ -15263,6 +15304,73 @@ function safePatchToCreatePropertyValue(propertyName: string, patch: SafePatch):
 		default:
 			return {};
 	}
+}
+
+function safePatchToCreatePropertyValueForSchema(
+	propertyDefinition: unknown,
+	patch: SafePatch,
+): Record<string, unknown> | null {
+	if (!propertyDefinition || typeof propertyDefinition !== "object") {
+		return safePatchToCreatePropertyValue("", patch);
+	}
+	const propertyType = (propertyDefinition as Record<string, unknown>).type;
+	switch (patch.kind) {
+		case "text":
+			return propertyType === "title" ? title(patch.value) : richText(patch.value);
+		case "text-with-revision":
+			return propertyType === "title" ? title(patch.newValue) : richText(patch.newValue);
+		case "select":
+			if (propertyType === "status") return { status: { name: patch.value } };
+			return select(patch.value);
+		case "number":
+			return { number: patch.value };
+		case "date":
+			return { date: { start: patch.value } };
+		case "checkbox":
+			return { checkbox: patch.value };
+		case "multi_select":
+			return { multi_select: patch.values.filter(Boolean).map((value) => ({ name: value })) };
+		case "people":
+			return { people: patch.ids.map((id) => ({ object: "user", id })) };
+		case "relation":
+			return { relation: patch.ids.map((id) => ({ id })) };
+		case "clear":
+			return {};
+		default:
+			return null;
+	}
+}
+
+function resolveProjectDocumentRequestDocumentType(
+	dataSourceProperties: Record<string, unknown>,
+	kind: ProjectDocumentRequestKind,
+	statusProperty: string,
+	requestedType: string,
+): string {
+	const resolvedName = resolveProjectDocumentRequestPropertyName(
+		dataSourceProperties,
+		kind,
+		"資料種別",
+		statusProperty,
+	);
+	if (!resolvedName) return requestedType;
+	const property = dataSourceProperties[resolvedName];
+	if (!property || typeof property !== "object") return requestedType;
+	const propertyRecord = property as Record<string, unknown>;
+	const options =
+		propertyRecord.type === "select" &&
+		propertyRecord.select &&
+		typeof propertyRecord.select === "object" &&
+		Array.isArray((propertyRecord.select as Record<string, unknown>).options)
+			? ((propertyRecord.select as Record<string, unknown>).options as Array<Record<string, unknown>>)
+					.map((option) => (typeof option.name === "string" ? option.name : ""))
+					.filter(Boolean)
+			: [];
+	if (options.length === 0 || options.includes(requestedType)) return requestedType;
+	const fallback = PROJECT_DOCUMENT_REQUEST_DOCUMENT_TYPE_FALLBACKS[kind].find((value) =>
+		options.includes(value),
+	);
+	return fallback ?? requestedType;
 }
 
 function propertyToSafePatchFromCreateValue(value: Record<string, unknown>): SafePatch | null {
@@ -15468,6 +15576,18 @@ async function processProjectDocumentRequest(
 	kind: ProjectDocumentRequestKind,
 ): Promise<ProjectDocumentRequestResult> {
 	const config = PROJECT_DOCUMENT_REQUEST_CONFIGS[kind];
+	const requestDataSource = notion.dataSources.retrieve
+		? await notion.dataSources.retrieve({
+				data_source_id: PROPOSAL_REQUEST_DATA_SOURCE_ID,
+			})
+		: { properties: {} };
+	const requestDataSourceProperties = (requestDataSource.properties ?? {}) as Record<string, unknown>;
+	const effectiveDocumentType = resolveProjectDocumentRequestDocumentType(
+		requestDataSourceProperties,
+		kind,
+		config.statusProperty,
+		config.documentType,
+	);
 	const source = await resolveProjectDocumentSource(notion, input.projectPageId);
 	const projectPage = source.projectPage;
 	const equipmentPage =
@@ -15489,7 +15609,7 @@ async function processProjectDocumentRequest(
 	const existingRequest = await findExistingProjectDocumentRequest(
 		notion,
 		projectPage.id,
-		config.documentType,
+		effectiveDocumentType,
 	);
 	if (existingRequest) {
 		const message = `既存の${config.createdLabel}があります: ${projectName}`;
@@ -15535,7 +15655,7 @@ async function processProjectDocumentRequest(
 	const requestMemo = [config.memo, missingMessage].filter(Boolean).join("\n");
 	const writePatches: Record<string, SafePatch> = {
 		案件名: { kind: "text", value: requestTitle },
-		資料種別: { kind: "select", value: config.documentType },
+		資料種別: { kind: "select", value: effectiveDocumentType },
 		[config.statusProperty]: { kind: "select", value: config.statusValue },
 		関連案件: { kind: "relation", ids: [projectPage.id] },
 		...(equipmentPage
@@ -15560,6 +15680,7 @@ async function processProjectDocumentRequest(
 		}, {} as Record<string, SafePatch>),
 	};
 	const requestProperties = buildProjectDocumentRequestProperties(
+		requestDataSourceProperties,
 		kind,
 		config.statusProperty,
 		writePatches,

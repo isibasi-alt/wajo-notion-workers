@@ -29,6 +29,33 @@ function numberProp(value: number | null = null) {
 	return { type: "number", number: value };
 }
 
+function proposalRequestDataSourceSchema() {
+	return {
+		properties: {
+			案件名: { type: "title", title: {} },
+			資料種別: {
+				type: "select",
+				select: {
+					options: [
+						{ name: "提案書" },
+						{ name: "概要書" },
+						{ name: "住民説明会資料" },
+					],
+				},
+			},
+			シミュレーションステータス: { type: "select", select: { options: [{ name: "入力待ち" }] } },
+			資料作成ステータス: { type: "select", select: { options: [{ name: "入力待ち" }] } },
+			関連案件: { type: "relation", relation: {} },
+			関連設備詳細: { type: "relation", relation: {} },
+			資料作成メモ: { type: "rich_text", rich_text: {} },
+			周知方法: {
+				type: "select",
+				select: { options: [{ name: "所有者変更周知" }] },
+			},
+		},
+	};
+}
+
 function inquiryPage(projectIds: string[] = []) {
 	return {
 		id: "inquiry-1",
@@ -115,6 +142,7 @@ async function main() {
 				queries.push(args);
 				return { results: [] };
 			},
+			retrieve: async () => proposalRequestDataSourceSchema(),
 		},
 		blocks: {
 			children: {
@@ -250,6 +278,7 @@ async function main() {
 				}
 				return { results: [] };
 			},
+			retrieve: async () => proposalRequestDataSourceSchema(),
 		},
 	};
 
