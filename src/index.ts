@@ -2201,7 +2201,7 @@ type ProjectDocumentSource = {
 	sourceEquipmentPage: Page | null;
 };
 
-type ProjectDocumentRequestKind = "proposal" | "resident";
+type ProjectDocumentRequestKind = "proposal" | "resident" | "finance";
 
 type ProjectDocumentRequestConfig = {
 	kind: ProjectDocumentRequestKind;
@@ -3910,6 +3910,28 @@ worker.tool("processProjectProposalRequestById", {
 	},
 });
 
+worker.tool("processProjectFinanceRequestById", {
+	title: "WAJO 案件からファイナンスシミュレーション依頼作成",
+	description:
+		"案件管理DBのページIDから営業資料作成依頼DBにファイナンスシミュレーション依頼を1件作成し、案件側へリレーションで戻します。",
+	schema: j.object({
+		projectPageId: j.string().describe("案件管理DBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		projectPageId: j.string(),
+		requestPageId: j.string().nullable(),
+		action: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ projectPageId, dryRun }, { notion }) => {
+		return processProjectFinanceRequest(
+			{ projectPageId, dryRun },
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
 worker.tool("processProjectResidentDocumentRequestById", {
 	title: "WAJO 案件から説明会用資料依頼作成",
 	description:
@@ -5422,6 +5444,28 @@ worker.webhook("processProjectProposalRequestWebhook", {
 				);
 			}
 			const result = await processProjectProposalRequest(
+				{ projectPageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+			if (result.action === "needs-input") throw new Error(result.message);
+		}
+	},
+});
+
+worker.webhook("processProjectFinanceRequestWebhook", {
+	title: "WAJO 案件からファイナンスシミュレーション依頼作成Webhook",
+	description:
+		"案件管理DBのページIDを受け取り、営業資料作成依頼DBにファイナンスシミュレーション依頼を作成して案件側へ紐づけます。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const projectPageId = extractProjectPageIdFromWebhook(body);
+			if (!projectPageId) {
+				throw new Error(
+					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
+				);
+			}
+			const result = await processProjectFinanceRequest(
 				{ projectPageId, dryRun: false },
 				notion as unknown as NotionClient,
 			);
@@ -15049,6 +15093,17 @@ const PROJECT_DOCUMENT_REQUEST_CONFIGS: Record<
 			"次は資料作成依頼側で不足項目を補完し、PDF提案化してください。",
 		memo: "案件管理DBから作成しました。必要項目を補完してPDF提案化してください。",
 	},
+	finance: {
+		kind: "finance",
+		documentType: "ファイナンスシミュレーション",
+		requestTitleSuffix: "ファイナンスシミュレーション",
+		statusProperty: "シミュレーションステータス",
+		statusValue: "入力待ち",
+		createdLabel: "ファイナンスシミュレーション依頼",
+		nextActionMessage:
+			"次は資料作成依頼側で不足項目を補完し、ファイナンスシミュレーションを実行してください。",
+		memo: "案件管理DBから作成しました。必要項目を補完してファイナンス計算に進んでください。",
+	},
 	resident: {
 		kind: "resident",
 		documentType: "住民説明会資料",
@@ -15117,6 +15172,7 @@ const PROJECT_DOCUMENT_REQUEST_BASE_PROPERTY_ALIASES: Record<string, string[]> =
 
 const PROJECT_DOCUMENT_REQUEST_STATUS_ALIASES: Record<ProjectDocumentRequestKind, string[]> = {
 	proposal: ["シミュレーション進捗", "シミュレーション状況", "提案ステータス", "提案進捗", "進行ステータス"],
+	finance: ["シミュレーション進捗", "シミュレーション状況", "ファイナンス進捗", "ファイナンス状況", "提案進捗", "進行ステータス"],
 	resident: ["資料作成状況", "資料ステータス", "説明会資料ステータス", "進行状況", "進行ステータス"],
 };
 
@@ -15283,6 +15339,13 @@ async function processProjectProposalRequest(
 	return processProjectDocumentRequest(input, notion, "proposal");
 }
 
+async function processProjectFinanceRequest(
+	input: ProjectProposalRequestInput,
+	notion: NotionClient,
+): Promise<ProjectDocumentRequestResult> {
+	return processProjectDocumentRequest(input, notion, "finance");
+}
+
 async function processProjectResidentDocumentRequest(
 	input: ProjectProposalRequestInput,
 	notion: NotionClient,
@@ -15415,7 +15478,7 @@ async function processProjectDocumentRequest(
 	const readiness = evaluateProjectDocumentRequestReadiness(documentSourcePage, kind);
 	const missingMessage = readiness.missingField
 		? buildSequentialMissingMessage(
-				kind === "proposal" ? "シミュレーション作成" : "説明会用資料作成",
+				kind === "resident" ? "説明会用資料作成" : "シミュレーション作成",
 				readiness.missingField,
 				readiness.nextRequiredFields,
 			)
@@ -15576,7 +15639,7 @@ async function finalizeProjectDocumentRequest(
 ): Promise<ProjectDocumentGenerationResult> {
 	try {
 		const result =
-			kind === "proposal"
+			(kind === "proposal" || kind === "finance")
 				? await processProposalSimulation({ pageId: requestPageId, dryRun: false }, notion)
 				: await processResidentDocument({ pageId: requestPageId, dryRun: false }, notion);
 		const action = result.action === "needs-input" || result.action === "error"
@@ -15601,7 +15664,7 @@ function evaluateProjectDocumentRequestReadiness(
 	nextRequiredFields: string[];
 	prefillProperties: Record<string, Record<string, unknown>>;
 } {
-	if (kind === "proposal") {
+	if (kind === "proposal" || kind === "finance") {
 		const draft = evaluateProposalSimulationDraft(projectPage);
 		return {
 			missingField: draft.missingField,
