@@ -5725,9 +5725,9 @@ worker.webhook("processInquiryLostWebhook", {
 });
 
 worker.webhook("processProjectLostRequestWebhook", {
-	title: "WAJO 案件失注申請Webhook",
+	title: "WAJO 案件失注報告Webhook",
 	description:
-		"案件管理DBの営業用「失注申請する」ボタンから起動。失注理由必須で、案件は失注確定ではなく失注申請中に止めます。申請事実は全員通知します。",
+		"案件管理DBの営業用「失注報告する」ボタンから起動。失注理由必須で、案件はすぐに失注確定せず確認待ちへ進め、報告事実は全員通知します。",
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			const body = event.body as Record<string, unknown>;
@@ -32859,12 +32859,14 @@ async function processProjectLostRequest(
 ): Promise<{ action: string; message: string }> {
 	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
 	const projectName = text(projectPage.properties?.["案件名"]) || "案件";
-	const reasons = normalizeLostReasons(options.reason);
+	const reasons = normalizeLostReasons(
+		options.reason || text(projectPage.properties?.["失注理由"]),
+	);
 	if (reasons.length === 0) {
 		await createPageComment(
 			notion,
 			projectPage.id,
-			"⚠️ 失注理由が未入力のため、失注申請を出していません。失注理由を選んでからもう一度実行してください。",
+			"⚠️ 失注理由が未入力のため、失注報告を出していません。失注理由を選んでからもう一度実行してください。",
 		);
 		return {
 			action: "needs-lost-reason",
@@ -32873,16 +32875,17 @@ async function processProjectLostRequest(
 	}
 
 	const previousPhase = projectLostPreviousPhase(projectPage);
+	const effectiveMemo = options.memo || text(projectPage.properties?.["失注理由メモ"]);
 	const memo = buildLostAuditMemo({
-		actionLabel: "案件失注申請",
+		actionLabel: "案件失注報告",
 		reasons,
-		memo: options.memo,
+		memo: effectiveMemo,
 		previousPhase,
 	});
 	const patches: Record<string, SafePatch> = {
-		ステータス: { kind: "select", value: "失注申請中" },
+		ステータス: { kind: "select", value: "⏳ 確認待ち" },
 		失注理由: { kind: "multi_select", values: reasons },
-		失注理由メモ: { kind: "text", value: options.memo || lostReasonText(reasons) },
+		失注理由メモ: { kind: "text", value: effectiveMemo || lostReasonText(reasons) },
 		失注前フェーズ: { kind: "text", value: previousPhase },
 		失注申請状態: { kind: "select", value: "申請中" },
 		失注申請メモ: { kind: "text", value: memo },
@@ -32899,15 +32902,15 @@ async function processProjectLostRequest(
 		notion,
 		projectPage.id,
 		[
-			`📨 失注申請が出ました: ${projectName}`,
+			`📨 失注報告が出ました: ${projectName}`,
 			`理由: ${lostReasonText(reasons)}`,
-			options.memo ? `メモ: ${options.memo}` : "",
-			"この時点では正式な失注ではありません。マネージャー承認後に `❌ 失注` へ確定します。",
+			effectiveMemo ? `メモ: ${effectiveMemo}` : "",
+			"この時点では正式な失注ではありません。案件は `⏳ 確認待ち` に進み、マネージャー確認後に `❌ 失注` へ確定します。",
 		].filter(Boolean).join("\n"),
 	);
 	return {
 		action: "requested",
-		message: "案件を失注申請中にし、マネージャー承認待ちとして記録しました。",
+		message: "案件を確認待ちに進め、失注報告として記録しました。",
 	};
 }
 

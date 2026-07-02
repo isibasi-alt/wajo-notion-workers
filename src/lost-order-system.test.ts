@@ -75,6 +75,21 @@ function projectPage(status = "📋 提案中", lostRequestStatus: string | null
 	};
 }
 
+function projectPageWithLostReason(
+	reasons: string[],
+	memo = "採算条件の折り合いがつかなかったため。",
+) {
+	const page = projectPage();
+	return {
+		...page,
+		properties: {
+			...page.properties,
+			失注理由: multiSelectProp(reasons),
+			失注理由メモ: richTextProp(memo),
+		},
+	};
+}
+
 function confirmedLostProjectPage() {
 	const page = projectPage("❌ 失注", "承認済");
 	return {
@@ -171,7 +186,7 @@ async function main() {
 		assert.equal(result.action, "requested");
 		assert.equal(
 			((updates[0]!.properties as Record<string, unknown>).ステータス as { select: { name: string } }).select.name,
-			"失注申請中",
+			"⏳ 確認待ち",
 		);
 		assert.equal(
 			((updates[0]!.properties as Record<string, unknown>).失注申請状態 as { select: { name: string } }).select.name,
@@ -182,6 +197,37 @@ async function main() {
 			"❌ 失注",
 		);
 		assert.equal(comments.length, 1, "案件失注申請は全員通知のコメントを残す");
+	}
+
+	{
+		const { notion, updates, comments } = createNotionStub(
+			projectPageWithLostReason(["採算が合わない"]),
+		);
+		const result = await processProjectLostRequestForTest(
+			"project-1",
+			notion as never,
+			{
+				reason: "",
+				memo: "",
+				triggerUserId: "user-1",
+			},
+		);
+
+		assert.equal(result.action, "requested");
+		assert.equal(
+			((updates[0]!.properties as Record<string, unknown>).ステータス as { select: { name: string } }).select.name,
+			"⏳ 確認待ち",
+		);
+		assert.deepEqual(
+			((updates[0]!.properties as Record<string, unknown>).失注理由 as { multi_select: Array<{ name: string }> })
+				.multi_select.map((item) => item.name),
+			["採算が合わない"],
+		);
+		assert.match(
+			JSON.stringify((updates[0]!.properties as Record<string, unknown>).失注理由メモ),
+			/採算条件の折り合いがつかなかったため。/,
+		);
+		assert.equal(comments.length, 1, "ページ側の失注理由だけでも失注報告は通る");
 	}
 
 	{
