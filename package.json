@@ -80,6 +80,7 @@
 		"test:credit-check": "tsx src/credit-check.test.ts",
 		"test:business-card-image": "node --import tsx src/business-card-image.test.ts",
 		"test:business-card-talk-pipeline": "node --import tsx src/business-card-talk-pipeline.test.ts",
+		"test:broker-case-creation": "node --import tsx src/broker-case-creation.test.ts",
 		"test:approval-gate": "tsx src/approval-gate.test.ts",
 		"test:approval-stamp": "tsx src/approval-stamp.test.ts"
 	},

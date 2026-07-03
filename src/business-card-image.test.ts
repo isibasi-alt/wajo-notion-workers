@@ -224,7 +224,7 @@ async function main() {
 		assert.ok(json.includes("関係構築中")); // 死蔵させない=働きかけ対象として登録
 		assert.ok(json.includes("要確認")); // 信頼度は人が判断するまで断定しない
 		assert.deepEqual(props["ブローカー一次判定スコア"], { number: 70 });
-		assert.ok(json.includes("routing=broker"));
+		assert.ok(json.includes("判定=社外顧問"));
 		assert.ok(json.includes("紹介契約"));
 		assert.ok(json.includes("ブローカー商事")); // 所属はメモに残る
 		assert.ok(json.includes("090-0000-0000"));
@@ -244,7 +244,7 @@ async function main() {
 		assert.ok(json.includes("仮登録（未採点）"));
 	}
 
-	// 40-59点: broker兆候はあるが60点未満ならlaterに逃がす
+	// 40-59点: 社外顧問兆候はあるが60点未満ならlaterに逃がす
 	{
 		const props = advisor(
 			{
@@ -306,7 +306,7 @@ async function main() {
 		const json = JSON.stringify(props);
 		assert.deepEqual(props["ブローカー一次判定スコア"], { number: 35 });
 		assert.deepEqual(props["ブローカー一次判定結果"], { select: { name: "later" } });
-		assert.ok(json.includes("broker兆候とcompany兆候が混在"));
+		assert.ok(json.includes("社外顧問兆候とcompany兆候が混在"));
 	}
 
 	// 代表肩書があっても、強いbrokerメモがあれば肩書だけで止めない
@@ -351,10 +351,10 @@ async function main() {
 		assert.equal("ブローカー一次判定スコア" in props, false);
 		assert.deepEqual(props["ブローカー一次判定結果"], { select: { name: "later" } });
 		assert.deepEqual(props["次アクション"], { select: { name: "要管理者確認" } });
-		assert.ok(json.includes("broker採点とは別に管理者確認"));
+		assert.ok(json.includes("社外顧問採点とは別に管理者確認"));
 	}
 
-	// 個人リスク系ワードはbrokerスコアとは別枠で管理者確認へ逃がす
+	// 個人リスク系ワードは社外顧問スコアとは別枠で管理者確認へ逃がす
 	{
 		const props = advisor(
 			{
@@ -374,7 +374,7 @@ async function main() {
 		const json = JSON.stringify(props);
 		assert.deepEqual(props["ブローカー一次判定結果"], { select: { name: "later" } });
 		assert.deepEqual(props["次アクション"], { select: { name: "要管理者確認" } });
-		assert.ok(json.includes("broker採点とは別に管理者確認"));
+		assert.ok(json.includes("社外顧問採点とは別に管理者確認"));
 	}
 
 	// 内部注意書きの「反社判定は行わない」はリスク兆候として加点・停止しない
@@ -401,7 +401,7 @@ async function main() {
 		assert.deepEqual(props["ブローカー一次判定スコア"], { number: 70 });
 		assert.deepEqual(props["ブローカー一次判定結果"], { select: { name: "broker" } });
 		assert.deepEqual(props["次アクション"], { select: { name: "要追加調査" } });
-		assert.equal(json.includes("broker採点とは別に管理者確認"), false);
+		assert.equal(json.includes("社外顧問採点とは別に管理者確認"), false);
 	}
 
 	// 連絡先が無ければそのキー自体を作らない(空値でNotionを汚さない)

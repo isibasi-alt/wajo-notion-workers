@@ -179,6 +179,7 @@ function makeNotionForCardCase(companyClosingPoint: string) {
 	} as never;
 
 	const updates: Array<{ page_id: string; properties?: PageProperties }> = [];
+	const comments: Array<Record<string, unknown>> = [];
 	const wrapped = {
 		...notion,
 		pages: {
@@ -188,9 +189,15 @@ function makeNotionForCardCase(companyClosingPoint: string) {
 				return { id: page_id } as Record<string, unknown>;
 			},
 		},
+		comments: {
+			create: async (args: Record<string, unknown>) => {
+				comments.push(args);
+				return {};
+			},
+		},
 	};
 
-	return { notion: wrapped, updates };
+	return { notion: wrapped, updates, comments };
 }
 
 function makeNotionForNewCardCase(params: {
@@ -258,6 +265,7 @@ function makeNotionForNewCardCase(params: {
 	} as never;
 
 	const updates: Array<{ page_id: string; properties?: PageProperties }> = [];
+	const comments: Array<Record<string, unknown>> = [];
 	const wrapped = {
 		...notion,
 		pages: {
@@ -267,9 +275,15 @@ function makeNotionForNewCardCase(params: {
 				return { id: page_id } as Record<string, unknown>;
 			},
 		},
+		comments: {
+			create: async (args: Record<string, unknown>) => {
+				comments.push(args);
+				return {};
+			},
+		},
 	};
 
-		return { notion: wrapped, updates, creates };
+		return { notion: wrapped, updates, creates, comments };
 	}
 
 function makeNotionForCompanyResearchCase(overrides: PageProperties = {}) {
@@ -551,7 +565,12 @@ async function main() {
 		/外部調査・企業マスター高密度化は未実行/,
 	);
 
-	const brokerCase = makeNotionForCardCase("");
+	const brokerCase = makeNotionForNewCardCase({
+		cardCompanyName: "紹介パートナー株式会社",
+		cardName: "社外 顧問",
+		cardRole: "社外顧問",
+		cardEmail: "advisor@example.co.jp",
+	});
 	const brokerResult = await withoutAiKeys(() =>
 		processBusinessCardForTest(
 			{
@@ -565,22 +584,27 @@ async function main() {
 			brokerCase.notion,
 		),
 	);
-	assert.equal(brokerResult.action, "needs-review");
+	assert.equal(brokerResult.action, "external-advisor-registered");
+	assert.equal(brokerCase.creates.length, 1);
+	const brokerAdvisorCreate = brokerCase.creates[0]!;
+	assert.deepEqual(brokerAdvisorCreate.parent, { data_source_id: "de575c80-5e25-41a5-a27d-b1b3d84a0cbd" });
+	assert.equal(selectName(brokerAdvisorCreate.properties["ブローカー一次判定結果"]), "later");
 	const brokerCardUpdate = brokerCase.updates.find(
-		(update) => update.page_id === "card-1" && update.properties?.["名刺AI処理メモ"],
+		(update) => update.page_id === "card-1" && update.properties?.["関連社外顧問"],
 	);
 	assert.ok(brokerCardUpdate);
-	assert.match(
-		richTextFromPatch(brokerCardUpdate!.properties?.["名刺AI処理メモ"]),
-		/【停止理由】/,
+	assert.deepEqual(brokerCardUpdate!.properties?.["関連社外顧問"], {
+		relation: [{ id: "advisor-page-1" }],
+	});
+	assert.equal(
+		brokerCase.updates.some(
+			(update) => update.page_id === "advisor-page-1" && update.properties?.["判定根拠メモ"],
+		),
+		false,
+		"60点未満または停止条件ありなら公開Web調査を書き足さない",
 	);
-	const brokerMemo = richTextFromPatch(brokerCardUpdate!.properties?.["名刺AI処理メモ"]);
-	assert.match(brokerMemo, /社外顧問・ブローカー/);
-	assert.match(brokerMemo, /【ブローカー登録ライン】/);
-	assert.match(brokerMemo, /60点基準はブローカー一次判定ロジックで別途判定/);
-	assert.match(brokerMemo, /情報不足.*broker加点に使わず/);
-	assert.match(brokerMemo, /このWorkerでは自動登録しない/);
-	assert.match(brokerMemo, /反社判定は行わない/);
+	assert.match(JSON.stringify(brokerCase.comments), /公開Web調査を停止しました/);
+	assert.match(JSON.stringify(brokerCase.comments), /打開条件/);
 
 	const brokerDryRunCase = makeNotionForCardCase("");
 	const brokerDryRunResult = await withoutAiKeys(() =>
@@ -645,11 +669,11 @@ async function main() {
 	});
 
 	const advisorPublicResearchCase = makeNotionForNewCardCase({
-		cardCompanyName: "CLUB AMON",
+		cardCompanyName: "紹介パートナー株式会社",
 		cardName: "瀬名 亮",
-		cardRole: "Producer",
+		cardRole: "社外顧問",
 		cardPhone: "06-6225-8098",
-		cardMemo: "紹介者候補。本人一致は未確認。",
+		cardMemo: "第三者案件を紹介する。投資家の知り合いがあり、紹介契約でつなぐだけ。発注権限なし。",
 	});
 	const advisorPublicResearchResult = await withFakePerplexity(
 		[
@@ -894,6 +918,8 @@ async function main() {
 		richTextFromPatch(laterCardUpdate!.properties?.["名刺AI処理メモ"]),
 		/【人が判断する一点】/,
 	);
+	assert.match(JSON.stringify(laterCase.comments), /名刺入口を要確認で停止しました/);
+	assert.match(JSON.stringify(laterCase.comments), /打開するための確認事項/);
 
 	const laterDryRunCase = makeNotionForCardCase("");
 	const laterDryRunResult = await withoutAiKeys(() =>

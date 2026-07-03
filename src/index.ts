@@ -4409,7 +4409,7 @@ worker.tool("processSalesTalkFinalizeByNewsId", {
 worker.webhook("processBusinessCardImageWebhook", {
 	title: "WAJO 名刺画像インテイクWebhook(新ショートカット用)",
 	description:
-		"iPhoneショートカットから名刺画像(base64)＋振り分け＋担当者を受け取り、OCR→名刺ページ作成→振り分け(企業/ブローカー/あとで)→企業連携・A深掘りまで実行します。",
+		"iPhoneショートカットから名刺画像(base64)＋振り分け＋担当者を受け取り、OCR→名刺ページ作成→振り分け(企業/社外顧問/あとで)→企業連携・A深掘りまで実行します。",
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			verifyWebhookSecret(event.headers, event.body);
@@ -4628,9 +4628,9 @@ worker.webhook("processInquiryProjectCreationWebhook", {
 });
 
 worker.webhook("processBrokerActionWebhook", {
-	title: "WAJO ブローカー案件化/預かり登録Webhook",
+	title: "WAJO 社外顧問案件化/預かり登録Webhook",
 	description:
-		"社外顧問DBのボタンから起動。action=case は紹介案件化、action=custody または未指定はブローカー預かり登録として処理します。",
+		"社外顧問DBのボタンから起動。action=case は紹介案件化、action=custody または未指定は社外顧問預かり登録として処理します。",
 	execute: async (events, { notion }) => {
 		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
 		for (const event of events) {
@@ -5915,7 +5915,7 @@ async function processBusinessCard(
 		};
 	}
 
-	if (routing === "broker" && input.registerExternalAdvisor) {
+	if (routing === "broker") {
 		if (input.dryRun) {
 			return {
 				pageId: input.pageId,
@@ -5932,20 +5932,6 @@ async function processBusinessCard(
 			companyId: null,
 			companyName: null,
 			message: `社外顧問DBへ${advisor.created ? "新規登録" : "既存更新"}しました。advisorPageId=${advisor.page.id}`,
-		};
-	}
-
-	if (routing === "broker") {
-		const memo = buildBrokerRegistrationHoldMemo(card, engagementIntent);
-		if (!input.dryRun) {
-			await markCardNeedsReview(notion, card, memo);
-		}
-		return {
-			pageId: input.pageId,
-			action: input.dryRun ? "dry-run" : "needs-review",
-			companyId: null,
-			companyName: null,
-			message: `routing=${routing} / engagement=${engagementIntent} のため企業連携を停止し、ブローカー登録ライン待ちにしました。`,
 		};
 	}
 
@@ -6188,50 +6174,6 @@ function parseBusinessCardOcr(raw: string): BusinessCardOcr | null {
 	}
 }
 export { parseBusinessCardOcr as parseBusinessCardOcrForTest };
-
-function buildBrokerRegistrationHoldMemo(
-	card: {
-		name?: string;
-		companyName?: string;
-		email?: string;
-		phone?: string;
-		address?: string;
-	},
-	engagementIntent: "active" | "save-only",
-): string {
-	const valueOrUnknown = (value: string | undefined) => {
-		const trimmed = String(value ?? "").trim();
-		return trimmed || "未取得";
-	};
-	const candidateLines = [
-		`氏名: ${valueOrUnknown(card.name)}`,
-		`会社名/所属: ${valueOrUnknown(card.companyName)}`,
-		`メール: ${valueOrUnknown(card.email)}`,
-		`電話: ${valueOrUnknown(card.phone)}`,
-		`住所: ${valueOrUnknown(card.address)}`,
-		`engagementIntent: ${engagementIntent}`,
-	].join("\n");
-
-	return `${buildHoldMemo({
-		stopReason:
-			"名刺振り分けで「社外顧問・ブローカー」が選択されたため、企業マスター高密度化ラインの外部調査対象外。",
-		scope: "名刺情報(氏名/会社名/連絡先)の確認のみ。企業候補検索、企業作成、外部調査は実施しない。",
-		humanDecision:
-			"大ちゃんまたは営業責任者が、ブローカー/社外顧問として別ラインに登録するか、企業案件として再扱いするかを決める。",
-		restartCondition:
-			"企業案件として扱う判断が明確になった場合のみ routing=company で再実行。ブローカー登録する場合は、登録先DB/UI/トリガー確定後に専用ラインで処理する。",
-	})}
-
-【ブローカー登録ライン】
-【現在の扱い】企業マスター高密度化ラインへ進めず、ブローカー/社外顧問の別ライン待ちにする。
-【登録候補情報】
-${candidateLines}
-【一次判定】未実施。60点基準はブローカー一次判定ロジックで別途判定する。
-【停止条件】情報不足、本人の立場不明、会社/ドメイン衝突、broker/company兆候拮抗はbroker加点に使わず、要確認またはlaterへ逃がす。
-【個人リスク】反社判定は行わない。本人一致度、リスク兆候、追加確認要否だけを整理する。
-【未実施】ブローカー登録先DB、Notion UI権限、登録トリガーが未確定のため、このWorkerでは自動登録しない。
-【次アクション】登録先DB/UI/トリガー確定後、登録ボタンまたは専用Webhookで別ラインへ送る。`;
-}
 
 // 振り分け(入口で営業が選ぶ)の正規化(純関数)。絵文字つきラベルでも判定できるようにする。
 function normalizeCardRouting(value: string | undefined): "company" | "broker" | "later" {
@@ -6604,17 +6546,17 @@ function calculateBrokerPrimaryAssessment(ocr: BusinessCardOcr): BrokerPrimaryAs
 		stopReasons.push("個人メールのため所属確認が弱い");
 	}
 	if (/反社|暴力団|風評|訴訟|行政処分|トラブル|違法/i.test(riskSignalText)) {
-		stopReasons.push("個人リスク系の言及があるため、broker採点とは別に管理者確認");
+		stopReasons.push("個人リスク系の言及があるため、社外顧問採点とは別に管理者確認");
 	}
 	if (scoreReasons.length === 0) {
-		stopReasons.push("撮影時選択以外のbroker/company判定根拠が未確認");
+		stopReasons.push("撮影時選択以外の社外顧問/company判定根拠が未確認");
 	}
 	const normalizedScore = Math.max(0, Math.min(100, score));
 	if (normalizedScore > 0 && normalizedScore < 60) {
-		stopReasons.push("broker兆候はあるが60点未満のためbroker確定不可");
+		stopReasons.push("社外顧問兆候はあるが60点未満のため社外顧問確定不可");
 	}
 	if (normalizedScore > 0 && companyReasons.length > 0) {
-		stopReasons.push("broker兆候とcompany兆候が混在");
+		stopReasons.push("社外顧問兆候とcompany兆候が混在");
 	}
 
 	if (scoreReasons.length === 0) {
@@ -6633,17 +6575,61 @@ function calculateBrokerPrimaryAssessment(ocr: BusinessCardOcr): BrokerPrimaryAs
 	return { score: normalizedScore, routing, scoreReasons, stopReasons, nextAction };
 }
 
+function primaryRoutingLabel(routing: BrokerPrimaryRouting): string {
+	if (routing === "broker") return "社外顧問";
+	if (routing === "company") return "企業";
+	return "要確認";
+}
+
+function shouldRunExternalAdvisorPublicWebResearch(assessment: BrokerPrimaryAssessment): boolean {
+	return assessment.routing === "broker" && assessment.stopReasons.length === 0;
+}
+
+function buildExternalAdvisorResearchStopAnnouncement(
+	assessment: BrokerPrimaryAssessment,
+	cardPageId?: string,
+): string {
+	const reasons = assessment.stopReasons.length ? assessment.stopReasons.join(" / ") : "60点基準未達または判定根拠不足";
+	return [
+		"⏸ 社外顧問の公開Web調査を停止しました。",
+		`【停止理由】${reasons}`,
+		assessment.score === null
+			? "【一次スコア】未採点"
+			: `【一次スコア】${assessment.score}点 / 判定=${primaryRoutingLabel(assessment.routing)}`,
+		"【打開条件】本人の立場、所属、紹介可能領域、企業相談との混在有無を確認し、社外顧問として追うか企業として扱うかを決めてください。",
+		cardPageId ? `【元名刺】${cardPageId}` : "",
+	].filter(Boolean).join("\n");
+}
+
+async function runExternalAdvisorResearchIfAllowed(
+	notion: NotionClient,
+	advisorPage: Page,
+	ocr: BusinessCardOcr,
+	cardPageId?: string,
+): Promise<void> {
+	const assessment = calculateBrokerPrimaryAssessment(ocr);
+	if (shouldRunExternalAdvisorPublicWebResearch(assessment)) {
+		await researchExternalAdvisorPublicWeb(notion, advisorPage, ocr);
+		return;
+	}
+	await createPageComment(
+		notion,
+		advisorPage.id,
+		buildExternalAdvisorResearchStopAnnouncement(assessment, cardPageId),
+	).catch(() => {});
+}
+
 function buildExternalAdvisorAssessmentMemo(
 	ocr: BusinessCardOcr,
 	assessment: BrokerPrimaryAssessment,
 	cardPageId?: string,
 ): string {
 	return [
-		"【登録理由】名刺起点で社外顧問・ブローカーとして扱うため、社外顧問DBへ登録。",
+		"【登録理由】名刺起点で社外顧問として扱うため、社外顧問DBへ登録。",
 		assessment.score === null ? "【登録状態】仮登録（未採点）" : "【登録状態】一次整理済み（採点根拠あり）",
 		assessment.score === null
 			? "【一次判定】未採点。撮影時選択以外の採点根拠が不足しているため、スコアは入力しない。"
-			: `【一次判定】名刺情報・初回メモに基づく一次スコア: ${assessment.score}点 / routing=${assessment.routing}`,
+			: `【一次判定】名刺情報・初回メモに基づく一次スコア: ${assessment.score}点 / 判定=${primaryRoutingLabel(assessment.routing)}`,
 		assessment.scoreReasons.length ? `【加点・減点根拠】${assessment.scoreReasons.join(" / ")}` : "",
 		assessment.stopReasons.length ? `【停止理由】${assessment.stopReasons.join(" / ")}` : "【停止理由】該当なし",
 		"【本人一致度】名刺本人を登録候補として扱う。外部ネガティブ情報との本人一致確認は未実施。",
@@ -6747,12 +6733,12 @@ async function registerExternalAdvisorFromBusinessCard(
 		typeof card.page.url === "string" ? card.page.url : "",
 		card.page.id,
 	);
-	await researchExternalAdvisorPublicWeb(notion, advisor.page, ocr);
+	await runExternalAdvisorResearchIfAllowed(notion, advisor.page, ocr, card.page.id);
 	const memo = [
 		`【社外顧問DB登録】${advisor.created ? "新規登録" : "既存ページへ紐づけ更新"}`,
 		`【社外顧問ページ】${advisor.page.id}`,
 		`【元名刺】${card.page.id}`,
-		"【企業マスター高密度化】routing=broker のため対象外。企業作成・外部調査・商談準備レポート自動作成は行わない。",
+		"【企業マスター高密度化】社外顧問として扱うため対象外。企業作成・外部調査・商談準備レポート自動作成は行わない。",
 		"【注意】個人に対する反社判定は行っていない。必要時は本人一致度、リスク兆候、追加確認要否だけを別途確認する。",
 	].join("\n");
 	await linkBusinessCardToAdvisor(notion, card.page, advisor.page.id, memo);
@@ -6813,7 +6799,7 @@ function buildExternalAdvisorPublicWebPrompt(ocr: BusinessCardOcr): string {
 	const company = ocr.会社名 || "所属候補未確認";
 	const domain = (ocr.メール || "").split("@")[1] || "メールドメイン未確認";
 	return [
-		"和上ホールディングスの社外顧問・ブローカー候補について、公開Web情報だけで本人一致度と追加確認事項を整理してください。",
+		"和上ホールディングスの社外顧問候補について、公開Web情報だけで本人一致度と追加確認事項を整理してください。",
 		"反社判定、信用断定、紹介可否判断は行わないでください。",
 		"同姓同名を本人と断定せず、出典URLがある事実だけを書いてください。",
 		"",
@@ -7033,7 +7019,7 @@ async function processBusinessCardImage(
 		new Uint8Array(Buffer.from(base64, "base64")),
 	);
 	const routingLabel =
-		routing === "broker" ? "🤝社外顧問・ブローカー" : routing === "later" ? "❓あとで決める" : "🏢企業";
+		routing === "broker" ? "🤝社外顧問" : routing === "later" ? "❓あとで決める" : "🏢企業";
 	const entryMemo = [
 		`撮影時の振り分け: ${routingLabel}`,
 		routing !== "later" && `営業判断: ${engagementLabel}`,
@@ -7131,10 +7117,11 @@ async function processBusinessCardImage(
 			typeof page.url === "string" ? page.url : "",
 			page.id,
 		);
+		await runExternalAdvisorResearchIfAllowed(notion, advisor.page, ocr, page.id);
 		const memo = buildHoldMemo({
-			stopReason: "撮影時に本人が社外顧問・ブローカーを選択したため、企業マスター高密度化の対象外。",
+			stopReason: "撮影時に本人が社外顧問として選択されたため、企業マスター高密度化の対象外。",
 			scope: "名刺画像保存とOCR結果の反映まで。企業マスターDB連携と外部調査は未実行。",
-			humanDecision: "社外顧問DBや別プロジェクトで扱うかを大ちゃんが決める。",
+			humanDecision: "社外顧問DBで関係構築対象として追うか、企業案件として扱い直すかを大ちゃんが決める。",
 			restartCondition: "企業案件として扱う判断に変わった場合のみ、routing=company で再実行。",
 		});
 		await linkBusinessCardToAdvisor(
@@ -29356,6 +29343,11 @@ async function markCardDuplicateHold(
 			設計上の弱点: richText(memo),
 		},
 	});
+	await createPageComment(
+		notion,
+		card.page.id,
+		`⛔ 名刺入口を要確認で停止しました。\n打開するための確認事項を名刺メモへ残しました。\n${memo}`,
+	).catch(() => {});
 }
 
 async function markCardNeedsReview(
@@ -29374,6 +29366,11 @@ async function markCardNeedsReview(
 			設計上の弱点: richText(message),
 		},
 	});
+	await createPageComment(
+		notion,
+		card.page.id,
+		`⛔ 名刺入口を要確認で停止しました。\n打開するための確認事項を名刺メモへ残しました。\n${message}`,
+	).catch(() => {});
 }
 
 async function markCardFailure(
@@ -31104,7 +31101,7 @@ function buildInquiryProjectName(inquiryTitle: string): string {
 }
 
 
-// ===== 社外顧問DB → 案件化/預かり（ブローカー4方向の新入口）=====
+// ===== 社外顧問DB → 案件化/預かり（社外顧問4方向の新入口）=====
 type BrokerActionKind = "case" | "custody";
 
 type BrokerCaseOptions = {
@@ -31243,7 +31240,7 @@ async function findBrokerProjectsCreatedToday(
 		});
 		return response.results ?? [];
 	} catch (error) {
-		console.log("broker project duplicate lookup skipped", String(error));
+		console.log("external advisor project duplicate lookup skipped", String(error));
 		return [];
 	}
 }
@@ -31253,9 +31250,9 @@ function buildBrokerCaseMemo(brokerName: string, caseMemo: string): string {
 		"社外顧問DBからWorker紹介案件化。",
 		`紹介元: ${brokerName}`,
 		caseMemo ? `起点メモ: ${caseMemo}` : "起点メモ: 未入力。対象物・売買条件・価格・所有者/決裁者を確認してください。",
-		"営業上の見方: ブローカー紹介起点で案件化。具体条件は情報収集中。",
+		"営業上の見方: 社外顧問紹介起点で案件化。具体条件は情報収集中。",
 		"次の一手: 対象物・売買条件・価格・所有者/決裁者を確認し、案件名を実態に合わせて修正する。",
-		"案件DBには具体案件だけを作る。ブローカー預かりや匂いだけの段階は社外顧問DBで追跡する。",
+		"案件DBには具体案件だけを作る。社外顧問預かりや匂いだけの段階は社外顧問DBで追跡する。",
 	].join("\n");
 }
 
@@ -31384,7 +31381,7 @@ async function processBrokerCustodyRegister(
 		const taskPage = await notion.pages.retrieve({ page_id: createdTask.id });
 		const assignedUserIds = brokerAssignedUserIds(brokerPage, options.triggerUserId);
 		const taskMemo = [
-			`社外顧問DBのブローカー預かり追跡タスク。`,
+			`社外顧問DBの預かり追跡タスク。`,
 			`対象: ${brokerName}`,
 			`預かりステータス: ${status}`,
 			memo ? `メモ: ${memo}` : "メモ: 未入力。次回接触で、何を待っているかを確認する。",
@@ -31410,7 +31407,7 @@ async function processBrokerCustodyRegister(
 		notion,
 		brokerPageId,
 		[
-			`📦 ブローカー預かり登録: ${brokerName}`,
+			`📦 社外顧問預かり登録: ${brokerName}`,
 			`ステータス: ${status}`,
 			memo ? `メモ: ${memo}` : "",
 			`期限目安: ${dueDate}`,
@@ -31421,7 +31418,7 @@ async function processBrokerCustodyRegister(
 		brokerPageId,
 		action: "registered",
 		taskPageId,
-		message: `ブローカー預かり登録を行いました（${brokerName} / ${status}）。`,
+		message: `社外顧問預かり登録を行いました（${brokerName} / ${status}）。`,
 	};
 }
 
