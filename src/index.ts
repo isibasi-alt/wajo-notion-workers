@@ -146,6 +146,23 @@ const SALES_TALK_DATA_SOURCE_ID =
 const KNOWLEDGE_DATA_SOURCE_ID =
 	process.env.KNOWLEDGE_DATA_SOURCE_ID ??
 	"8ffd91e0-2f44-4915-926a-d410bcb04e95";
+// ── お宝データベース（Sales OS 一次情報層）。ナレッジ採用→自動振り分け（お宝ルーター）の書き込み先 ──
+// 設計正本: 20_Project/ナレッジ確立方法と月次評価の表示方法/_配線案_ナレッジからお宝DB自動振り分け_2026-07-03.md
+const TAKARA_GRID_DATA_SOURCE_ID =
+	process.env.TAKARA_GRID_DATA_SOURCE_ID ??
+	"f19878cf-8833-40f2-b25c-e84da760db08"; // 系統・抑制DB
+const TAKARA_LAND_DATA_SOURCE_ID =
+	process.env.TAKARA_LAND_DATA_SOURCE_ID ??
+	"3a588533-451c-449c-a2be-f273c5ae7a01"; // 土地・規制DB
+const TAKARA_GOV_DATA_SOURCE_ID =
+	process.env.TAKARA_GOV_DATA_SOURCE_ID ??
+	"e45ec9a0-bedb-4a17-a412-5b4c5c662e13"; // 行政・競合動向DB
+const TAKARA_CARD_DATA_SOURCE_ID =
+	process.env.TAKARA_CARD_DATA_SOURCE_ID ??
+	"351ba44e-590c-446e-b4be-a14b1fd88257"; // 判断カードDB（下書き起票のみ・判定確定は人間）
+const TAKARA_SOLAR_DATA_SOURCE_ID =
+	process.env.TAKARA_SOLAR_DATA_SOURCE_ID ??
+	"e3e008b7-8eb1-4d42-9c7b-c82593a3cb5b"; // 日射量・気象DB（逆流コメントの参照のみ・書き込みしない）
 const DAILY_REPORT_REQUEST_DATA_SOURCE_ID =
 	process.env.DAILY_REPORT_REQUEST_DATA_SOURCE_ID ??
 	"990cdd37-1217-4424-9a24-dadf64f9baa0";
@@ -4899,6 +4916,54 @@ worker.webhook("processMeetingKnowledgeWebhook", {
 				notion as unknown as NotionClient,
 			);
 		}
+	},
+});
+
+worker.webhook("processKnowledgeToTakaraRoutingWebhook", {
+	title: "WAJO お宝ルーター（ナレッジ→お宝DB振り分け）Webhook",
+	description:
+		"採用済み社内ナレッジのページIDを受け取り、本文を分類してお宝DB（系統抑制/土地規制/行政競合/判断カード）へ下書き行を起票し、元ナレッジに地域のお宝情報を逆流コメントします。候補判定が『採用』でないものは何もしません。",
+	execute: async (events, { notion }) => {
+		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const knowledgePageId = extractKnowledgePageIdFromWebhook(body);
+			if (!knowledgePageId) {
+				throw new Error(
+					"knowledgePageId / pageId / entity.id のいずれからも社内ナレッジページIDを特定できませんでした。",
+				);
+			}
+			await processKnowledgeToTakaraRouting(
+				{ knowledgePageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.tool("processKnowledgeToTakaraRoutingById", {
+	title: "WAJO お宝ルーター 1件処理",
+	description:
+		"社内ナレッジのページIDを指定してお宝DB振り分けを実行します。dryRun=trueなら書き込みせず分類結果だけ返します（検品用）。",
+	schema: j.object({
+		knowledgePageId: j.string().describe("社内ナレッジDBのページID"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		knowledgePageId: j.string(),
+		action: j.string(),
+		bucket: j.string().nullable(),
+		createdRowIds: j.array(j.string()),
+		createdCard: j.boolean(),
+		region: j.string(),
+		message: j.string(),
+	}),
+	execute: async ({ knowledgePageId, dryRun }, { notion }) => {
+		const result = await processKnowledgeToTakaraRouting(
+			{ knowledgePageId, dryRun: dryRun ?? false },
+			notion as unknown as NotionClient,
+		);
+		return { ...result, bucket: result.bucket };
 	},
 });
 
@@ -12197,6 +12262,399 @@ async function processMeetingKnowledge(
 }
 
 export { processMeetingKnowledge as processMeetingKnowledgeForTest };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// お宝ルーター：採用ナレッジ → お宝DB 自動振り分け（下書き起票 ＋ 逆流コメント）
+// 設計正本: 20_Project/ナレッジ確立方法と月次評価の表示方法/_配線案_ナレッジからお宝DB自動振り分け_2026-07-03.md
+//   （大ちゃん承認 2026-07-03「この設計でいきます」）
+// 方針:
+//   ・入口はナレッジ一本。お宝DB専用の入力動線は作らない（Small Input & Wide Share）
+//   ・「採用」ナレッジだけを流す（人間の目を通った後だけ＝ごみを入れない）
+//   ・判断カードは下書き起票のみ。判定（攻める/止める/監視/調べる）の確定は人間
+//   ・分類はルールベース（キーワード判定・外部AI未使用）＝決定的で検品可能
+//   ・確信が持てなければ行を作らない。生成行はデータ状態＝下書き／根拠URL＝元ナレッジページ
+//   ・お宝DBのプロパティは一切追加しない（既存プロパティのみ更新＝地雷2回避）
+// ═══════════════════════════════════════════════════════════════════════════
+
+const TAKARA_PREFECTURES = [
+	"北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
+	"茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県",
+	"新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県", "岐阜県",
+	"静岡県", "愛知県", "三重県", "滋賀県", "京都府", "大阪府", "兵庫県",
+	"奈良県", "和歌山県", "鳥取県", "島根県", "岡山県", "広島県", "山口県",
+	"徳島県", "香川県", "愛媛県", "高知県", "福岡県", "佐賀県", "長崎県",
+	"熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県",
+];
+
+type TakaraBucket = "grid" | "land" | "gov";
+
+type KnowledgeRoutingResult = {
+	knowledgePageId: string;
+	action: "routed" | "skipped-not-adopted" | "no-match" | "dry-run";
+	bucket: TakaraBucket | null;
+	createdRowIds: string[];
+	createdCard: boolean;
+	region: string;
+	message: string;
+};
+
+function countKeywordHits(haystack: string, keywords: string[]): number {
+	let n = 0;
+	for (const kw of keywords) {
+		if (haystack.includes(kw)) n += 1;
+	}
+	return n;
+}
+
+function detectPrefecture(haystack: string): string {
+	for (const pref of TAKARA_PREFECTURES) {
+		if (haystack.includes(pref)) return pref;
+		// 「県」「府」を省いた表記（例:「大阪」「兵庫」）も拾う。北海道/東京都/京都府は略さない
+		const bare = pref.replace(/[都道府県]$/, "");
+		if (bare.length >= 2 && pref !== "東京都" && pref !== "京都府" && haystack.includes(bare)) {
+			return pref;
+		}
+	}
+	return "";
+}
+
+function detectCity(haystack: string): string {
+	// 「〇〇市/区/町/村」を最初の1件だけ拾う（都道府県名を含む語は除外）
+	const match = haystack.match(/([一-龥ぁ-んァ-ヶー]{1,6}?[市区町村])/);
+	if (!match) return "";
+	const city = match[1];
+	if (TAKARA_PREFECTURES.some((p) => p.includes(city) || city.includes(p))) return "";
+	return city;
+}
+
+// 採用ナレッジ本文を3つの事実系お宝DBに分類（最もヒットの多いバケットを1つだけ選ぶ）
+function classifyTakaraBucket(haystack: string): { bucket: TakaraBucket | null; scores: Record<TakaraBucket, number> } {
+	const gridKw = [
+		"系統", "変電所", "空き容量", "空き枠", "接続枠", "連系", "出力制御",
+		"抑制", "パワコン", "逆潮流", "上位変電所", "バンク", "系統増強",
+		"接続検討", "系統情報", "空き容量マップ", "ノンファーム",
+	];
+	const landKw = [
+		"農地", "農転", "農地転用", "農振", "白地", "造成", "傾斜", "地盤",
+		"接道", "浸水", "土砂災害", "ハザード", "用途地域", "市街化調整",
+		"近隣", "開発許可", "林地開発", "保安林", "盛土", "擁壁", "地目", "雑種地",
+	];
+	const govKw = [
+		"競合", "他社", "SOLSEL", "ソルセル", "タイナビ", "メガ発", "とくとくファーム",
+		"失注", "相見積", "見積", "買取価格", "補助金", "制度改定", "FIT価格",
+		"FIP", "セカンダリ", "市況", "利回り相場", "出稿", "キャンペーン",
+		"値引き", "価格勝負", "査定", "仲介",
+	];
+	const scores: Record<TakaraBucket, number> = {
+		grid: countKeywordHits(haystack, gridKw),
+		land: countKeywordHits(haystack, landKw),
+		gov: countKeywordHits(haystack, govKw),
+	};
+	let bucket: TakaraBucket | null = null;
+	let best = 0;
+	for (const key of ["grid", "land", "gov"] as TakaraBucket[]) {
+		if (scores[key] > best) {
+			best = scores[key];
+			bucket = key;
+		}
+	}
+	return { bucket: best >= 1 ? bucket : null, scores };
+}
+
+// 「地域の営業判断に直結する発見」＝判断カード下書きを起こすシグナル
+function hasJudgeSignal(haystack: string): boolean {
+	return countKeywordHits(haystack, [
+		"攻める", "攻めどき", "止める", "やめ", "見送", "避ける", "監視",
+		"要注意", "勝負", "入れない", "強気", "弱気", "ラストイヤー",
+		"売り時", "買い時", "狙い目", "危険", "撤退", "参入",
+	]) >= 1;
+}
+
+function detectCompetitorName(haystack: string): string {
+	for (const name of ["SOLSEL", "ソルセル", "タイナビ", "メガ発", "とくとくファーム", "エコスタイル"]) {
+		if (haystack.includes(name)) return name === "ソルセル" ? "SOLSEL" : name;
+	}
+	return "";
+}
+
+function takaraExcerpt(value: string, max = 900): string {
+	const trimmed = value.replace(/\s+/g, " ").trim();
+	return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
+}
+
+function currentYearMonthJST(): string {
+	return todayDateJST().slice(0, 7); // "YYYY-MM"
+}
+
+async function processKnowledgeToTakaraRouting(
+	input: { knowledgePageId: string; dryRun?: boolean },
+	notion: NotionClient,
+): Promise<KnowledgeRoutingResult> {
+	const knowledgePage = (await notion.pages.retrieve({
+		page_id: input.knowledgePageId,
+	})) as Page;
+	const props = knowledgePage.properties ?? {};
+	const knowledgeUrl =
+		(knowledgePage as unknown as { url?: string }).url ??
+		`https://www.notion.so/${input.knowledgePageId.replace(/-/g, "")}`;
+
+	// 採用ゲート：候補判定が「採用」でなければ何もしない（人間の目を通った後だけ流す）
+	const decision = text(props["候補判定"]);
+	if (decision !== "採用") {
+		const msg = `お宝DB振り分けは「採用」ナレッジのみ対象です（現在の候補判定: ${decision || "未設定"}）。候補判定を「採用」にしてから実行してください。`;
+		if (!input.dryRun) await createPageComment(notion, input.knowledgePageId, `ℹ️ ${msg}`);
+		return {
+			knowledgePageId: input.knowledgePageId,
+			action: "skipped-not-adopted",
+			bucket: null,
+			createdRowIds: [],
+			createdCard: false,
+			region: "",
+			message: msg,
+		};
+	}
+
+	// 分類材料＝ナレッジのテキストプロパティ＋ページ本文
+	const titleText = text(props["ナレッジタイトル"]);
+	const blockText = await fetchPageBlockPlainText(notion, input.knowledgePageId);
+	const material = [
+		titleText,
+		text(props["要点"]),
+		text(props["入力テキスト"]),
+		text(props["使いどころ"]),
+		text(props["推奨トーク"]),
+		text(props["根拠メモ"]),
+		text(props["NG例"]),
+		text(props["ナレッジ種別"]),
+		blockText,
+	]
+		.filter(Boolean)
+		.join("\n")
+		.slice(0, 12000);
+
+	const pref = detectPrefecture(material);
+	const city = detectCity(material);
+	const regionLabel = city ? `${pref}${city}` : pref || "地域未特定";
+	const regionKey = pref ? (city ? `${pref}-${city}` : pref) : "";
+	const { bucket, scores } = classifyTakaraBucket(material);
+	const judge = hasJudgeSignal(material);
+	const ym = currentYearMonthJST();
+	const today = todayDateJST();
+	const excerpt = takaraExcerpt(
+		[text(props["要点"]), text(props["入力テキスト"]), blockText].filter(Boolean).join(" / "),
+	);
+	const sourceMemoTail = `（お宝ルーター自動起票 ${today}｜元ナレッジ: ${titleText || input.knowledgePageId}｜内容は営業の一次観察。数値・断定は要一次確認）`;
+
+	// 該当なし＝行を作らない。ナレッジ側に「振り分けなし」を残す（黙って捨てない）
+	if (!bucket && !judge) {
+		const msg = "お宝DB振り分けなし：事実系（系統/土地/行政競合）・営業判断のいずれのシグナルも検出しませんでした。";
+		if (!input.dryRun) await createPageComment(notion, input.knowledgePageId, `🗂️ ${msg}`);
+		return {
+			knowledgePageId: input.knowledgePageId,
+			action: "no-match",
+			bucket: null,
+			createdRowIds: [],
+			createdCard: false,
+			region: regionKey,
+			message: msg,
+		};
+	}
+
+	if (input.dryRun) {
+		return {
+			knowledgePageId: input.knowledgePageId,
+			action: "dry-run",
+			bucket,
+			createdRowIds: [],
+			createdCard: judge,
+			region: regionKey,
+			message: `dry-run: bucket=${bucket ?? "なし"} / 判断カード=${judge ? "起票" : "なし"} / 地域=${regionKey || "未特定"} / スコア grid:${scores.grid} land:${scores.land} gov:${scores.gov}`,
+		};
+	}
+
+	const createdRowIds: string[] = [];
+
+	// ── 事実系お宝DBに下書き1行を起票 ──
+	if (bucket === "grid") {
+		const name = `系統観察｜${regionLabel}｜現場観察${ym}`;
+		const infoKind = /抑制|出力制御/.test(material)
+			? "抑制"
+			: /空き|容量|枠|バンク|ノンファーム/.test(material)
+				? "系統空き"
+				: /連系|接続/.test(material)
+					? "連系実務"
+					: "送配電ルール";
+		const patches: Record<string, SafePatch> = {
+			情報区分: { kind: "select", value: infoKind },
+			データ状態: { kind: "select", value: "下書き" },
+			根拠URL: { kind: "text", value: knowledgeUrl },
+			最終更新日: { kind: "date", value: today },
+			抑制運用メモ: { kind: "text", value: `${excerpt}\n${sourceMemoTail}` },
+		};
+		if (pref) patches["都道府県"] = { kind: "text", value: pref };
+		if (regionLabel) patches["エリア名"] = { kind: "text", value: regionLabel };
+		if (/FIP/.test(material)) patches["FITFIP区分"] = { kind: "select", value: "FIP" };
+		else if (/FIT/.test(material)) patches["FITFIP区分"] = { kind: "select", value: "FIT" };
+		const id = await createTakaraRow(notion, TAKARA_GRID_DATA_SOURCE_ID, name, patches);
+		if (id) createdRowIds.push(id);
+	} else if (bucket === "land") {
+		const name = `${pref || "地域未特定"}｜${city || "市区町村未特定"}｜現場観察${ym}`;
+		const patches: Record<string, SafePatch> = {
+			データ状態: { kind: "select", value: "下書き" },
+			根拠URL: { kind: "text", value: knowledgeUrl },
+			最終更新日: { kind: "date", value: today },
+			土地活用一次メモ: { kind: "text", value: `${excerpt}\n${sourceMemoTail}` },
+		};
+		if (pref) patches["都道府県"] = { kind: "text", value: pref };
+		if (city) patches["市区町村・地域帯"] = { kind: "text", value: city };
+		if (regionKey) patches["地域キー"] = { kind: "text", value: regionKey };
+		if (/農地|農転|農振|地目/.test(material)) patches["農地種別メモ"] = { kind: "text", value: excerpt };
+		const id = await createTakaraRow(notion, TAKARA_LAND_DATA_SOURCE_ID, name, patches);
+		if (id) createdRowIds.push(id);
+	} else if (bucket === "gov") {
+		const company = detectCompetitorName(material);
+		const infoKind = company || /失注|相見積|仲介|査定/.test(material)
+			? "競合動向"
+			: /買取価格|見積|相場|利回り|価格/.test(material)
+				? "価格感"
+				: /補助金/.test(material)
+					? "補助金"
+					: /制度|FIT|FIP|改定|特措法/.test(material)
+						? "制度改定"
+						: /市況|セカンダリ/.test(material)
+							? "市況"
+							: "行政発表";
+		const name = company
+			? `競合｜${company}｜${ym}観測`
+			: `行政競合｜${regionLabel}｜${ym}`;
+		const patches: Record<string, SafePatch> = {
+			情報区分: { kind: "select", value: infoKind },
+			データ状態: { kind: "select", value: "下書き" },
+			根拠URL: { kind: "text", value: knowledgeUrl },
+			最終更新日: { kind: "date", value: today },
+			判断に効くメモ: { kind: "text", value: `${excerpt}\n${sourceMemoTail}` },
+		};
+		if (pref) patches["都道府県"] = { kind: "text", value: pref };
+		if (regionLabel && regionLabel !== "地域未特定") patches["市区町村・対象エリア"] = { kind: "text", value: regionLabel };
+		if (company) {
+			patches["競合会社名"] = { kind: "text", value: company };
+			patches["競合戦略メモ"] = { kind: "text", value: excerpt };
+		}
+		const id = await createTakaraRow(notion, TAKARA_GOV_DATA_SOURCE_ID, name, patches);
+		if (id) createdRowIds.push(id);
+	}
+
+	// ── 判断カード下書き（判定は空＝人間が確定。状態＝未確認） ──
+	let createdCard = false;
+	if (judge) {
+		const axis = bucket === "grid" ? "系統・抑制" : bucket === "land" ? "土地・規制" : "行政・競合";
+		const cardName = `判断下書き｜${regionLabel}｜${ym}`;
+		const patches: Record<string, SafePatch> = {
+			判断軸: { kind: "select", value: axis },
+			状態: { kind: "select", value: "未確認" },
+			根拠ページ: { kind: "text", value: knowledgeUrl },
+			最終更新日: { kind: "date", value: today },
+			判断理由: { kind: "text", value: `${excerpt}\n${sourceMemoTail}` },
+			次アクション: {
+				kind: "text",
+				value: "マネージャーが判定（攻める/調べる/止める/監視）を確定してください。判定は自動確定していません。",
+			},
+		};
+		if (pref) patches["都道府県"] = { kind: "text", value: pref };
+		if (regionLabel && regionLabel !== "地域未特定") patches["地域"] = { kind: "text", value: regionLabel };
+		const id = await createTakaraRow(notion, TAKARA_CARD_DATA_SOURCE_ID, cardName, patches);
+		if (id) createdCard = true;
+	}
+
+	// ── 逆流：元ナレッジページに「この地域のお宝情報」を返す（書くと即得する） ──
+	const backflow = await buildTakaraBackflowComment(notion, pref, bucket, createdRowIds.length, createdCard);
+	await createPageComment(notion, input.knowledgePageId, backflow);
+
+	return {
+		knowledgePageId: input.knowledgePageId,
+		action: "routed",
+		bucket,
+		createdRowIds,
+		createdCard,
+		region: regionKey,
+		message: `お宝DBへ振り分け完了：行${createdRowIds.length}件${createdCard ? "＋判断カード下書き1件" : ""}（地域: ${regionKey || "未特定"}）`,
+	};
+}
+
+// お宝DBに1行作成（title=Name）→既存プロパティのみ安全更新。作成IDを返す（失敗時null）
+async function createTakaraRow(
+	notion: NotionClient,
+	dataSourceId: string,
+	name: string,
+	patches: Record<string, SafePatch>,
+): Promise<string | null> {
+	try {
+		const created = await notion.pages.create({
+			parent: { data_source_id: dataSourceId },
+			properties: { Name: title(name) },
+		});
+		const fullPage = (await notion.pages.retrieve({ page_id: created.id })) as Page;
+		await safeUpdateExistingProperties(notion, fullPage, patches);
+		return created.id;
+	} catch (error) {
+		console.log("takara row create skipped", { dataSourceId, name, error: String(error) });
+		return null;
+	}
+}
+
+// 都道府県から日射量DB・系統抑制DBを引いて「地域のお宝」を1行に要約（逆流コメント本文）
+async function buildTakaraBackflowComment(
+	notion: NotionClient,
+	pref: string,
+	bucket: TakaraBucket | null,
+	rowCount: number,
+	createdCard: boolean,
+): Promise<string> {
+	const routed = `🗂️ お宝ルーター：${bucket ? `${bucketLabel(bucket)}に下書き${rowCount}件` : "事実系の起票なし"}${createdCard ? "＋判断カード下書き1件" : ""}を作成しました（データ状態＝下書き。人の確認で運用中に上げてください）。`;
+	if (!pref) {
+		return `${routed}\n（地域が特定できず、この地域のお宝情報の逆引きは省略しました）`;
+	}
+	const facts: string[] = [];
+	try {
+		const solar = await notion.dataSources.query({
+			data_source_id: TAKARA_SOLAR_DATA_SOURCE_ID,
+			page_size: 1,
+			filter: { property: "都道府県", rich_text: { equals: pref } },
+		});
+		const row = solar.results[0] as Page | undefined;
+		if (row) {
+			const annual = numberValue(row.properties?.["年間日射量"]);
+			const point = text(row.properties?.["NEDO観測点名"]);
+			if (annual != null) facts.push(`日射量 年間${annual}${point ? `（${point}）` : ""}`);
+		}
+	} catch (error) {
+		console.log("backflow solar lookup skipped", String(error));
+	}
+	try {
+		const grid = await notion.dataSources.query({
+			data_source_id: TAKARA_GRID_DATA_SOURCE_ID,
+			page_size: 1,
+			filter: { property: "都道府県", rich_text: { equals: pref } },
+		});
+		const row = grid.results[0] as Page | undefined;
+		if (row) {
+			const rate = text(row.properties?.["標準抑制率メモ"]) || text(row.properties?.["抑制運用メモ"]);
+			if (rate) facts.push(`系統・抑制: ${takaraExcerpt(rate, 120)}`);
+		}
+	} catch (error) {
+		console.log("backflow grid lookup skipped", String(error));
+	}
+	const factLine = facts.length > 0
+		? `\n💡 ${pref}のお宝情報：${facts.join(" ／ ")}`
+		: `\n（${pref}のお宝DBにはまだ参照できる運用データがありません）`;
+	return `${routed}${factLine}`;
+}
+
+function bucketLabel(bucket: TakaraBucket): string {
+	return bucket === "grid" ? "系統・抑制DB" : bucket === "land" ? "土地・規制DB" : "行政・競合動向DB";
+}
+
+export { processKnowledgeToTakaraRouting as processKnowledgeToTakaraRoutingForTest };
 
 function buildMeetingKnowledgeCandidate(input: {
 	titleText: string;
@@ -24029,6 +24487,29 @@ function extractMeetingPageIdFromWebhook(body: Record<string, unknown>): string 
 		pageIdFromUrl(bodyString(body.URL)),
 		readNestedString(body, ["data", "meetingPageId"]),
 		readNestedString(body, ["data", "meeting_page_id"]),
+		readNestedString(body, ["data", "pageId"]),
+		readNestedString(body, ["data", "page_id"]),
+		pageIdFromUrl(readNestedString(body, ["data", "url"])),
+		pageIdFromUrl(readNestedString(body, ["data", "URL"])),
+		readNestedString(body, ["page", "id"]),
+		readNestedString(body, ["source", "page_id"]),
+		readNestedString(body, ["entity", "id"]),
+	);
+}
+
+function extractKnowledgePageIdFromWebhook(
+	body: Record<string, unknown>,
+): string | undefined {
+	return firstString(
+		body.knowledgePageId,
+		body.knowledge_page_id,
+		body.pageId,
+		body.page_id,
+		body.id,
+		pageIdFromUrl(bodyString(body.url)),
+		pageIdFromUrl(bodyString(body.URL)),
+		readNestedString(body, ["data", "knowledgePageId"]),
+		readNestedString(body, ["data", "knowledge_page_id"]),
 		readNestedString(body, ["data", "pageId"]),
 		readNestedString(body, ["data", "page_id"]),
 		pageIdFromUrl(readNestedString(body, ["data", "url"])),
