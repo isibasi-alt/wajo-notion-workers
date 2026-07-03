@@ -5993,30 +5993,24 @@ async function processBusinessCard(
 			};
 		}
 
-		if (strong.length > 1) {
-			await markCardDuplicateHold(notion, card, strong);
-			return {
-				pageId: input.pageId,
-				action: "duplicate-hold",
-				companyId: null,
-				companyName: null,
-				message: `routing=${routing} / engagement=${engagementIntent}。strong候補が複数あるため一旦停止: ${strong.map((candidate) => candidate.name).join(", ")}`,
-			};
-		}
+			if (strong.length > 1) {
+				await markCardDuplicateHold(notion, card, strong);
+				return {
+					pageId: input.pageId,
+					action: "duplicate-hold",
+					companyId: null,
+					companyName: null,
+					message: `routing=${routing} / engagement=${engagementIntent}。strong候補が複数あるため一旦停止: ${strong.map((candidate) => candidate.name).join(", ")}`,
+				};
+			}
 
 			if (strong.length === 1) {
 				const company = strong[0]!;
-				const abcQueued = await queueCompanyAbcRun(
-					notion,
-					company.page,
-					"名刺入口で既存企業への紐づけが確定",
-					shouldDeepResearch ? "active" : "save-only",
-				);
 				const meetingPrepSummary = shouldCreateMeetingPrep
 					? await createMeetingPrepReportFromBusinessCard(notion, company.page.id)
 					: null;
 				const linkMemo = shouldDeepResearch
-					? `既存企業に紐づけ済: ${company.reasons.join(" / ")}`
+					? `既存企業に紐づけ済: ${company.reasons.join(" / ")} / 名刺入口フェーズ完了。後段の企業マスター高密度化・ABC・商談準備は未起動。`
 					: `既存企業に紐づけ済: ${company.reasons.join(" / ")} / 営業判断=名刺だけ保存。外部調査・企業マスター高密度化は未実行。`;
 				await linkCardToCompany(
 					notion,
@@ -6026,7 +6020,7 @@ async function processBusinessCard(
 					linkMemo,
 					meetingPrepSummary,
 					shouldDeepResearch
-						? undefined
+						? "Notion Workerが既存企業への紐づけまで実行。名刺入口フェーズ完了。後段の企業マスター高密度化・ABC・商談準備は未起動。"
 						: "Notion Workerが既存企業への紐づけまで実行。営業判断=名刺だけ保存のため、外部調査・企業マスター高密度化は未実行。",
 				);
 				return {
@@ -6036,19 +6030,13 @@ async function processBusinessCard(
 					companyName: company.name,
 					message: shouldDeepResearch
 						? meetingPrepSummary
-							? `既存企業へ紐づけ、ABC入口${abcQueued ? "へ渡しました" : "は既存状態を保持しました"}。${meetingPrepSummary}`
-							: `既存企業へ紐づけ、ABC入口${abcQueued ? "へ渡しました" : "は既存状態を保持しました"}。`
+							? `既存企業へ紐づけ、名刺入口フェーズを完了しました。${meetingPrepSummary}`
+							: "既存企業へ紐づけ、名刺入口フェーズを完了しました。後段の企業マスター高密度化・ABC・商談準備は未起動です。"
 						: "既存企業へ紐づけました。営業判断=名刺だけ保存のため、外部調査・企業マスター高密度化は未実行です。",
 				};
 			}
 
 			const company = await createCompany(notion, card, weak[0], shouldDeepResearch);
-			const abcQueued = await queueCompanyAbcRun(
-				notion,
-				company,
-				"名刺入口で新規企業作成が確定",
-				shouldDeepResearch ? "active" : "save-only",
-			);
 			const meetingPrepSummary = shouldCreateMeetingPrep
 				? await createMeetingPrepReportFromBusinessCard(notion, company.id)
 				: null;
@@ -6061,11 +6049,11 @@ async function processBusinessCard(
 				company.id,
 				"新規企業作成",
 				shouldDeepResearch
-					? companyMemo
+					? `${companyMemo} 名刺入口フェーズ完了。後段の企業マスター高密度化・ABC・商談準備は未起動。`
 					: `${companyMemo} 営業判断=名刺だけ保存。外部調査・企業マスター高密度化は未実行。`,
 				meetingPrepSummary,
 				shouldDeepResearch
-					? undefined
+					? "Notion Workerが新規企業作成と名刺連携まで実行。名刺入口フェーズ完了。後段の企業マスター高密度化・ABC・商談準備は未起動。"
 					: "Notion Workerが新規企業作成と名刺連携まで実行。営業判断=名刺だけ保存のため、外部調査・企業マスター高密度化は未実行。",
 			);
 			return {
@@ -6075,8 +6063,8 @@ async function processBusinessCard(
 				companyName: card.companyName,
 				message: shouldDeepResearch
 					? meetingPrepSummary
-						? `新規企業を作成し、ABC入口${abcQueued ? "へ渡しました" : "は既存状態を保持しました"}。${meetingPrepSummary}`
-						: `新規企業を作成し、ABC入口${abcQueued ? "へ渡しました" : "は既存状態を保持しました"}。`
+						? `新規企業を作成し、名刺入口フェーズを完了しました。${meetingPrepSummary}`
+						: "新規企業を作成し、名刺入口フェーズを完了しました。後段の企業マスター高密度化・ABC・商談準備は未起動です。"
 					: "新規企業を作成し、名刺と連携しました。営業判断=名刺だけ保存のため、外部調査・企業マスター高密度化は未実行です。",
 			};
 	} catch (error) {
@@ -29212,7 +29200,7 @@ async function createCompany(
 		),
 		名刺起点Webhookメモ: richText(
 			deepResearch
-				? "Notion Workerが名刺起点で企業を作成。企業確定後、ABC入口へ引き継ぎ。"
+				? "Notion Workerが名刺起点で企業を作成。名刺入口フェーズは完了。後段の企業マスター高密度化・ABC・商談準備は未起動。"
 				: "Notion Workerが名刺起点で企業を作成。営業判断=名刺だけ保存のため、外部調査と企業マスター高密度化は未実行。",
 		),
 		重複整理ステータス: select(weakCandidate ? "重複候補" : "正本候補"),

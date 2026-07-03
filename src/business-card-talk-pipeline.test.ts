@@ -516,29 +516,35 @@ async function main() {
 		processBusinessCardForTest({ pageId: "card-1", dryRun: false }, notion),
 	);
 	assert.equal(cardResult.action, "existing-linked");
-	const companyResearchUpdate = updates.find(
-		(update) =>
-			update.page_id === "8a6ed4d7709a44ae90e61af3a79b9bc1" &&
-			update.properties &&
-			Object.prototype.hasOwnProperty.call(update.properties, "成約へのポイント"),
-	);
-	assert.equal(
-		Boolean(companyResearchUpdate),
-		false,
-		"名刺入口では旧Workerの企業深掘り/3C補正を直接走らせない",
-	);
-	const abcUpdate = updates.find(
-		(update) =>
-			update.page_id === "8a6ed4d7709a44ae90e61af3a79b9bc1" &&
-			update.properties &&
-			Object.prototype.hasOwnProperty.call(update.properties, "ABC実行ステータス"),
-	);
-	assert.ok(abcUpdate);
-	assert.equal(selectName(abcUpdate!.properties?.["ABC実行ステータス"]), "ABC｜A待ち");
-	assert.match(
-		richTextFromPatch(abcUpdate!.properties?.["企業AI受付メモ"]),
-		/【ABC入口】/,
-	);
+		const companyResearchUpdate = updates.find(
+			(update) =>
+				update.page_id === "8a6ed4d7709a44ae90e61af3a79b9bc1" &&
+				update.properties &&
+				Object.prototype.hasOwnProperty.call(update.properties, "成約へのポイント"),
+		);
+		assert.equal(
+			Boolean(companyResearchUpdate),
+			false,
+			"名刺入口では旧Workerの企業深掘り/3C補正を直接走らせない",
+		);
+		assert.equal(
+			updates.some(
+				(update) =>
+					update.page_id === "8a6ed4d7709a44ae90e61af3a79b9bc1" &&
+					update.properties &&
+					Object.prototype.hasOwnProperty.call(update.properties, "ABC実行ステータス"),
+			),
+			false,
+			"このフェーズでは名刺入口からABCへ渡さない",
+		);
+		const activeCardWebhookMemo = updates.find(
+			(update) => update.page_id === "card-1" && update.properties?.["Webhook引き継ぎメモ"],
+		);
+		assert.ok(activeCardWebhookMemo);
+		assert.match(
+			richTextFromPatch(activeCardWebhookMemo!.properties?.["Webhook引き継ぎメモ"]),
+			/名刺入口フェーズ完了/,
+		);
 
 	const saveOnlyCase = makeNotionForCardCase(
 		"仮説ですが、推測ですが、成約までの決裁タイミングは未確認です。",
@@ -1046,11 +1052,15 @@ async function main() {
 			false,
 			"新規企業作成時に旧 企業調査ステータス は書かない",
 		);
-		const abcUpdate = updates.find(
-			(update) => update.page_id === "new-company-1" && update.properties?.["ABC実行ステータス"],
+		assert.equal(
+			updates.some((update) => update.page_id === "new-company-1" && update.properties?.["ABC実行ステータス"]),
+			false,
+			"新規企業作成後もこのフェーズではABCへ渡さない",
 		);
-		assert.ok(abcUpdate);
-		assert.equal(selectName(abcUpdate!.properties?.["ABC実行ステータス"]), "ABC｜A待ち");
+		assert.match(
+			richTextFromPatch(creates[0]?.properties?.["名刺起点Webhookメモ"]),
+			/名刺入口フェーズは完了/,
+		);
 	}
 
 	{
