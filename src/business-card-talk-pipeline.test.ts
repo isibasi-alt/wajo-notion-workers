@@ -987,6 +987,35 @@ async function main() {
 	assert.equal(invalidPhoneResult.action, "needs-review");
 	assert.match(invalidPhoneResult.message, /電話番号/);
 
+	const weakCompanyEvidenceCase = makeNotionForNewCardCase({
+		cardCompanyName: "新エネルギー開発コンサルティング",
+		cardName: "佐藤 誠",
+		cardPhone: "",
+		cardEmail: "",
+		cardAddress: "大阪府大阪市北区梅田1丁目1番3号 大阪駅前第3ビル 25階",
+	});
+	const weakCompanyEvidenceResult = await withoutAiKeys(() =>
+		processBusinessCardForTest(
+			{ pageId: "card-1", dryRun: false, routing: "company", engagementIntent: "active" },
+			weakCompanyEvidenceCase.notion,
+		),
+	);
+	assert.equal(weakCompanyEvidenceResult.action, "needs-review");
+	assert.match(weakCompanyEvidenceResult.message, /企業実在性の裏づけ/);
+	assert.equal(
+		weakCompanyEvidenceCase.creates.length,
+		0,
+		"会社名と住所だけの名刺では新規企業を作らない",
+	);
+	const weakCompanyMemoUpdate = weakCompanyEvidenceCase.updates.find(
+		(update) => update.page_id === "card-1" && update.properties?.["名刺AI処理メモ"],
+	);
+	assert.ok(weakCompanyMemoUpdate);
+	assert.match(
+		richTextFromPatch(weakCompanyMemoUpdate!.properties?.["名刺AI処理メモ"]),
+		/会社URL・会社メール・電話番号/,
+	);
+
 	assert.equal(
 		parseBusinessCardOcrForTest('{"氏名":"山田","会社名":"株式会社テスト","電話":"123","メール":""}'),
 		null,

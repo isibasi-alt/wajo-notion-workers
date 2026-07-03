@@ -6104,6 +6104,27 @@ async function processBusinessCard(
 				};
 			}
 
+			const createCompanyEvidenceIssue = businessCardCreateCompanyEvidenceIssue(card);
+			if (createCompanyEvidenceIssue) {
+				await markCardNeedsReview(
+					notion,
+					card,
+					buildHoldMemo({
+						stopReason: createCompanyEvidenceIssue,
+						scope: "会社名、住所、電話、メール、URL、既存企業候補の一次照合まで確認。",
+						humanDecision: "この名刺を企業として新規登録するか、社外顧問/要確認へ振り分け直すかを決める。",
+						restartCondition: "会社URL・会社メール・電話番号のいずれかが確認できる、または社外顧問として扱う判断が確定した時。",
+					}),
+				);
+				return {
+					pageId: input.pageId,
+					action: "needs-review",
+					companyId: null,
+					companyName: null,
+					message: createCompanyEvidenceIssue,
+				};
+			}
+
 			const company = await createCompany(notion, card, weak[0], shouldDeepResearch);
 			const meetingPrepSummary = shouldCreateMeetingPrep
 				? await createMeetingPrepReportFromBusinessCard(notion, company.id)
@@ -6219,6 +6240,25 @@ function businessCardIntegrityIssue(card: CardInfo): string | null {
 		return "氏名、メール、電話がすべて無く、名刺情報として人手確認が必要です。";
 	}
 	return null;
+}
+
+function isFreeMailDomain(value: string): boolean {
+	return /^(gmail\.com|yahoo\.co\.jp|yahoo\.com|icloud\.com|outlook\.com|hotmail\.com|docomo\.ne\.jp|ezweb\.ne\.jp|softbank\.ne\.jp|au\.com)$/.test(
+		value,
+	);
+}
+
+function businessCardCreateCompanyEvidenceIssue(card: CardInfo): string | null {
+	const websiteDomain = extractDomain(card.websiteUrl);
+	const emailDomain = extractDomain(card.email);
+	const hasCorporateEmail = Boolean(emailDomain) && !isFreeMailDomain(emailDomain);
+	const hasWebsite = Boolean(websiteDomain);
+	const hasPhone = Boolean(digits(card.phone));
+	if (hasCorporateEmail || hasWebsite || hasPhone) return null;
+	if (card.address) {
+		return "会社名と住所だけでは新規企業を作りません。会社URL・会社メール・電話番号のいずれも無く、企業実在性の裏づけが不足しています。";
+	}
+	return "会社名以外に企業実在性を裏づける会社URL・会社メール・電話番号が無く、新規企業作成は要確認で停止しました。";
 }
 
 // OCR応答のJSON検証(純関数・壊れた出力に強く)。全項目空は失敗扱い=創作した空殻を通さない。
