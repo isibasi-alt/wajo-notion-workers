@@ -991,6 +991,13 @@ async function main() {
 		null,
 		"OCR電話番号が9桁未満なら入口で止める",
 	);
+	assert.equal(
+		parseBusinessCardOcrForTest(
+			'{"氏名":"山田","会社名":"株式会社テスト","電話":"06-0000-1111","メール":"yamada@example.co.jp","URL":"www.example.co.jp"}',
+		)?.URL,
+		"www.example.co.jp",
+		"OCRで名刺URLを構造化して保持する",
+	);
 
 	// DoD-1: 新規正常（既存候補なし）
 	{
@@ -1041,6 +1048,7 @@ async function main() {
 			cardPhone: "06-2222-3333",
 			cardEmail: "taro@abc-start.example",
 			cardAddress: "大阪府大阪市中央区",
+			cardMemo: "公式URL: www.abc-start.example",
 		});
 		const newActiveResult = await withoutAiKeys(() =>
 			processBusinessCardForTest({ pageId: "card-1", dryRun: false }, notion),
@@ -1060,6 +1068,26 @@ async function main() {
 		assert.match(
 			richTextFromPatch(creates[0]?.properties?.["名刺起点Webhookメモ"]),
 			/名刺入口フェーズは完了/,
+		);
+		assert.deepEqual(
+			creates[0]?.properties?.["ウェブサイトURL"],
+			{ url: "https://www.abc-start.example/" },
+			"名刺メモのURLを企業マスターのウェブサイトURLへ引き継ぐ",
+		);
+		assert.deepEqual(
+			creates[0]?.properties?.["ウェブ"],
+			{ url: "https://www.abc-start.example/" },
+			"企業マスター側の別URL欄にも同じURLを入れる",
+		);
+		assert.match(
+			richTextFromPatch(creates[0]?.properties?.["先方担当者"]),
+			/起動 太郎/,
+			"名刺の担当者名を企業側にも引き継ぐ",
+		);
+		assert.match(
+			richTextFromPatch(creates[0]?.properties?.["面談相手（名前・役職）"]),
+			/起動 太郎 \/ 営業部長/,
+			"名刺の担当者名と役職を企業側の面談相手欄へ引き継ぐ",
 		);
 	}
 

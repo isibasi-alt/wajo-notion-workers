@@ -1867,6 +1867,7 @@ type CardInfo = {
 	phone: string;
 	address: string;
 	role: string;
+	websiteUrl: string;
 	key: string;
 };
 
@@ -3313,6 +3314,8 @@ export const SALES_TALK_FINALIZE_RESPONSE_FORMAT = {
 
 type SafePatch =
 	| { kind: "text"; value: string }
+	| { kind: "email"; value: string }
+	| { kind: "phone"; value: string }
 	| {
 		kind: "text-with-revision";
 		oldValue: string;
@@ -6010,7 +6013,7 @@ async function processBusinessCard(
 					? await createMeetingPrepReportFromBusinessCard(notion, company.page.id)
 					: null;
 				const linkMemo = shouldDeepResearch
-					? `既存企業に紐づけ済: ${company.reasons.join(" / ")} / 名刺入口フェーズ完了。後段の企業マスター高密度化・ABC・商談準備は未起動。`
+					? `既存企業に紐づけ済: ${company.reasons.join(" / ")} / 名刺入口フェーズ完了。A待ち化は企業マスターDBオートメーション（関連名刺トリガー）へ委譲。商談準備は未起動。`
 					: `既存企業に紐づけ済: ${company.reasons.join(" / ")} / 営業判断=名刺だけ保存。外部調査・企業マスター高密度化は未実行。`;
 				await linkCardToCompany(
 					notion,
@@ -6020,7 +6023,7 @@ async function processBusinessCard(
 					linkMemo,
 					meetingPrepSummary,
 					shouldDeepResearch
-						? "Notion Workerが既存企業への紐づけまで実行。名刺入口フェーズ完了。後段の企業マスター高密度化・ABC・商談準備は未起動。"
+						? "Notion Workerが既存企業への紐づけまで実行。名刺入口フェーズ完了。A待ち化は企業マスターDBオートメーション（関連名刺トリガー）へ委譲。商談準備は未起動。"
 						: "Notion Workerが既存企業への紐づけまで実行。営業判断=名刺だけ保存のため、外部調査・企業マスター高密度化は未実行。",
 				);
 				return {
@@ -6031,7 +6034,7 @@ async function processBusinessCard(
 					message: shouldDeepResearch
 						? meetingPrepSummary
 							? `既存企業へ紐づけ、名刺入口フェーズを完了しました。${meetingPrepSummary}`
-							: "既存企業へ紐づけ、名刺入口フェーズを完了しました。後段の企業マスター高密度化・ABC・商談準備は未起動です。"
+							: "既存企業へ紐づけ、名刺入口フェーズを完了しました。A待ち化は企業マスターDBオートメーション（関連名刺トリガー）へ委譲します。"
 						: "既存企業へ紐づけました。営業判断=名刺だけ保存のため、外部調査・企業マスター高密度化は未実行です。",
 				};
 			}
@@ -6049,11 +6052,11 @@ async function processBusinessCard(
 				company.id,
 				"新規企業作成",
 				shouldDeepResearch
-					? `${companyMemo} 名刺入口フェーズ完了。後段の企業マスター高密度化・ABC・商談準備は未起動。`
+					? `${companyMemo} 名刺入口フェーズ完了。A待ち化は企業マスターDBオートメーション（関連名刺トリガー）へ委譲。商談準備は未起動。`
 					: `${companyMemo} 営業判断=名刺だけ保存。外部調査・企業マスター高密度化は未実行。`,
 				meetingPrepSummary,
 				shouldDeepResearch
-					? "Notion Workerが新規企業作成と名刺連携まで実行。名刺入口フェーズ完了。後段の企業マスター高密度化・ABC・商談準備は未起動。"
+					? "Notion Workerが新規企業作成と名刺連携まで実行。名刺入口フェーズ完了。A待ち化は企業マスターDBオートメーション（関連名刺トリガー）へ委譲。商談準備は未起動。"
 					: "Notion Workerが新規企業作成と名刺連携まで実行。営業判断=名刺だけ保存のため、外部調査・企業マスター高密度化は未実行。",
 			);
 			return {
@@ -6064,7 +6067,7 @@ async function processBusinessCard(
 				message: shouldDeepResearch
 					? meetingPrepSummary
 						? `新規企業を作成し、名刺入口フェーズを完了しました。${meetingPrepSummary}`
-						: "新規企業を作成し、名刺入口フェーズを完了しました。後段の企業マスター高密度化・ABC・商談準備は未起動です。"
+						: "新規企業を作成し、名刺入口フェーズを完了しました。A待ち化は企業マスターDBオートメーション（関連名刺トリガー）へ委譲します。"
 					: "新規企業を作成し、名刺と連携しました。営業判断=名刺だけ保存のため、外部調査・企業マスター高密度化は未実行です。",
 			};
 	} catch (error) {
@@ -6086,6 +6089,7 @@ type BusinessCardOcr = {
 	部署: string;
 	電話: string;
 	メール: string;
+	URL: string;
 	住所: string;
 	メモ: string;
 };
@@ -6166,6 +6170,7 @@ function parseBusinessCardOcr(raw: string): BusinessCardOcr | null {
 			部署: s("部署"),
 			電話: s("電話"),
 			メール: s("メール"),
+			URL: s("URL") || s("Web") || s("ウェブサイト") || s("ホームページ"),
 			住所: s("住所"),
 			メモ: s("メモ"),
 		};
@@ -6378,7 +6383,7 @@ async function callOpenAIBusinessCardOcr(imageDataUrl: string): Promise<Business
 					{
 						role: "system",
 						content:
-							"あなたは名刺OCRです。画像から名刺情報を読み取り、JSONだけを返す。読み取れない項目は空文字。画像に無い情報の創作は禁止。キー: 氏名, 会社名, 役職, 部署, 電話, メール, 住所, メモ(その他の特記事項)。" +
+							"あなたは名刺OCRです。画像から名刺情報を読み取り、JSONだけを返す。読み取れない項目は空文字。画像に無い情報の創作は禁止。キー: 氏名, 会社名, 役職, 部署, 電話, メール, URL, 住所, メモ(その他の特記事項)。" +
 							extra,
 					},
 					{
@@ -6463,6 +6468,7 @@ function buildAdvisorProperties(
 		ocr.部署 || ocr.役職
 			? `役職: ${[ocr.部署, ocr.役職].filter(Boolean).join(" ")}`
 			: "",
+		ocr.URL ? `URL(名刺より): ${ocr.URL}` : "",
 		cardPageUrl ? `名刺URL: ${cardPageUrl}` : "",
 		cardPageId ? `名刺ページID: ${cardPageId}` : "",
 	].filter(Boolean);
@@ -6641,6 +6647,7 @@ function buildExternalAdvisorAssessmentMemo(
 		cardPageId ? `【元名刺】${cardPageId}` : "",
 		ocr.会社名 ? `【所属候補】${ocr.会社名}` : "",
 		ocr.役職 || ocr.部署 ? `【役職】${[ocr.部署, ocr.役職].filter(Boolean).join(" ")}` : "",
+		ocr.URL ? `【名刺URL】${ocr.URL}` : "",
 	].filter(Boolean).join("\n");
 }
 
@@ -6719,6 +6726,7 @@ function businessCardOcrFromCardInfo(card: CardInfo): BusinessCardOcr {
 		部署: "",
 		電話: card.phone,
 		メール: card.email,
+		URL: card.websiteUrl,
 		住所: card.address,
 		メモ: memo,
 	};
@@ -6811,6 +6819,7 @@ function buildExternalAdvisorPublicWebPrompt(ocr: BusinessCardOcr): string {
 		`役職: ${ocr.役職 || "未確認"}`,
 		`電話番号: ${ocr.電話 || "未確認"}`,
 		`メールドメイン: ${domain}`,
+		`名刺URL: ${ocr.URL || "未確認"}`,
 		`住所/地域: ${ocr.住所 || "未確認"}`,
 		`メモ: ${ocr.メモ || "なし"}`,
 		"",
@@ -7089,7 +7098,7 @@ async function processBusinessCardImage(
 				会社名: richText(ocr.会社名),
 				役職: richText([ocr.部署, ocr.役職].filter(Boolean).join(" ")),
 				住所: richText(ocr.住所),
-				メモ: richText([entryMemo, ocr.メモ].filter(Boolean).join("\n")),
+				メモ: richText([entryMemo, ocr.URL && `URL: ${ocr.URL}`, ocr.メモ].filter(Boolean).join("\n")),
 			};
 		if (ocr.電話) ocrProps["電話"] = { phone_number: ocr.電話 };
 		if (ocr.メール) ocrProps["メール"] = { email: ocr.メール };
@@ -26787,6 +26796,7 @@ function companyToCardInfo(company: CompanyInfo): CardInfo {
 		phone,
 		address: company.address,
 		role: "",
+		websiteUrl: company.website,
 		key,
 	};
 }
@@ -28769,6 +28779,7 @@ function inquiryToCardInfo(inquiry: InquiryInfo): CardInfo {
 		phone: inquiry.phone,
 		address: "",
 		role: "",
+		websiteUrl: "",
 		key,
 	};
 }
@@ -28901,6 +28912,63 @@ async function createCompanyFromInquiry(
 		parent: { data_source_id: COMPANY_DATA_SOURCE_ID },
 		properties,
 	});
+}
+
+function buildCompanyCardIntakeMemo(card: CardInfo): string {
+	return [
+		"【名刺入口から引き継ぎ】",
+		card.name ? `担当者: ${card.name}` : "",
+		card.role ? `役職/部署: ${card.role}` : "",
+		card.email ? `メール: ${card.email}` : "",
+		card.phone ? `電話: ${card.phone}` : "",
+		card.address ? `住所: ${card.address}` : "",
+		card.websiteUrl ? `URL: ${card.websiteUrl}` : "",
+		`元名刺: ${card.page.id}`,
+	]
+		.filter(Boolean)
+		.join("\n");
+}
+
+function addCompanyCardIntakePatches(
+	patches: Record<string, SafePatch>,
+	properties: Record<string, unknown>,
+	card: CardInfo,
+): void {
+	if (card.websiteUrl) {
+		addPatchIfBlank(patches, properties, "ウェブサイトURL", card.websiteUrl);
+		addPatchIfBlank(patches, properties, "ウェブ", card.websiteUrl);
+	}
+	if (card.name) {
+		addPatchIfBlank(patches, properties, "問い合わせ担当者名", card.name);
+		addPatchIfBlank(patches, properties, "先方担当者", card.name);
+	}
+	if (card.email && isTextPropertyBlank(properties["問い合わせ担当者メールアドレス"])) {
+		patches["問い合わせ担当者メールアドレス"] = { kind: "email", value: card.email };
+	}
+	if (card.email && isTextPropertyBlank(properties["メールアドレス"])) {
+		patches["メールアドレス"] = { kind: "email", value: card.email };
+	}
+	if (card.phone && isTextPropertyBlank(properties["問い合わせ担当者電話番号"])) {
+		patches["問い合わせ担当者電話番号"] = { kind: "phone", value: card.phone };
+	}
+	if (card.phone && isTextPropertyBlank(properties["電話番号"])) {
+		patches["電話番号"] = { kind: "phone", value: card.phone };
+	}
+	const meetingPerson = [card.name, card.role].filter(Boolean).join(" / ");
+	addPatchIfBlank(patches, properties, "面談相手（名前・役職）", meetingPerson);
+	addPatchIfBlank(patches, properties, "備考", buildCompanyCardIntakeMemo(card));
+	appendMemoText(
+		patches,
+		properties,
+		"名刺起点Webhookメモ",
+		`Notion Workerが名刺起点で企業へ紐づけ。名刺入口フェーズは完了。A待ち化は企業マスターDBオートメーション（関連名刺トリガー）へ委譲。元名刺: ${card.page.id}`,
+	);
+	appendMemoText(
+		patches,
+		properties,
+		"企業AI受付メモ",
+		`【名刺入口】${todayDateJST()} 元名刺 ${card.page.id} を企業マスターへ紐づけ。`,
+	);
 }
 
 async function updateExistingCompanyFromInquiry(
@@ -29200,7 +29268,7 @@ async function createCompany(
 		),
 		名刺起点Webhookメモ: richText(
 			deepResearch
-				? "Notion Workerが名刺起点で企業を作成。名刺入口フェーズは完了。後段の企業マスター高密度化・ABC・商談準備は未起動。"
+				? "Notion Workerが名刺起点で企業を作成。名刺入口フェーズは完了。A待ち化は企業マスターDBオートメーション（関連名刺トリガー）へ委譲。商談準備は未起動。"
 				: "Notion Workerが名刺起点で企業を作成。営業判断=名刺だけ保存のため、外部調査と企業マスター高密度化は未実行。",
 		),
 		重複整理ステータス: select(weakCandidate ? "重複候補" : "正本候補"),
@@ -29215,8 +29283,19 @@ async function createCompany(
 		properties["電話番号"] = phoneNumber(card.phone);
 		properties["問い合わせ担当者電話番号"] = phoneNumber(card.phone);
 	}
+	if (card.websiteUrl) {
+		properties["ウェブサイトURL"] = { url: card.websiteUrl };
+		properties["ウェブ"] = { url: card.websiteUrl };
+	}
 	if (card.address) properties["住所"] = richText(card.address);
-	if (card.name) properties["問い合わせ担当者名"] = richText(card.name);
+	if (card.name) {
+		properties["問い合わせ担当者名"] = richText(card.name);
+		properties["先方担当者"] = richText(card.name);
+	}
+	const meetingPerson = [card.name, card.role].filter(Boolean).join(" / ");
+	if (meetingPerson) properties["面談相手（名前・役職）"] = richText(meetingPerson);
+	const intakeMemo = buildCompanyCardIntakeMemo(card);
+	if (intakeMemo) properties["備考"] = richText(intakeMemo);
 	if (weakCandidate) {
 		properties["正本企業"] = relation(weakCandidate.page.id);
 		properties["重複整理メモ"] = richText(
@@ -29340,7 +29419,7 @@ async function linkCardToCompany(
 			),
 		},
 	});
-	await addCardRelationToCompany(notion, companyId, card.page.id);
+	await addCardRelationToCompany(notion, companyId, card);
 }
 
 async function createMeetingPrepReportFromBusinessCard(
@@ -29368,17 +29447,17 @@ async function createMeetingPrepReportFromBusinessCard(
 async function addCardRelationToCompany(
 	notion: NotionClient,
 	companyId: string,
-	cardId: string,
+	card: CardInfo,
 ): Promise<void> {
 	const company = await notion.pages.retrieve({ page_id: companyId });
 	const current = relationIdsFromProperty(company.properties?.["関連名刺"]);
-	if (current.includes(cardId)) return;
-	await notion.pages.update({
-		page_id: companyId,
-		properties: {
-			関連名刺: relationIds([...current, cardId]),
-		},
-	});
+	const properties = company.properties ?? {};
+	const patches: Record<string, SafePatch> = {};
+	if (!current.includes(card.page.id)) {
+		patches["関連名刺"] = { kind: "relation", ids: [...current, card.page.id] };
+	}
+	addCompanyCardIntakePatches(patches, properties, card);
+	await safeUpdateExistingProperties(notion, company, patches);
 }
 
 async function markCardProcessing(
@@ -29574,6 +29653,15 @@ function readCard(page: Page): CardInfo {
 	const companyName = text(properties["会社名"]);
 	const emailValue = text(properties["メール"]);
 	const phoneValue = digits(text(properties["電話"]));
+	const websiteUrl = extractFirstUrl(
+		[
+			text(properties["URL"]),
+			text(properties["ウェブサイト"]),
+			text(properties["Web"]),
+			text(properties["メモ"]),
+			text(properties["名刺AI処理メモ"]),
+		].join("\n"),
+	);
 	const domain = emailValue.includes("@")
 		? emailValue.split("@").pop()?.toLowerCase() || ""
 		: "";
@@ -29592,8 +29680,28 @@ function readCard(page: Page): CardInfo {
 		phone: phoneValue,
 		address: text(properties["住所"]),
 		role: text(properties["役職"]),
+		websiteUrl,
 		key,
 	};
+}
+
+function extractFirstUrl(value: string): string {
+	const pattern =
+		/(https?:\/\/[^\s"'<>、。)）\]}]+|www\.[^\s"'<>、。)）\]}]+|(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s"'<>、。)）\]}]*)?)/gi;
+	for (const match of value.matchAll(pattern)) {
+		const index = match.index ?? 0;
+		if (index > 0 && value[index - 1] === "@") continue;
+		const raw = match[0].replace(/[.,;:、。]+$/g, "");
+		const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+		try {
+			const url = new URL(withScheme);
+			if (/notion\.so$|app\.notion\.com$/.test(url.hostname)) continue;
+			return url.toString().slice(0, 1900);
+		} catch {
+			continue;
+		}
+	}
+	return "";
 }
 
 function shouldProcess(card: CardInfo): boolean {
@@ -29671,6 +29779,16 @@ function propertyValueForExistingType(
 		if (type === "rich_text") return richText(patch.value);
 		if (type === "title") return title(patch.value);
 		if (type === "url") return { url: patch.value.slice(0, 1900) };
+		return undefined;
+	}
+	if (patch.kind === "email") {
+		if (type === "email") return { email: patch.value };
+		if (type === "rich_text") return richText(patch.value);
+		return undefined;
+	}
+	if (patch.kind === "phone") {
+		if (type === "phone_number") return { phone_number: patch.value };
+		if (type === "rich_text") return richText(patch.value);
 		return undefined;
 	}
 	if (patch.kind === "select") {
