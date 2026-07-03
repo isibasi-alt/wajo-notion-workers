@@ -6655,41 +6655,40 @@ function primaryRoutingLabel(routing: BrokerPrimaryRouting): string {
 	return "要確認";
 }
 
-function shouldRunExternalAdvisorPublicWebResearch(assessment: BrokerPrimaryAssessment): boolean {
-	return assessment.routing === "broker" && assessment.stopReasons.length === 0;
+function shouldAnnounceExternalAdvisorReviewHold(assessment: BrokerPrimaryAssessment): boolean {
+	return assessment.routing !== "broker";
 }
 
-function buildExternalAdvisorResearchStopAnnouncement(
+function buildExternalAdvisorReviewHoldAnnouncement(
 	assessment: BrokerPrimaryAssessment,
 	cardPageId?: string,
 ): string {
 	const reasons = assessment.stopReasons.length ? assessment.stopReasons.join(" / ") : "60点基準未達または判定根拠不足";
 	return [
-		"⏸ 社外顧問の公開Web調査を停止しました。",
+		"⏸ 社外顧問の最終判定は要確認で停止しました。",
 		`【停止理由】${reasons}`,
 		assessment.score === null
 			? "【一次スコア】未採点"
 			: `【一次スコア】${assessment.score}点 / 判定=${primaryRoutingLabel(assessment.routing)}`,
+		"【公開Web調査】実施を試行済みです。結果または未実行理由は判定根拠メモを確認してください。",
 		"【打開条件】本人の立場、所属、紹介可能領域、企業相談との混在有無を確認し、社外顧問として追うか企業として扱うかを決めてください。",
 		cardPageId ? `【元名刺】${cardPageId}` : "",
 	].filter(Boolean).join("\n");
 }
 
-async function runExternalAdvisorResearchIfAllowed(
+async function runExternalAdvisorResearchAndAnnounce(
 	notion: NotionClient,
 	advisorPage: Page,
 	ocr: BusinessCardOcr,
 	cardPageId?: string,
 ): Promise<void> {
 	const assessment = calculateBrokerPrimaryAssessment(ocr);
-	if (shouldRunExternalAdvisorPublicWebResearch(assessment)) {
-		await researchExternalAdvisorPublicWeb(notion, advisorPage, ocr);
-		return;
-	}
+	await researchExternalAdvisorPublicWeb(notion, advisorPage, ocr);
+	if (!shouldAnnounceExternalAdvisorReviewHold(assessment)) return;
 	await createPageComment(
 		notion,
 		advisorPage.id,
-		buildExternalAdvisorResearchStopAnnouncement(assessment, cardPageId),
+		buildExternalAdvisorReviewHoldAnnouncement(assessment, cardPageId),
 	).catch(() => {});
 }
 
@@ -6809,12 +6808,12 @@ async function registerExternalAdvisorFromBusinessCard(
 		typeof card.page.url === "string" ? card.page.url : "",
 		card.page.id,
 	);
-	await runExternalAdvisorResearchIfAllowed(notion, advisor.page, ocr, card.page.id);
+	await runExternalAdvisorResearchAndAnnounce(notion, advisor.page, ocr, card.page.id);
 	const memo = [
 		`【社外顧問DB登録】${advisor.created ? "新規登録" : "既存ページへ紐づけ更新"}`,
 		`【社外顧問ページ】${advisor.page.id}`,
 		`【元名刺】${card.page.id}`,
-		"【企業マスター高密度化】社外顧問として扱うため対象外。企業作成・外部調査・商談準備レポート自動作成は行わない。",
+		"【企業マスター高密度化】社外顧問として扱うため対象外。企業作成・商談準備レポート自動作成は行わない。公開Web調査は社外顧問DB側へ記録する。",
 		"【注意】個人に対する反社判定は行っていない。必要時は本人一致度、リスク兆候、追加確認要否だけを別途確認する。",
 	].join("\n");
 	await linkBusinessCardToAdvisor(notion, card.page, advisor.page.id, memo);
@@ -7194,10 +7193,10 @@ async function processBusinessCardImage(
 			typeof page.url === "string" ? page.url : "",
 			page.id,
 		);
-		await runExternalAdvisorResearchIfAllowed(notion, advisor.page, ocr, page.id);
+		await runExternalAdvisorResearchAndAnnounce(notion, advisor.page, ocr, page.id);
 		const memo = buildHoldMemo({
 			stopReason: "撮影時に本人が社外顧問として選択されたため、企業マスター高密度化の対象外。",
-			scope: "名刺画像保存とOCR結果の反映まで。企業マスターDB連携と外部調査は未実行。",
+			scope: "名刺画像保存、OCR結果反映、社外顧問DB登録、公開Web調査の記録まで。企業マスターDB連携は未実行。",
 			humanDecision: "社外顧問DBで関係構築対象として追うか、企業案件として扱い直すかを大ちゃんが決める。",
 			restartCondition: "企業案件として扱う判断に変わった場合のみ、routing=company で再実行。",
 		});

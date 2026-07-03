@@ -626,14 +626,15 @@ async function main() {
 	assert.deepEqual(brokerCardUpdate!.properties?.["関連社外顧問"], {
 		relation: [{ id: "advisor-page-1" }],
 	});
-	assert.equal(
-		brokerCase.updates.some(
-			(update) => update.page_id === "advisor-page-1" && update.properties?.["判定根拠メモ"],
-		),
-		false,
-		"60点未満または停止条件ありなら公開Web調査を書き足さない",
+	const brokerResearchUpdate = brokerCase.updates.find(
+		(update) => update.page_id === "advisor-page-1" && update.properties?.["判定根拠メモ"],
 	);
-	assert.match(JSON.stringify(brokerCase.comments), /公開Web調査を停止しました/);
+	assert.ok(brokerResearchUpdate, "停止条件があっても公開Web調査の結果または未実行理由を残す");
+	assert.match(
+		richTextFromPatch(brokerResearchUpdate!.properties?.["判定根拠メモ"]),
+		/公開Web調査未実行/,
+	);
+	assert.match(JSON.stringify(brokerCase.comments), /最終判定は要確認で停止しました/);
 	assert.match(JSON.stringify(brokerCase.comments), /打開条件/);
 
 	const brokerDryRunCase = makeNotionForCardCase("");
