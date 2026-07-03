@@ -6006,9 +6006,12 @@ async function processBusinessCard(
 
 			if (strong.length === 1) {
 				const company = strong[0]!;
-				if (shouldDeepResearch) {
-					await enrichCompany(notion, company.page, card, false);
-				}
+				const abcQueued = await queueCompanyAbcRun(
+					notion,
+					company.page,
+					"名刺入口で既存企業への紐づけが確定",
+					shouldDeepResearch ? "active" : "save-only",
+				);
 				const meetingPrepSummary = shouldCreateMeetingPrep
 					? await createMeetingPrepReportFromBusinessCard(notion, company.page.id)
 					: null;
@@ -6033,16 +6036,19 @@ async function processBusinessCard(
 					companyName: company.name,
 					message: shouldDeepResearch
 						? meetingPrepSummary
-							? `既存企業へ紐づけ、必要項目を補完しました。${meetingPrepSummary}`
-							: "既存企業へ紐づけ、必要項目を補完しました。"
+							? `既存企業へ紐づけ、ABC入口${abcQueued ? "へ渡しました" : "は既存状態を保持しました"}。${meetingPrepSummary}`
+							: `既存企業へ紐づけ、ABC入口${abcQueued ? "へ渡しました" : "は既存状態を保持しました"}。`
 						: "既存企業へ紐づけました。営業判断=名刺だけ保存のため、外部調査・企業マスター高密度化は未実行です。",
 				};
 			}
 
 			const company = await createCompany(notion, card, weak[0], shouldDeepResearch);
-			if (shouldDeepResearch) {
-				await enrichCompany(notion, company, card, Boolean(weak[0]));
-			}
+			const abcQueued = await queueCompanyAbcRun(
+				notion,
+				company,
+				"名刺入口で新規企業作成が確定",
+				shouldDeepResearch ? "active" : "save-only",
+			);
 			const meetingPrepSummary = shouldCreateMeetingPrep
 				? await createMeetingPrepReportFromBusinessCard(notion, company.id)
 				: null;
@@ -6069,8 +6075,8 @@ async function processBusinessCard(
 				companyName: card.companyName,
 				message: shouldDeepResearch
 					? meetingPrepSummary
-						? `新規企業を作成し、企業マスター高密度化を実行しました。調査結果は企業調査ステータスを確認してください。${meetingPrepSummary}`
-						: "新規企業を作成し、企業マスター高密度化を実行しました。調査結果は企業調査ステータスを確認してください。"
+						? `新規企業を作成し、ABC入口${abcQueued ? "へ渡しました" : "は既存状態を保持しました"}。${meetingPrepSummary}`
+						: `新規企業を作成し、ABC入口${abcQueued ? "へ渡しました" : "は既存状態を保持しました"}。`
 					: "新規企業を作成し、名刺と連携しました。営業判断=名刺だけ保存のため、外部調査・企業マスター高密度化は未実行です。",
 			};
 	} catch (error) {
@@ -6105,6 +6111,15 @@ type BrokerPrimaryAssessment = {
 	stopReasons: string[];
 	nextAction: "進行可" | "軽確認" | "要追加調査" | "要管理者確認" | "要法務確認" | "保留";
 };
+
+const ABC_READY_STATUS = "ABC｜A待ち";
+const ABC_IN_FLIGHT_OR_DONE_STATUSES = new Set([
+	"ABC｜A待ち",
+	"ABC｜B待ち",
+	"ABC｜C待ち",
+	"ABC｜完了",
+	"ABC｜要確認",
+]);
 
 function buildHoldMemo(input: {
 	stopReason: string;
@@ -9400,6 +9415,7 @@ async function processInquiryCompanyLink(
 			inquiry.companyLinkStatus === "新規作成済"
 				? "新規作成済"
 				: "既存企業に紐づけ済";
+		let abcQueued = false;
 		if (!input.dryRun) {
 			await markInquiryLinkedToCompany(
 				notion,
@@ -9413,6 +9429,12 @@ async function processInquiryCompanyLink(
 				inquiry.relatedCompanyIds[0]!,
 				inquiry.page.id,
 			);
+			abcQueued = await queueCompanyAbcRun(
+				notion,
+				companyPage,
+				"問い合わせ入口で既存関連企業を確認",
+				"active",
+			);
 		}
 		return {
 			inquiryPageId: inquiry.page.id,
@@ -9421,7 +9443,7 @@ async function processInquiryCompanyLink(
 			companyName: company.name || inquiry.companyName || null,
 			message: input.dryRun
 				? "dry-run: 既に関連企業が入っています。"
-				: "既存の関連企業を保持し、問い合わせ側の連携状態だけ整えました。",
+				: `既存の関連企業を保持し、問い合わせ側の連携状態を整えました。ABC入口${abcQueued ? "へ渡しました" : "は既存状態を保持しました"}。`,
 		};
 	}
 
@@ -9453,6 +9475,7 @@ async function processInquiryCompanyLink(
 			page_id: duplicateCompanies[0]!,
 		});
 		const company = readCompany(companyPage);
+		let abcQueued = false;
 		if (!input.dryRun) {
 			await markInquiryLinkedToCompany(
 				notion,
@@ -9462,13 +9485,19 @@ async function processInquiryCompanyLink(
 				"同一キーの既存問い合わせに関連企業があるため、その企業へ紐づけ。",
 			);
 			await addInquiryRelationToCompany(notion, duplicateCompanies[0]!, inquiry.page.id);
+			abcQueued = await queueCompanyAbcRun(
+				notion,
+				companyPage,
+				"問い合わせ入口で同一キーの既存企業を確認",
+				"active",
+			);
 		}
 		return {
 			inquiryPageId: inquiry.page.id,
 			action: input.dryRun ? "dry-run" : "existing-linked",
 			companyId: duplicateCompanies[0]!,
 			companyName: company.name || inquiry.companyName || null,
-			message: "同一問い合わせキーの既存企業へ紐づけました。",
+			message: `同一問い合わせキーの既存企業へ紐づけました。ABC入口${abcQueued ? "へ渡しました" : "は既存状態を保持しました"}。`,
 		};
 	}
 	if (duplicateCompanies.length > 1 || (duplicates.length > 0 && !inquiry.companyName)) {
@@ -9525,12 +9554,18 @@ async function processInquiryCompanyLink(
 			`既存企業に紐づけ済: ${company.reasons.join(" / ")}`,
 		);
 		await addInquiryRelationToCompany(notion, company.page.id, inquiry.page.id);
+		const abcQueued = await queueCompanyAbcRun(
+			notion,
+			company.page,
+			"問い合わせ入口で既存企業への紐づけが確定",
+			"active",
+		);
 		return {
 			inquiryPageId: inquiry.page.id,
 			action: "existing-linked",
 			companyId: company.page.id,
 			companyName: company.name,
-			message: "既存企業へ紐づけ、問い合わせ要約と窓口情報を補完しました。",
+			message: `既存企業へ紐づけ、問い合わせ要約と窓口情報を補完しました。ABC入口${abcQueued ? "へ渡しました" : "は既存状態を保持しました"}。`,
 		};
 	}
 
@@ -9559,12 +9594,18 @@ async function processInquiryCompanyLink(
 			? `近似候補はあるが強い一致なし。問い合わせ起点で新規作成し、重複候補へ回しました: ${weak[0].name}`
 			: "強い既存候補なし。問い合わせ起点で新規企業を作成しました。",
 	);
+	const abcQueued = await queueCompanyAbcRun(
+		notion,
+		company,
+		"問い合わせ入口で新規企業作成が確定",
+		"active",
+	);
 	return {
 		inquiryPageId: inquiry.page.id,
 		action: "created-company",
 		companyId: company.id,
 		companyName: inquiry.companyName,
-		message: "新規企業を作成し、問い合わせへ関連企業を返却しました。",
+		message: `新規企業を作成し、問い合わせへ関連企業を返却しました。ABC入口${abcQueued ? "へ渡しました" : "は既存状態を保持しました"}。`,
 	};
 }
 
@@ -28846,7 +28887,6 @@ async function createCompanyFromInquiry(
 		企業AI受付メモ: richText(
 			`問い合わせ起点でWorkerが作成。元問い合わせ: ${inquiry.title || inquiry.page.id}`,
 		),
-		企業調査ステータス: select("解析開始"),
 		問い合わせ要約: richText(inquiry.summary || inquiry.body || inquiry.title),
 		売買区分: select(inquiry.dealType || "不明"),
 		重複整理ステータス: select(weakCandidate ? "重複候補" : "正本候補"),
@@ -29170,10 +29210,9 @@ async function createCompany(
 		企業AI受付メモ: richText(
 			`名刺起点でWorkerが作成。元名刺: ${card.name || card.page.id}`,
 		),
-		企業調査ステータス: select(deepResearch ? "解析開始" : "未着手"),
 		名刺起点Webhookメモ: richText(
 			deepResearch
-				? "Notion Workerが名刺起点で企業を作成し、外部調査と企業マスター高密度化を実行。"
+				? "Notion Workerが名刺起点で企業を作成。企業確定後、ABC入口へ引き継ぎ。"
 				: "Notion Workerが名刺起点で企業を作成。営業判断=名刺だけ保存のため、外部調査と企業マスター高密度化は未実行。",
 		),
 		重複整理ステータス: select(weakCandidate ? "重複候補" : "正本候補"),
@@ -29222,6 +29261,58 @@ async function enrichCompany(
 		},
 	});
 	await processCompanyResearch({ companyPageId: company.id, dryRun: false }, notion);
+}
+
+async function queueCompanyAbcRun(
+	notion: NotionClient,
+	page: Page,
+	reason: string,
+	engagementIntent: "active" | "save-only",
+): Promise<boolean> {
+	if (engagementIntent !== "active") return false;
+	let targetPage = page;
+	try {
+		targetPage = await notion.pages.retrieve({ page_id: page.id });
+	} catch (error) {
+		console.log("ABC queue page refresh skipped", {
+			pageId: page.id,
+			error: String(error),
+		});
+	}
+	let properties = targetPage.properties ?? {};
+	if (!Object.prototype.hasOwnProperty.call(properties, "ABC実行ステータス")) {
+		try {
+			targetPage = await notion.pages.retrieve({ page_id: page.id });
+			properties = targetPage.properties ?? {};
+		} catch (error) {
+			console.log("ABC queue skipped; company page retrieve failed", {
+				pageId: page.id,
+				error: String(error),
+			});
+			return false;
+		}
+	}
+	if (!Object.prototype.hasOwnProperty.call(properties, "ABC実行ステータス")) {
+		return false;
+	}
+	const currentStatus = text(properties["ABC実行ステータス"]);
+	if (ABC_IN_FLIGHT_OR_DONE_STATUSES.has(currentStatus)) return false;
+	const memo = appendShortMemo(
+		text(properties["企業AI受付メモ"]),
+		`【ABC入口】${todayDateJST()} ${reason}。企業が1社に確定したため、ABC実行ステータスを ${ABC_READY_STATUS} に設定。`,
+	);
+	await safeUpdateExistingProperties(notion, targetPage, {
+		ABC実行ステータス: { kind: "select", value: ABC_READY_STATUS },
+		企業AI受付メモ: { kind: "text", value: memo },
+	});
+	await createPageComment(
+		notion,
+		targetPage.id,
+		`▶️ ABC入口へ渡しました。\n理由: ${reason}\nABC実行ステータス: ${ABC_READY_STATUS}`,
+	).catch((error) => {
+		console.log("ABC queue comment skipped", { pageId: targetPage.id, error: String(error) });
+	});
+	return true;
 }
 
 async function linkCardToCompany(

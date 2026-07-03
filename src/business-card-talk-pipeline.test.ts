@@ -159,6 +159,7 @@ function makeNotionForCardCase(companyClosingPoint: string) {
 			関連問い合わせ: relationProp([]),
 			関連案件: relationProp([]),
 			企業AI受付メモ: richTextProp(""),
+			ABC実行ステータス: selectProp("未着手"),
 			企業調査ステータス: selectProp("未着手"),
 			名刺起点Webhookメモ: richTextProp(""),
 		},
@@ -256,7 +257,11 @@ function makeNotionForNewCardCase(params: {
 					parentDataSourceId === "de575c80-5e25-41a5-a27d-b1b3d84a0cbd"
 						? `advisor-page-${creates.length}`
 						: "new-company-1";
-				const created = { id, properties };
+				const createdProperties =
+					parentDataSourceId === "de575c80-5e25-41a5-a27d-b1b3d84a0cbd"
+						? properties
+						: { ...properties, ABC実行ステータス: selectProp("未着手") };
+				const created = { id, properties: createdProperties };
 				notion.__createdCompanies.set(created.id, created);
 				return created as { id: string; properties: Record<string, unknown> };
 			},
@@ -511,20 +516,29 @@ async function main() {
 		processBusinessCardForTest({ pageId: "card-1", dryRun: false }, notion),
 	);
 	assert.equal(cardResult.action, "existing-linked");
-	const companyUpdate = updates.find(
+	const companyResearchUpdate = updates.find(
 		(update) =>
 			update.page_id === "8a6ed4d7709a44ae90e61af3a79b9bc1" &&
 			update.properties &&
 			Object.prototype.hasOwnProperty.call(update.properties, "成約へのポイント"),
 	);
-	assert.ok(companyUpdate);
-	const closingPatch = companyUpdate!.properties?.["成約へのポイント"];
-	const closingText = richTextFromPatch(closingPatch);
-	assert.equal(hasStrikethroughText(closingPatch), true);
-	assert.match(closingText, /【取れていない事実】/);
-	assert.match(closingText, /【取れば取れる】/);
-	assert.match(closingText, /【初回ヒアリングで取る】/);
-	assert.match(closingText, /【修正情報】/);
+	assert.equal(
+		Boolean(companyResearchUpdate),
+		false,
+		"名刺入口では旧Workerの企業深掘り/3C補正を直接走らせない",
+	);
+	const abcUpdate = updates.find(
+		(update) =>
+			update.page_id === "8a6ed4d7709a44ae90e61af3a79b9bc1" &&
+			update.properties &&
+			Object.prototype.hasOwnProperty.call(update.properties, "ABC実行ステータス"),
+	);
+	assert.ok(abcUpdate);
+	assert.equal(selectName(abcUpdate!.properties?.["ABC実行ステータス"]), "ABC｜A待ち");
+	assert.match(
+		richTextFromPatch(abcUpdate!.properties?.["企業AI受付メモ"]),
+		/【ABC入口】/,
+	);
 
 	const saveOnlyCase = makeNotionForCardCase(
 		"仮説ですが、推測ですが、成約までの決裁タイミングは未確認です。",
@@ -552,6 +566,16 @@ async function main() {
 		),
 		false,
 		"名刺だけ保存なら企業深掘りと3C補正を走らせない",
+	);
+	assert.equal(
+		saveOnlyCase.updates.some(
+			(update) =>
+				update.page_id === "8a6ed4d7709a44ae90e61af3a79b9bc1" &&
+				update.properties &&
+				Object.prototype.hasOwnProperty.call(update.properties, "ABC実行ステータス"),
+		),
+		false,
+		"名刺だけ保存ならABCへ渡さない",
 	);
 	const saveOnlyCardUpdate = saveOnlyCase.updates.find(
 		(update) =>
@@ -1002,6 +1026,32 @@ async function main() {
 				"新規企業が1件作成される",
 			);
 		}
+
+	{
+		const { notion, updates, creates } = makeNotionForNewCardCase({
+			cardCompanyName: "ABC起動テスト株式会社",
+			cardName: "起動 太郎",
+			cardRole: "営業部長",
+			cardPhone: "06-2222-3333",
+			cardEmail: "taro@abc-start.example",
+			cardAddress: "大阪府大阪市中央区",
+		});
+		const newActiveResult = await withoutAiKeys(() =>
+			processBusinessCardForTest({ pageId: "card-1", dryRun: false }, notion),
+		);
+		assert.equal(newActiveResult.action, "created-company");
+		assert.equal(newActiveResult.companyId, "new-company-1");
+		assert.equal(
+			Object.prototype.hasOwnProperty.call(creates[0]?.properties ?? {}, "企業調査ステータス"),
+			false,
+			"新規企業作成時に旧 企業調査ステータス は書かない",
+		);
+		const abcUpdate = updates.find(
+			(update) => update.page_id === "new-company-1" && update.properties?.["ABC実行ステータス"],
+		);
+		assert.ok(abcUpdate);
+		assert.equal(selectName(abcUpdate!.properties?.["ABC実行ステータス"]), "ABC｜A待ち");
+	}
 
 	{
 		const { notion, updates, company } = makeNotionForCompanyResearchCase();
