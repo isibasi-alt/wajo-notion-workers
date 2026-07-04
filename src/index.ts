@@ -7154,6 +7154,13 @@ async function processBusinessCardImage(
 		企業重複チェックキー: richText(imageKey),
 		名刺AI処理状態: select(initialAiState),
 		企業連携ステータス: select(initialLinkState),
+		// 撮影(名刺パシャ)のスマホ2選択を、メモ埋もれでなく専用プロパティにも残す(ベタ打ちと統一)。
+		"どこに登録する？": select(
+			routing === "broker" ? "社外顧問" : routing === "later" ? "要確認" : "企業",
+		),
+		...(routing !== "later"
+			? { "追いかける？": select(engagement === "active" ? "追う" : "追わない") }
+			: {}),
 	};
 	if (input.assigneeUserId) {
 		properties["担当営業ユーザー"] = {
