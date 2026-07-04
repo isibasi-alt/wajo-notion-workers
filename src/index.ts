@@ -5918,7 +5918,9 @@ async function processBusinessCard(
 			page_id: input.pageId,
 		}));
 	const card = readCard(page);
-	const routing = input.routing ?? "company";
+	// ベタ打ち入力対策: webhook/画像で routing 未指定なら、名刺の「入力種別」selectから振り分けを導出する。
+	// (企業→company / 社外顧問→broker / 要確認→later。空欄は従来通り company)
+	const routing = input.routing ?? normalizeCardRouting(text(page.properties?.["入力種別"]));
 	const engagementIntent = input.engagementIntent ?? "active";
 	const shouldDeepResearch = Boolean(
 		!input.dryRun && input.deepResearch !== false && routing === "company" && engagementIntent === "active",
@@ -6302,7 +6304,7 @@ function normalizeCardRouting(value: string | undefined): "company" | "broker" |
 	if (normalized === "later") return "later";
 	const v = raw;
 	if (v.includes("社外顧問") || v.includes("ブローカー") || v.includes("🤝")) return "broker";
-	if (v.includes("あとで") || v.includes("後で") || v.includes("❓")) return "later";
+	if (v.includes("あとで") || v.includes("後で") || v.includes("要確認") || v.includes("❓")) return "later";
 	return "company"; // 未指定/「企業」は従来通り企業連携へ
 }
 export { normalizeCardRouting as normalizeCardRoutingForTest };
