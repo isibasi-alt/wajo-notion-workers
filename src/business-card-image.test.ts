@@ -58,7 +58,7 @@ async function main() {
 	assert.equal(routing("company"), "company");
 	assert.equal(routing(undefined), "company"); // 未指定は従来通り企業連携
 	assert.equal(routing(""), "company");
-	// ── 名刺「入力種別」select(ベタ打ち振り分け)の3値 ──
+	// ── 名刺「企業？社外顧問？」select(ベタ打ち振り分け)の3値 ──
 	assert.equal(routing("企業"), "company");
 	assert.equal(routing("社外顧問"), "broker");
 	assert.equal(routing("要確認"), "later");
