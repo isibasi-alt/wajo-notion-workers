@@ -29501,6 +29501,11 @@ function addCompanyCardIntakePatches(
 	}
 	const meetingPerson = [card.name, card.role].filter(Boolean).join(" / ");
 	addPatchIfBlank(patches, properties, "面談相手（名前・役職）", meetingPerson);
+	// 営業の「追いかける？」宣言は最新の意思表示なので、既存値があっても上書きする（2026-07-06 大ちゃん指示で企業マスターに列追加）。
+	const pursueChoiceForCompany = text(card.page.properties?.["追いかける？"]);
+	if (pursueChoiceForCompany === "追う" || pursueChoiceForCompany === "追わない") {
+		patches["追いかける？"] = { kind: "select", value: pursueChoiceForCompany };
+	}
 	addPatchIfBlank(patches, properties, "備考", buildCompanyCardIntakeMemo(card));
 	appendMemoText(
 		patches,
@@ -29818,6 +29823,13 @@ async function createCompany(
 		),
 		重複整理ステータス: select(weakCandidate ? "重複候補" : "正本候補"),
 		関連名刺: relation(card.page.id),
+		// 営業の「追いかける？」宣言を企業マスターの専用selectへ（2026-07-06 大ちゃん指示で列追加）。
+		...(() => {
+			const pursueChoice = text(card.page.properties?.["追いかける？"]);
+			return pursueChoice === "追う" || pursueChoice === "追わない"
+				? { "追いかける？": select(pursueChoice) }
+				: {};
+		})(),
 	};
 
 	if (card.email) {
