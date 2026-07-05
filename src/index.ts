@@ -29449,8 +29449,17 @@ function buildCompanyCardIntakeMemo(card: CardInfo): string {
 	// 営業が名刺に手書きした「営業メモ」を企業マスター備考へ橋渡し(後から合わせられない一次情報)。
 	const salesMemo = text(card.page.properties?.["営業メモ"]);
 	const cardMemo = text(card.page.properties?.["メモ"]);
+	// 「追いかける？」の営業宣言も備考へ明示する。従来は追わない時だけメモに残り、追う熱量が企業側で無言だった。
+	const pursueChoice = text(card.page.properties?.["追いかける？"]);
+	const pursueLine =
+		pursueChoice === "追う"
+			? `営業判断: 本気で追う（追いかける？=追う・${todayIsoDateInTokyo()}）`
+			: pursueChoice === "追わない"
+				? `営業判断: 名刺だけ保存（追いかける？=追わない・${todayIsoDateInTokyo()}）`
+				: "";
 	return [
 		"【名刺入口から引き継ぎ】",
+		pursueLine,
 		card.name ? `担当者: ${card.name}` : "",
 		card.role ? `役職/部署: ${card.role}` : "",
 		card.email ? `メール: ${card.email}` : "",
