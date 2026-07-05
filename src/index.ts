@@ -5921,7 +5921,9 @@ async function processBusinessCard(
 	// ベタ打ち入力対策: webhook/画像で routing 未指定なら、名刺の「どこに登録する？」selectから振り分けを導出する。
 	// (企業→company / 社外顧問→broker / 要確認→later。空欄は従来通り company)
 	const routing = input.routing ?? normalizeCardRouting(text(page.properties?.["どこに登録する？"]));
-	const engagementIntent = input.engagementIntent ?? "active";
+	// 「追いかける？」を engagement に伝播(追う→active/本気で追う, 追わない→save-only)。空は従来通り active。
+	const engagementIntent =
+		input.engagementIntent ?? normalizeCardEngagement(text(page.properties?.["追いかける？"]));
 	const shouldDeepResearch = Boolean(
 		!input.dryRun && input.deepResearch !== false && routing === "company" && engagementIntent === "active",
 	);
