@@ -4463,6 +4463,7 @@ worker.webhook("processBusinessCardImageWebhook", {
 						body["担当者"],
 						extractTriggerUserIdFromWebhook(body),
 					),
+					referrerPageUrl: firstString(body.referrerPageUrl, body.referrer, body["紹介元"]),
 					dryRun: body.dryRun === true,
 				},
 				notion as unknown as NotionClient,
@@ -4490,6 +4491,9 @@ worker.tool("processBusinessCardImage", {
 				.string()
 				.describe("補助: pursue / not_pursue。engagementIntentと同等の意図"),
 			assigneeUserId: j.string().describe("担当営業のNotionユーザーID。空なら未設定"),
+			referrerPageUrl: j
+				.string()
+				.describe("紹介経由パシャ: 紹介者の名刺ページURL(共有シート経由)。空なら通常パシャ"),
 			dryRun: j.boolean().describe("trueならOCRのみ実行し書き込みません"),
 		}),
 		outputSchema: j.object({
@@ -4499,7 +4503,16 @@ worker.tool("processBusinessCardImage", {
 		message: j.string(),
 		}),
 		execute: async (
-			{ imageBase64, routing, intakeGuess, engagementIntent, pursueIntent, assigneeUserId, dryRun },
+			{
+				imageBase64,
+				routing,
+				intakeGuess,
+				engagementIntent,
+				pursueIntent,
+				assigneeUserId,
+				referrerPageUrl,
+				dryRun,
+			},
 			{ notion },
 		) => {
 			return processBusinessCardImage(
@@ -4510,6 +4523,7 @@ worker.tool("processBusinessCardImage", {
 					intakeGuess: intakeGuess || routing || undefined,
 					pursueIntent: pursueIntent || engagementIntent || undefined,
 					assigneeUserId: assigneeUserId || undefined,
+					referrerPageUrl: referrerPageUrl || undefined,
 					dryRun,
 				},
 				notion as unknown as NotionClient,
@@ -6311,6 +6325,18 @@ function normalizeCardRouting(value: string | undefined): "company" | "broker" |
 }
 export { normalizeCardRouting as normalizeCardRoutingForTest };
 
+// 紹介経由パシャ: 共有シートで渡されたNotionページURLからページIDを取り出す(ダッシュあり/なし両対応)。
+function extractNotionPageIdFromUrl(value: string | undefined): string | null {
+	const raw = String(value ?? "").trim();
+	if (!raw) return null;
+	const dashed = raw.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+	if (dashed) return dashed[0].toLowerCase();
+	const plain = raw.match(/[0-9a-f]{32}/i);
+	if (!plain) return null;
+	const p = plain[0].toLowerCase();
+	return `${p.slice(0, 8)}-${p.slice(8, 12)}-${p.slice(12, 16)}-${p.slice(16, 20)}-${p.slice(20)}`;
+}
+
 function normalizeCardEngagement(value: string | undefined): "active" | "save-only" {
 	const raw = String(value ?? "").trim();
 	const normalized = raw.toLowerCase();
@@ -7063,6 +7089,7 @@ type BusinessCardImageInput = {
 	engagementIntent?: string;
 	pursueIntent?: string;
 	assigneeUserId?: string;
+	referrerPageUrl?: string;
 	dryRun: boolean;
 };
 
@@ -7140,9 +7167,13 @@ async function processBusinessCardImage(
 	);
 	const routingLabel =
 		routing === "broker" ? "🤝社外顧問" : routing === "later" ? "❓あとで決める" : "🏢企業";
+	// 紹介経由パシャ(案2): 紹介者の名刺ページ共有から起動された場合、紹介元を最初から確定させる(嘘のつけない一次情報)。
+	const referrerPageId = extractNotionPageIdFromUrl(input.referrerPageUrl);
 	const entryMemo = [
 		`撮影時の振り分け: ${routingLabel}`,
 		routing !== "later" && `営業判断: ${engagementLabel}`,
+		input.referrerPageUrl &&
+			`紹介経由パシャ: ${String(input.referrerPageUrl).trim()}${referrerPageId ? "" : "(ページID抽出不可のためrelation未設定)"}`,
 	]
 		.filter(Boolean)
 		.join("\n");
@@ -7163,6 +7194,8 @@ async function processBusinessCardImage(
 		...(routing !== "later"
 			? { "追いかける？": select(engagement === "active" ? "追う" : "追わない") }
 			: {}),
+		// 紹介元は名刺→名刺のself-relation(誰に紹介してもらった？)。動線で確定した一次情報なのでそのまま張る。
+		...(referrerPageId ? { "誰に紹介してもらった？": relation(referrerPageId) } : {}),
 	};
 	if (input.assigneeUserId) {
 		properties["担当営業ユーザー"] = {
