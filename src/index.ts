@@ -29446,6 +29446,9 @@ async function createCompanyFromInquiry(
 }
 
 function buildCompanyCardIntakeMemo(card: CardInfo): string {
+	// 営業が名刺に手書きした「営業メモ」を企業マスター備考へ橋渡し(後から合わせられない一次情報)。
+	const salesMemo = text(card.page.properties?.["営業メモ"]);
+	const cardMemo = text(card.page.properties?.["メモ"]);
 	return [
 		"【名刺入口から引き継ぎ】",
 		card.name ? `担当者: ${card.name}` : "",
@@ -29454,6 +29457,8 @@ function buildCompanyCardIntakeMemo(card: CardInfo): string {
 		card.phone ? `電話: ${card.phone}` : "",
 		card.address ? `住所: ${card.address}` : "",
 		card.websiteUrl ? `URL: ${card.websiteUrl}` : "",
+		salesMemo ? `営業メモ: ${salesMemo}` : "",
+		cardMemo ? `名刺メモ: ${cardMemo}` : "",
 		`元名刺: ${card.page.id}`,
 	]
 		.filter(Boolean)
