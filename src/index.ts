@@ -6616,6 +6616,8 @@ function buildAdvisorProperties(
 		初回接点日: { date: { start: today } },
 		紹介実績メモ: richText(memoLines.join("\n")),
 		ブローカー一次判定結果: select(assessment.routing),
+		// 後段の前線警報AI(注意喚起君)の起動スイッチ。Worker経由の新規登録でも必ず調査待ちにする(2026-07-06 二体分業体制)。
+		調査ステータス: select("調査待ち"),
 		候補本人一致度: select("低"),
 		リスク兆候: select("要確認"),
 		次アクション: select(assessment.nextAction),
