@@ -148,6 +148,20 @@ async function main() {
 	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /貴社顧問税理士/);
 	assert.match(readyWithDerivedIncome.conclusionText, /20年後の解体・廃棄費用/);
 
+	// CO2-001: 年間CO2削減量が未入力でも、年間発電量(年間売電収入÷売電単価)から自動算出し、
+	// 顧客文「御社への結論」に "○○トン" のプレースホルダーを出さない。
+	// 年間発電量 = 43,200,000円 ÷ 20円/kWh = 2,160,000 kWh、× 0.000434 t/kWh = 937.44 t。
+	const co2Autofill = evaluateProposalSimulationDraftForTest({
+		id: "proposal-co2",
+		properties: solarRequiredProps(),
+	});
+	assert.equal(co2Autofill.co2ReductionTons, 937.44);
+	assert.doesNotMatch(co2Autofill.conclusionText, /○○トン/);
+	assert.match(
+		co2Autofill.conclusionText,
+		/年間937\.44トンのCO2排出量削減効果/,
+	);
+
 	const solarPdfBytes = await buildProposalSimulationPdfBytesForTest(
 		readyWithDerivedIncome,
 		"proposal-2",

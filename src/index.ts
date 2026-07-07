@@ -1206,6 +1206,9 @@ const DEFAULT_SOLAR_PANEL_DEGRADATION_RATE = 0.5;
 const DEFAULT_SOLAR_LOAN_RATIO = 80;
 const DEFAULT_SOLAR_INTEREST_RATE = 1;
 const DEFAULT_SOLAR_LOAN_YEARS = 15;
+// CO2排出係数(t-CO2/kWh)。環境省・電気事業者別排出係数の全国代替値相当(約0.000434 t/kWh)。
+// 顧客提出用の環境効果の概算に用いる。事業者/年度で調整可能なよう定数化(大ちゃんが後で変更可)。
+const CO2_EMISSION_FACTOR_T_PER_KWH = 0.000434;
 
 type NotionClient = {
 	dataSources: {
@@ -20790,11 +20793,24 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 		"想定年間削減額",
 		"年間削減額",
 	]);
-	const co2ReductionTons = readFirstNumberByAliases(properties, [
+	let co2ReductionTons = readFirstNumberByAliases(properties, [
 		"年間CO2削減量",
 		"CO2削減量（年）",
 		"年間CO2排出削減量",
 	]);
+	// 未入力なら年間発電量×CO2排出係数で自動算出し、顧客文の "○○トン" 事故を防ぐ。
+	// 年間発電量は「年間売電収入÷売電単価」を基本とし、無ければ月間発電量×12で補う。
+	if (co2ReductionTons === null) {
+		const annualGenerationKwh =
+			unitPrice !== null && unitPrice > 0 && annualIncome !== null
+				? annualIncome / unitPrice
+				: monthlyGeneration !== null
+					? monthlyGeneration * 12
+					: null;
+		if (annualGenerationKwh !== null) {
+			co2ReductionTons = roundTo(annualGenerationKwh * CO2_EMISSION_FACTOR_T_PER_KWH, 2);
+		}
+	}
 	const reductionRateFromProperty = readFirstNumberByAliases(properties, [
 		"年間電気代削減率",
 		"削減率",
