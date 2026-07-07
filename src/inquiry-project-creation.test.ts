@@ -215,9 +215,9 @@ async function main() {
 	);
 	assert.equal((projectProperties.予定粗利額 as { number: number }).number, 3000000);
 	assert.equal(
-		(projectProperties["予定粗利の根拠"] as { select: { name: string } }).select.name,
-		"案件多数見込み",
-		"問い合わせの予定粗利の根拠をそのまま引き継ぐ（価格あり固定で上書きしない）",
+		projectProperties["予定粗利の根拠"],
+		undefined,
+		"予定粗利の根拠は問い合わせ段階では存在しない前提のため引き継がない（大ちゃん方針）",
 	);
 	assert.equal(
 		(projectProperties.売買区分 as { select: { name: string } }).select.name,

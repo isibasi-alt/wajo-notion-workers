@@ -31876,6 +31876,55 @@ async function initializeProjectScaffolding(
 }
 
 // 案件ページ（新規でも、純正ボタンが先に作った既存でも）へ、問い合わせ内容を確実に引き継ぐ。
+// multi_select プロパティから選択肢名の配列を取り出す。
+function multiSelectNames(value: unknown): string[] {
+	if (value && typeof value === "object" && "multi_select" in value) {
+		const arr = (value as Record<string, unknown>).multi_select;
+		if (Array.isArray(arr)) {
+			return arr
+				.map((item) =>
+					item && typeof item === "object" && typeof (item as Record<string, unknown>).name === "string"
+						? ((item as Record<string, unknown>).name as string)
+						: "",
+				)
+				.filter(Boolean);
+		}
+	}
+	return [];
+}
+
+// 顧客接点ログの各レコードに案件を「関連案件」で紐付ける。
+// 案件側ロールアップ（活動の内容 / 活動種別表示 / 顧客接点回数）は、案件側「顧客接点ログ」ではなく
+// この 関連案件 ↔ 案件 の双方向relation経由で読むため、ここを埋めないとロールアップが空になる（"タブが空"の罠）。
+// 同時に「決裁者と活動種別」タグから、決裁者に会えているかを判定する。
+async function linkContactLogsToProjectAndDeriveDecisionMaker(
+	notion: NotionClient,
+	contactLogIds: string[],
+	projectId: string,
+): Promise<{ decisionMaker: string | null }> {
+	let metDecisionMaker = false;
+	for (const logId of uniqueStrings(contactLogIds)) {
+		try {
+			const logPage = await notion.pages.retrieve({ page_id: logId });
+			const kinds = multiSelectNames(logPage.properties?.["決裁者と活動種別"]);
+			if (kinds.includes("決裁者同席") || kinds.includes("担当が決裁者")) {
+				metDecisionMaker = true;
+			}
+			const existing = relationIdsFromProperty(logPage.properties?.["関連案件"]);
+			if (!existing.includes(projectId)) {
+				await safeUpdateExistingProperties(notion, logPage, {
+					関連案件: { kind: "relation", ids: uniqueStrings([...existing, projectId]) },
+				});
+			}
+		} catch (error) {
+			console.log("contact log link skipped", String(error));
+		}
+	}
+	return {
+		decisionMaker: metDecisionMaker ? "顧客接点ログで決裁者と面談済み" : null,
+	};
+}
+
 async function enrichProjectFromInquiry(
 	notion: NotionClient,
 	projectPage: Page,
@@ -31893,6 +31942,12 @@ async function enrichProjectFromInquiry(
 				: [];
 	const relatedCompanyIds = relationIdsFromProperty(properties["関連企業"]);
 	const contactLogIds = relationIdsFromProperty(properties["顧客接点ログ"]);
+	// 顧客接点ログを案件へ紐付け直し（関連案件↔案件の双方向relation）、決裁者に会えたかを判定する。
+	const contactLink = await linkContactLogsToProjectAndDeriveDecisionMaker(
+		notion,
+		contactLogIds,
+		projectPage.id,
+	);
 	const plannedGrossProfit = numberValue(properties["予定粗利額"]);
 	const projectDealType = projectDealTypeFromInquiryDealType(text(properties["売買区分"]));
 	const inquiryAttentionMemo = text(properties["確認待ち内容"]);
@@ -31941,9 +31996,9 @@ async function enrichProjectFromInquiry(
 	if (nextMeetingDate) {
 		patches["次回面談日時"] = { kind: "date", value: nextMeetingDate };
 	}
-	const decisionMakerText = text(properties["決裁者"]);
-	if (decisionMakerText) {
-		patches["決裁者"] = { kind: "text", value: decisionMakerText };
+	// 決裁者は問い合わせのテキストコピーではなく、顧客接点ログの「決裁者と活動種別」から判定する。
+	if (contactLink.decisionMaker) {
+		patches["決裁者"] = { kind: "text", value: contactLink.decisionMaker };
 	}
 	// 案件化時、お問い合わせ内容を案件側の専用引き継ぎ列へ写す（DB設計者が用意した受け皿）。
 	const inquirySummary = text(properties["メール要約"]);
@@ -31957,11 +32012,7 @@ async function enrichProjectFromInquiry(
 	}
 	if (plannedGrossProfit !== null && plannedGrossProfit > 0) {
 		patches["予定粗利額"] = { kind: "number", value: plannedGrossProfit };
-		// 問い合わせ側で入力された根拠をそのまま引き継ぐ（固定の「価格あり」で上書きしない）。
-		patches["予定粗利の根拠"] = {
-			kind: "select",
-			value: projectGrossBasisFromInquiry(text(properties["予定粗利の根拠"])),
-		};
+		// 予定粗利の根拠は問い合わせ段階では存在しない前提のため引き継がない（大ちゃん方針）。
 	}
 	if (projectDealType) {
 		patches["売買区分"] = { kind: "select", value: projectDealType };
