@@ -6367,21 +6367,33 @@ async function resolveReferrerPages(
 	}
 }
 
-// 紹介者の社外顧問ページ側にも「紹介してくれた人」を張る(人物の正本から紹介名刺が一覧できるように・2026-07-07)。
-async function appendAdvisorIntroducedCard(
+// 紹介ネットワーク(人物→人物): 元名刺の「誰に紹介してもらった？」→紹介者の名刺→その「関連社外顧問」を辿り、
+// 新しい社外顧問ページの「紹介元」relationに張る。dualのため紹介者側の「紹介した人」にも自動表示される(2026-07-07)。
+async function linkAdvisorReferrerSource(
 	notion: NotionClient,
 	advisorPageId: string,
-	cardPageId: string,
+	card: CardInfo,
 ): Promise<void> {
 	try {
-		const page = (await notion.pages.retrieve({ page_id: advisorPageId })) as {
+		const referrerCardIds = relationIdsFromProperty(
+			card.page.properties?.["誰に紹介してもらった？"],
+		);
+		if (!referrerCardIds.length) return;
+		const referrerCard = (await notion.pages.retrieve({ page_id: referrerCardIds[0] })) as {
 			properties?: Record<string, unknown>;
 		};
-		const existing = relationIdsFromProperty(page.properties?.["紹介してくれた人"]);
-		if (existing.includes(cardPageId)) return;
+		const referrerAdvisorIds = relationIdsFromProperty(
+			referrerCard.properties?.["関連社外顧問"],
+		);
+		if (!referrerAdvisorIds.length) return;
+		const advisorPage = (await notion.pages.retrieve({ page_id: advisorPageId })) as {
+			properties?: Record<string, unknown>;
+		};
+		const existing = relationIdsFromProperty(advisorPage.properties?.["紹介元"]);
+		if (existing.includes(referrerAdvisorIds[0])) return;
 		await notion.pages.update({
 			page_id: advisorPageId,
-			properties: { 紹介してくれた人: relationIds([...existing, cardPageId]) },
+			properties: { 紹介元: relationIds([...existing, referrerAdvisorIds[0]]) },
 		});
 	} catch {
 		// 失敗しても名刺登録は止めない
@@ -6928,6 +6940,8 @@ async function registerExternalAdvisorFromBusinessCard(
 		typeof card.page.url === "string" ? card.page.url : "",
 		card.page.id,
 	);
+	// 紹介ネットワーク(人物→人物): 元名刺の紹介元から紹介者の社外顧問を辿り、「紹介元」relationに張る(dualで相手側の「紹介した人」にも自動表示)。
+	await linkAdvisorReferrerSource(notion, advisor.page.id, card);
 	await runExternalAdvisorResearchAndAnnounce(notion, advisor.page, ocr, card.page.id);
 	const memo = [
 		`【社外顧問DB登録】${advisor.created ? "新規登録" : "既存ページへ紐づけ更新"}`,
@@ -7273,10 +7287,7 @@ async function processBusinessCardImage(
 		properties,
 	});
 
-	// 紹介者の社外顧問ページ側にも「紹介してくれた人」を張る(人物の正本=社外顧問DBから紹介名刺が一覧できる)。
-	if (referrer.advisorPageId) {
-		await appendAdvisorIntroducedCard(notion, referrer.advisorPageId, page.id);
-	}
+	// 人物→人物の紹介線(紹介元⇄紹介した人)は、社外顧問ページ作成時にlinkAdvisorReferrerSourceが張る(2026-07-07一本化)。
 
 	// 3. OCR(失敗してもページと画像は残る=要確認で人に渡す)
 	let ocr: BusinessCardOcr;
