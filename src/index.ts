@@ -32087,20 +32087,23 @@ async function processProjectEnrichFromInquiry(
 		return;
 	}
 	const inquiryPage = await notion.pages.retrieve({ page_id: inquiryIds[0]! });
-	await enrichProjectFromInquiry(notion, projectPage, inquiryPage, triggerUserId);
 	const contactLogCount = relationIdsFromProperty(
 		inquiryPage.properties?.["顧客接点ログ"],
 	).length;
-	const nextMeeting =
-		dateStartFromProperty(projectPage.properties?.["次回面談日時"]) ||
-		dateStartFromProperty(inquiryPage.properties?.["次回面談日時"]);
+	// 元問い合わせを起点に既存案件（＝Aが作ったこの案件）を検出して補完する。
+	// enrich（顧客接点ログ→関連案件の書き戻し・決裁者判定・資料/企業引き継ぎ）に加えて、
+	// 問い合わせ側「紐づき案件」の書き戻し・重複チェック・scaffolding も走る（仕様§7-1）。
+	await processInquiryProjectCreation(inquiryIds[0]!, notion, triggerUserId, false);
+	// 次回面談日時が空なら案件化の必須条件としてアラートを残す。
+	const refreshed = await notion.pages.retrieve({ page_id: projectPageId });
+	const nextMeeting = dateStartFromProperty(refreshed.properties?.["次回面談日時"]);
 	const alert = nextMeeting
 		? ""
 		: "\n⚠ 次回面談日時が未設定です。案件化の必須条件なので、面談日時を入れてください。";
 	await createPageComment(
 		notion,
 		projectPageId,
-		`✅ 引き継ぎ完了：顧客接点ログ ${contactLogCount} 件・案件資料・関連企業を案件へ引き継ぎました。${alert}`,
+		`✅ 引き継ぎ完了：顧客接点ログ ${contactLogCount} 件・案件資料・関連企業を案件へ引き継ぎ、問い合わせ側へ紐づけ返しました。${alert}`,
 	);
 }
 
