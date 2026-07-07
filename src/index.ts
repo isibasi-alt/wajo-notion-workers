@@ -28662,6 +28662,41 @@ async function nextInquiryReceptionNumber(
 	return buildInquiryReceptionNumber(dateStamp, maxSequence + 1);
 }
 
+// 同時着信で同じ受付番号が2件に振られる競合の修復（2026-07-07 問-260708-002重複の実例）。
+// 作成後に同番号の先行ページを確認し、他にいれば自分だけ次の空き番号へ振り直す。
+async function resolveInquiryReceptionNumberCollision(
+	notion: NotionClient,
+	pageId: string,
+	receptionNumber: string,
+	receivedAt: string,
+): Promise<string> {
+	try {
+		const existing = await notion.dataSources.query({
+			data_source_id: INQUIRY_DATA_SOURCE_ID,
+			filter: { property: "受付番号", rich_text: { equals: receptionNumber } },
+			page_size: 10,
+		});
+		const others = ((existing.results ?? []) as Page[]).filter((p) => p.id !== pageId);
+		if (others.length === 0) return receptionNumber;
+		const renumbered = await nextInquiryReceptionNumber(notion, receivedAt);
+		if (renumbered === receptionNumber) return receptionNumber;
+		const page = await notion.pages.retrieve({ page_id: pageId });
+		const currentTitle = text(page.properties?.["件名"]);
+		const patches: Record<string, SafePatch> = {
+			受付番号: { kind: "text", value: renumbered },
+		};
+		if (currentTitle.includes(receptionNumber)) {
+			patches["件名"] = { kind: "text", value: currentTitle.replace(receptionNumber, renumbered) };
+		}
+		await safeUpdateExistingProperties(notion, page, patches);
+		console.log("受付番号の重複を修復しました", { pageId, from: receptionNumber, to: renumbered });
+		return renumbered;
+	} catch (error) {
+		console.log("受付番号の重複確認をスキップしました", String(error));
+		return receptionNumber;
+	}
+}
+
 function cleanInquiryTitleToken(value: string): string {
 	return value
 		.replace(/^(企業名|会社名|法人名|氏名|お名前)\s*[:：]\s*/g, "")
@@ -29077,6 +29112,13 @@ async function createInquiryFromEmail(
 		INQUIRY_DATA_SOURCE_ID,
 		properties,
 		pageTemplate(INQUIRY_TEMPLATE_ID),
+	);
+	// 同時着信で受付番号が衝突していたら、この場で自分だけ振り直す。
+	await resolveInquiryReceptionNumberCollision(
+		notion,
+		created.id,
+		receptionNumber,
+		emailInfo.receivedAt,
 	);
 	// 営業ブリーフィング（分析済みの証）をページ本文へ。生成失敗でも起票は止めない。
 	let analysisBriefing = "";
