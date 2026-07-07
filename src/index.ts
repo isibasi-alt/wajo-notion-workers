@@ -15799,7 +15799,20 @@ async function processProposalSimulation(
 		}
 		await safeUpdateExistingProperties(notion, page, patches);
 		await syncProposalSimulationEquipmentSnapshot(notion, equipmentPage, draft);
-		const financeSync = await syncFinanceSimulationRecord(notion, sourcePage, draft);
+		// 案件idは提案ページ自身の関連案件が空でも、紐づく設備詳細ページの関連案件から確実に辿る。
+		// これが取れないと投資条件レコードが関連案件nullになり、既存入力箱への集約も効かない。
+		const resolvedProjectId =
+			relationIdsFromProperty(sourcePage.properties?.["関連案件"])[0] ??
+			(equipmentPage
+				? relationIdsFromProperty(equipmentPage.properties?.["関連案件"])[0]
+				: undefined) ??
+			null;
+		const financeSync = await syncFinanceSimulationRecord(
+			notion,
+			sourcePage,
+			draft,
+			resolvedProjectId,
+		);
 		const salesProposalSync = await syncSalesProposalRecord(
 			notion,
 			sourcePage,
@@ -17586,10 +17599,14 @@ async function syncFinanceSimulationRecord(
 	notion: NotionClient,
 	proposalPage: Page,
 	draft: ProposalSimulationDraft,
+	projectIdHint?: string | null,
 ): Promise<{ pageId: string; action: "created" | "updated" } | null> {
 	if (!draft.financeSimulation) return null;
 	try {
-		const projectId = relationIdsFromProperty(proposalPage.properties?.["関連案件"])[0] ?? null;
+		const projectId =
+			projectIdHint ??
+			relationIdsFromProperty(proposalPage.properties?.["関連案件"])[0] ??
+			null;
 		const byProposal = await notion.dataSources.query({
 			data_source_id: FINANCE_SIMULATION_DATA_SOURCE_ID,
 			filter: {

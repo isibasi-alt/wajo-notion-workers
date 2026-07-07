@@ -862,6 +862,62 @@ async function main() {
 		"number",
 	);
 
+	// 実機再現: 提案ページ自身の 関連案件 が空でも、紐づく設備詳細ページの 関連案件 から
+	// 案件idを解決してフォールバックを発動し、既存の入力待ち箱へ update・関連案件を保持すること。
+	const noProjectProposalPage = {
+		id: "request-ready-noproject",
+		url: "https://www.notion.so/request-ready-noproject",
+		properties: {
+			...readyProposalRequestPage().properties,
+			関連案件: relationProp([]),
+			関連設備詳細: relationProp(["equipment-1"]),
+		},
+	};
+	const noProjectExistingBox = {
+		id: "finance-box-noproject",
+		url: "https://www.notion.so/finance-box-noproject",
+		properties: {
+			...financeSimulationPage("finance-box-noproject").properties,
+			関連案件: relationProp(["project-1"]),
+			関連提案シミュレーション: relationProp(["request-other-9999"]),
+			ファイナンス状態: selectProp("入力待ち"),
+		},
+	};
+	const noProjectCase = makeNotion({
+		existingByDocumentType: {
+			提案書: [noProjectProposalPage],
+		},
+		existingByDataSource: {
+			"7e4d0168-6e54-4071-bd55-f9730202225c": [noProjectExistingBox],
+		},
+	});
+	await processProposalSimulationForTest(
+		{ pageId: "request-ready-noproject", dryRun: false },
+		noProjectCase.notion as never,
+	);
+	const noProjectFinanceCreates = noProjectCase.creates.filter(
+		(create) =>
+			(create.parent as { data_source_id?: string })?.data_source_id ===
+			"7e4d0168-6e54-4071-bd55-f9730202225c",
+	);
+	assert.equal(
+		noProjectFinanceCreates.length,
+		0,
+		"提案ページの関連案件が空でも設備詳細経由で案件を解決し、新規作成せず既存箱へ集約すること",
+	);
+	const noProjectUpdate = noProjectCase.updates.find(
+		(update) =>
+			update.page_id === "finance-box-noproject" &&
+			(update.properties as Record<string, unknown>).年間返済額 !== undefined,
+	);
+	assert.ok(noProjectUpdate, "既存 finance 箱へ計算値の update が行われること");
+	const noProjectProps = noProjectUpdate!.properties as Record<string, unknown>;
+	assert.deepEqual(
+		(noProjectProps.関連案件 as { relation: Array<{ id: string }> }).relation,
+		[{ id: "project-1" }],
+		"設備詳細経由で解決した関連案件が必ず入ること",
+	);
+
 	const existingCase = makeNotion({
 		projectRequestIds: ["request-existing"],
 		projectPageOverride: projectPageWithEquipmentOnly(),
