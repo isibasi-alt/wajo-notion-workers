@@ -6618,11 +6618,17 @@ function buildAdvisorProperties(
 		ブローカー一次判定結果: select(assessment.routing),
 		// 後段の前線警報AI(注意喚起君)の起動スイッチ。Worker経由の新規登録でも必ず調査待ちにする(2026-07-06 二体分業体制)。
 		調査ステータス: select("調査待ち"),
-		候補本人一致度: select("低"),
-		リスク兆候: select("要確認"),
-		次アクション: select(assessment.nextAction),
-		判定根拠メモ: richText(buildExternalAdvisorAssessmentMemo(ocr, assessment, cardPageId)),
-		注意点: richText("個人に対する反社判定は未実施。公開情報上のリスク兆候と本人一致度は、必要時に別途スクリーニングする。"),
+		// 旧・60点門番の採点メモ/定型注意文/一致度・リスク兆候の機械セットは2026-07-07撤去(大ちゃん指示)。
+		// Workerは登録と調査待ちセットだけ。人物の中身は後段の専用AIが書く。
+		判定根拠メモ: richText(
+			[
+				"営業担当者が名刺の「どこに登録する？」で社外顧問を選択したため、社外顧問DBへ登録。",
+				"公開Web調査は後段の専用AIが実施する(調査ステータス=調査待ち)。",
+				cardPageId ? `【元名刺】${cardPageId}` : "",
+			]
+				.filter(Boolean)
+				.join("\n"),
+		),
 	};
 	if (assessment.score !== null) properties["ブローカー一次判定スコア"] = { number: assessment.score };
 	if (cardPageId) properties["関連名刺"] = relation(cardPageId);
@@ -6754,14 +6760,12 @@ async function runExternalAdvisorResearchAndAnnounce(
 	ocr: BusinessCardOcr,
 	cardPageId?: string,
 ): Promise<void> {
-	const assessment = calculateBrokerPrimaryAssessment(ocr);
-	await researchExternalAdvisorPublicWeb(notion, advisorPage, ocr);
-	if (!shouldAnnounceExternalAdvisorReviewHold(assessment)) return;
-	await createPageComment(
-		notion,
-		advisorPage.id,
-		buildExternalAdvisorReviewHoldAnnouncement(assessment, cardPageId),
-	).catch(() => {});
+	// 旧・Worker内の公開Web調査と60点停止アナウンス(⏸コメント)は2026-07-07撤去(大ちゃん指示)。
+	// 調査・警報は後段の専用AI(調査ステータス=調査待ちトリガー)の担当。Workerは登録と調査待ちセットまで。
+	void notion;
+	void advisorPage;
+	void ocr;
+	void cardPageId;
 }
 
 function buildExternalAdvisorAssessmentMemo(
@@ -6808,20 +6812,13 @@ async function updateExistingAdvisorAssessmentFromCard(
 	ocr: BusinessCardOcr,
 	cardPageId?: string,
 ): Promise<Record<string, unknown>> {
-	const assessment = calculateBrokerPrimaryAssessment(ocr);
-	const properties = {
-		ブローカー一次判定スコア: { number: assessment.score },
-		ブローカー一次判定結果: select(assessment.routing),
-		候補本人一致度: select("低"),
-		リスク兆候: select("要確認"),
-		次アクション: select(assessment.nextAction),
-		判定根拠メモ: richText(buildExternalAdvisorAssessmentMemo(ocr, assessment, cardPageId)),
-	};
-	await notion.pages.update({
-		page_id: advisorPage.id,
-		properties,
-	});
-	return properties;
+	// 旧・60点採点による既存ページ上書きは2026-07-07撤去(大ちゃん指示)。
+	// 再紐づけ時は既存の判定根拠メモ・後段AIの調査結果を尊重し、プロパティを一切上書きしない。
+	void notion;
+	void advisorPage;
+	void ocr;
+	void cardPageId;
+	return {};
 }
 
 async function linkBusinessCardToAdvisor(
