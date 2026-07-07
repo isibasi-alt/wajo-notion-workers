@@ -28350,8 +28350,36 @@ function extractSourcePageIdFromWebhook(body: Record<string, unknown>): string |
 	);
 }
 
+// 問い合わせメール本文の整理：営業が読むのは問い合わせ者の文章だけにする。
+// HTMLソース・和上側の署名ブロック・転送ヘッダ行を取り除く（情報を失う恐れのある
+// 引用行「> 」はフォーム項目が入っている実例があるため、消さずに残す）。2026-07-07
+function cleanInquiryEmailBody(raw: string): string {
+	let text = raw;
+	if (/<html[\s>]|<body[\s>]|<!DOCTYPE/i.test(text)) {
+		text = text
+			.replace(/<style[\s\S]*?<\/style>/gi, " ")
+			.replace(/<script[\s\S]*?<\/script>/gi, " ")
+			.replace(/<head[\s\S]*?<\/head>/gi, " ")
+			.replace(/<[^>]+>/g, "\n")
+			.replace(/&nbsp;/g, " ")
+			.replace(/&amp;/g, "&")
+			.replace(/&lt;/g, "<")
+			.replace(/&gt;/g, ">");
+	}
+	// 和上側の署名ブロック（アスタリスク罫線で囲まれた社内署名）を除去
+	text = text.replace(/\*{10,}[\s\S]{0,600}?\*{10,}\s*/g, "\n");
+	const headerLine =
+		/^(差出人|送信日時|宛先|From|Sent|To)\s*[:：]/;
+	text = text
+		.split("\n")
+		.filter((line) => !/^_{8,}\s*$/.test(line.trim()))
+		.filter((line) => !headerLine.test(line.trim()))
+		.join("\n");
+	return text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 function readInquiryEmailInfo(input: InquiryEmailIntakeInput): InquiryEmailInfo {
-	const source = input.body ?? "";
+	const source = cleanInquiryEmailBody(input.body ?? "");
 	const fromRaw = input.from ?? "";
 	const fromEmail = extractEmailAddress(fromRaw);
 	const explicitEmail = extractInquiryLineValue(source, [
