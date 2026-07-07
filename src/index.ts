@@ -7412,6 +7412,11 @@ async function processInquiryEmailIntake(
 		);
 		companyAction = linked.action;
 	}
+	// 起票直後に温度計（案件化近さ/スコア/次アクション）を必ず1回回す。
+	// これが無いと接点ログかWebhookが来るまで判定が永遠に空のままになる（2026-07-07根治）。
+	await refreshSalesPipelineSignal(created.id, notion).catch((error) => {
+		console.log("新規問い合わせの温度計初回計算をスキップしました", String(error));
+	});
 	return {
 		inquiryPageId: created.id,
 		action: "created-inquiry",
