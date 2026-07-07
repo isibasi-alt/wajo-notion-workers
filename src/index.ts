@@ -28630,10 +28630,17 @@ function buildCompactInquiryTitleParts(input: {
 }
 
 function compactInquiryDealCode(dealType: string, value: string): string {
-	if (/売買両方|売り買い|売却.*購入|購入.*売却/.test(`${dealType}\n${value}`)) return "売買";
-	if (/売却|査定|売りたい|売主|買取/.test(`${dealType}\n${value}`)) return "売";
-	if (/購入|買いたい|買主|販売案件|資料請求/.test(`${dealType}\n${value}`)) return "買";
-	if (/相談|問い合わせ|お問合せ|資料/.test(`${dealType}\n${value}`)) return "相談";
+	// 売買区分プロパティが確定している場合はそれを唯一の正とする。
+	// （件名タグと売買区分が別々のキーワード推定で食い違う事故の止血。2026-07-07）
+	if (dealType === "売買両方") return "売買";
+	if (dealType === "売却相談") return "売";
+	if (dealType === "購入相談") return "買";
+	if (dealType === "その他相談") return "相談";
+	// 売買区分が不明な時だけ本文から推定する
+	if (/売買両方|売り買い|売却.*購入|購入.*売却/.test(value)) return "売買";
+	if (/売却|査定|売りたい|売主|買取/.test(value)) return "売";
+	if (/購入|買いたい|買主|販売案件|資料請求/.test(value)) return "買";
+	if (/相談|問い合わせ|お問合せ|資料/.test(value)) return "相談";
 	return "";
 }
 
