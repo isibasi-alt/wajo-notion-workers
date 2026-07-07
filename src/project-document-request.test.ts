@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+	processProjectFinanceRequestForTest,
 	processProposalSimulationForTest,
 	processProjectProposalRequestForTest,
 	processProjectResidentDocumentRequestForTest,
@@ -47,6 +48,7 @@ function validProjectProperties() {
 		案件名: titleProp("湖南市250kW 太陽光案件"),
 		資料作成依頼: relationProp([]),
 		発電所設備詳細: relationProp([]),
+		関連ファイナンスシミュレーション: relationProp([]),
 		資料作成メモ: richTextProp(""),
 		案件番号: richTextProp("PJ-001"),
 		提案タイプ: selectProp("法人対象"),
@@ -93,6 +95,7 @@ function projectCoreOnlyProperties() {
 		案件名: titleProp("湖南市250kW 太陽光案件"),
 		資料作成依頼: relationProp([]),
 		発電所設備詳細: relationProp(["equipment-1"]),
+		関連ファイナンスシミュレーション: relationProp([]),
 		資料作成メモ: richTextProp(""),
 		案件番号: richTextProp("PJ-001"),
 		提案タイプ: selectProp("法人対象"),
@@ -167,6 +170,86 @@ function requestPage(id: string, documentType: string) {
 		properties: {
 			案件名: titleProp(`湖南市250kW 太陽光案件｜${documentType}`),
 			資料種別: { type: "select", select: { name: documentType } },
+			関連案件: relationProp([]),
+			関連設備詳細: relationProp([]),
+			資料作成メモ: richTextProp(""),
+			発電所名: richTextProp(""),
+			年間売電収入: numberProp(null),
+		},
+	};
+}
+
+function requestDataSourceSchema() {
+	return {
+		properties: {
+			案件名: { type: "title", title: {} },
+			資料種別: {
+				type: "select",
+				select: {
+					options: [
+						{ name: "提案書" },
+						{ name: "ファイナンスシミュレーション" },
+						{ name: "住民説明会資料" },
+					],
+				},
+			},
+			シミュレーションステータス: {
+				type: "select",
+				select: { options: [{ name: "入力待ち" }] },
+			},
+			資料作成ステータス: {
+				type: "select",
+				select: { options: [{ name: "入力待ち" }] },
+			},
+			関連案件: { type: "relation", relation: {} },
+			関連設備詳細: { type: "relation", relation: {} },
+			資料作成メモ: { type: "rich_text", rich_text: {} },
+			提案タイプ: { type: "select", select: { options: [{ name: "法人対象" }] } },
+			販売価格: { type: "number", number: {} },
+			仕入れ価格: { type: "number", number: {} },
+			年間売電収入: { type: "number", number: {} },
+			"年間維持費（ランニングコスト）": { type: "number", number: {} },
+			発電所名: { type: "rich_text", rich_text: {} },
+			所在地: { type: "rich_text", rich_text: {} },
+			電力会社エリア: { type: "select", select: { options: [{ name: "関西電力" }] } },
+			"低圧/高圧区分": { type: "select", select: { options: [{ name: "高圧" }] } },
+			パネルメーカー: { type: "rich_text", rich_text: {} },
+			パネル型式: { type: "rich_text", rich_text: {} },
+			パネル枚数: { type: "number", number: {} },
+			"DC容量（パネル側kW）": { type: "number", number: {} },
+			パワコンメーカー: { type: "rich_text", rich_text: {} },
+			パワコン型式: { type: "rich_text", rich_text: {} },
+			"PCS容量（パワコン側kW）": { type: "number", number: {} },
+			"FIT/FIP区分": { type: "select", select: { options: [{ name: "FIT" }] } },
+			売電単価: { type: "number", number: {} },
+			残存売電期間: { type: "number", number: {} },
+			連系開始日: { type: "date", date: {} },
+			現場写真: { type: "files", files: {} },
+			抑制条件: { type: "rich_text", rich_text: {} },
+			土地代: { type: "number", number: {} },
+			システム本体価格: { type: "number", number: {} },
+			権利代: { type: "number", number: {} },
+			借入比率: { type: "number", number: {} },
+			借入額: { type: "number", number: {} },
+			金利: { type: "number", number: {} },
+			返済期間: { type: "number", number: {} },
+			実効税率: { type: "number", number: {} },
+			今期利益見込: { type: "number", number: {} },
+			流動比率: { type: "number", number: {} },
+			利益剰余金: { type: "number", number: {} },
+			自己資本比率: { type: "number", number: {} },
+			周知方法: { type: "select", select: { options: [{ name: "所有者変更周知" }] } },
+			質問受付期間: { type: "date", date: {} },
+			周知日: { type: "date", date: {} },
+			"保守管理責任者 氏名": { type: "rich_text", rich_text: {} },
+			旧認定事業者: { type: "rich_text", rich_text: {} },
+			新認定事業者: { type: "rich_text", rich_text: {} },
+			設備ID: { type: "rich_text", rich_text: {} },
+			発電所所在地画像: { type: "files", files: {} },
+			ハザードマップ: { type: "files", files: {} },
+			説明会対象エリア画像: { type: "files", files: {} },
+			"反射光画像（夏至）": { type: "files", files: {} },
+			"反射光画像（冬至）": { type: "files", files: {} },
 		},
 	};
 }
@@ -196,10 +279,41 @@ function readyProposalRequestPage() {
 	};
 }
 
+function financeSimulationPage(id = "finance-1") {
+	return {
+		id,
+		url: `https://www.notion.so/${id}`,
+		properties: {
+			Name: titleProp("湖南市250kW 太陽光案件｜ファイナンス"),
+			関連案件: relationProp([]),
+			関連提案シミュレーション: relationProp([]),
+			元提案シミュレーション: relationProp([]),
+			ファイナンス状態: selectProp("入力待ち"),
+			借入比率: numberProp(null),
+			借入額: numberProp(null),
+			金利: numberProp(null),
+			返済期間: numberProp(null),
+			実効税率: numberProp(null),
+			今期利益見込: numberProp(null),
+			流動比率: numberProp(null),
+			利益剰余金: numberProp(null),
+			自己資本比率: numberProp(null),
+			土地代: numberProp(null),
+			システム本体価格: numberProp(null),
+			権利代: numberProp(null),
+			ファイナンスメモ: richTextProp(""),
+			"B/S評価メモ": richTextProp(""),
+			金利メモ: richTextProp(""),
+			購入タイミング理由: richTextProp(""),
+		},
+	};
+}
+
 function queryDocumentType(args: Record<string, unknown> | undefined): string {
 	if (!args) return "";
 	const json = JSON.stringify(args);
 	if (json.includes("住民説明会資料")) return "住民説明会資料";
+	if (json.includes("ファイナンスシミュレーション")) return "ファイナンスシミュレーション";
 	if (json.includes("提案書")) return "提案書";
 	return "";
 }
@@ -220,6 +334,7 @@ function makeNotion(options: {
 	const fileUploads: Array<Record<string, unknown>> = [];
 	const notion = {
 		dataSources: {
+			retrieve: async () => requestDataSourceSchema(),
 			query: async (args: Record<string, unknown>) => {
 				queries.push(args);
 				const dataSourceId = typeof args.data_source_id === "string" ? args.data_source_id : "";
@@ -248,7 +363,10 @@ function makeNotion(options: {
 					return {
 						id: page_id,
 						url: `https://www.notion.so/${page_id}`,
-						properties: created.properties as Record<string, unknown>,
+						properties: {
+							...financeSimulationPage(page_id).properties,
+							...(created.properties as Record<string, unknown>),
+						},
 					};
 				}
 				if (page_id.startsWith("sales-proposal-created-")) {
@@ -336,6 +454,11 @@ function makeNotion(options: {
 		},
 		blocks: {
 			children: {
+				list: async () => ({
+					results: [],
+					has_more: false,
+					next_cursor: null,
+				}),
 				append: async (args: Record<string, unknown>) => {
 					appends.push(args);
 					return {};
@@ -347,38 +470,46 @@ function makeNotion(options: {
 }
 
 async function main() {
-	const financialInputWaitingCase = makeNotion({
+	const proposalWithoutEquipmentCase = makeNotion({
 		projectPropertyOverrides: {
 			販売価格: numberProp(null),
 		},
 	});
 
-	const financialInputWaiting = await processProjectProposalRequestForTest(
+	const proposalWithoutEquipment = await processProjectProposalRequestForTest(
 		{ projectPageId: "project-1", dryRun: false },
-		financialInputWaitingCase.notion as never,
+		proposalWithoutEquipmentCase.notion as never,
 	);
 
-	assert.equal(financialInputWaiting.action, "needs-input");
-	assert.equal(financialInputWaiting.requestPageId, "request-created-1");
-	assert.match(financialInputWaiting.message, /提案シミュレーション依頼/);
-	assert.equal(financialInputWaitingCase.creates.length, 1);
-	const financialInputWaitingProps = financialInputWaitingCase.creates[0]!
-		.properties as Record<string, unknown>;
-	assert.equal(
-		(financialInputWaitingProps.資料種別 as { select: { name: string } }).select.name,
-		"提案書",
+	assert.equal(proposalWithoutEquipment.action, "needs-input");
+	assert.equal(proposalWithoutEquipment.requestPageId, null);
+	assert.match(proposalWithoutEquipment.message, /設備詳細を入力する/);
+	assert.equal(proposalWithoutEquipmentCase.creates.length, 0);
+	assert.ok(proposalWithoutEquipmentCase.updates.length >= 1);
+	assert.ok(proposalWithoutEquipmentCase.comments.length >= 1);
+
+	const proposalMissingSimulationInputCase = makeNotion({
+		projectPageOverride: {
+			id: "project-1",
+			url: "https://www.notion.so/project-1",
+			properties: {
+				...projectCoreOnlyProperties(),
+				販売価格: numberProp(null),
+			},
+		},
+	});
+
+	const proposalMissingSimulationInput = await processProjectProposalRequestForTest(
+		{ projectPageId: "project-1", dryRun: false },
+		proposalMissingSimulationInputCase.notion as never,
 	);
-	assert.equal(
-		(
-			financialInputWaitingProps.シミュレーションステータス as {
-				select: { name: string };
-			}
-		).select.name,
-		"入力待ち",
-	);
-	assert.match(JSON.stringify(financialInputWaitingProps.資料作成メモ), /販売価格/);
-	assert.ok(financialInputWaitingCase.updates.length >= 1);
-	assert.ok(financialInputWaitingCase.comments.length >= 1);
+
+	assert.equal(proposalMissingSimulationInput.action, "needs-input");
+	assert.equal(proposalMissingSimulationInput.requestPageId, null);
+	assert.match(proposalMissingSimulationInput.message, /販売価格/);
+	assert.equal(proposalMissingSimulationInputCase.creates.length, 0);
+	assert.ok(proposalMissingSimulationInputCase.updates.length >= 1);
+	assert.ok(proposalMissingSimulationInputCase.comments.length >= 1);
 
 	const equipmentLinkedCase = makeNotion({
 		projectPageOverride: projectPageWithEquipmentOnly(),
@@ -389,7 +520,7 @@ async function main() {
 		equipmentLinkedCase.notion as never,
 	);
 
-	assert.equal(fromEquipment.action, "needs-input");
+	assert.equal(fromEquipment.action, "created");
 	assert.equal(fromEquipment.requestPageId, "request-created-1");
 	assert.equal(equipmentLinkedCase.creates.length, 1);
 	const fromEquipmentProps = equipmentLinkedCase.creates[0]!.properties as Record<string, unknown>;
@@ -412,7 +543,7 @@ async function main() {
 		equipmentPageButtonCase.notion as never,
 	);
 
-	assert.equal(fromEquipmentPageButton.action, "needs-input");
+	assert.equal(fromEquipmentPageButton.action, "created");
 	assert.equal(fromEquipmentPageButton.projectPageId, "project-1");
 	assert.equal(fromEquipmentPageButton.requestPageId, "request-created-1");
 	const fromEquipmentPageButtonProps = equipmentPageButtonCase.creates[0]!
@@ -437,35 +568,153 @@ async function main() {
 		notion as never,
 	);
 
-	assert.ok(["created", "needs-input"].includes(created.action));
-	assert.equal(created.requestPageId, "request-created-1");
-	assert.equal(creates.length, 1);
-	const createdProps = creates[0]!.properties as Record<string, unknown>;
-	assert.deepEqual((createdProps.関連案件 as { relation: Array<{ id: string }> }).relation, [
-		{ id: "project-1" },
-	]);
-	assert.equal(
-		(createdProps.資料種別 as { select: { name: string } }).select.name,
-		"提案書",
-	);
-	assert.equal(
-		(createdProps.シミュレーションステータス as { select: { name: string } }).select.name,
-		"入力待ち",
-	);
-	assert.equal(queries.length, 1);
-	assert.equal(queryDocumentType(queries[0]!), "提案書");
+	assert.equal(created.action, "needs-input");
+	assert.equal(created.requestPageId, null);
+	assert.equal(creates.length, 0);
+	assert.equal(queries.length, 0);
+	assert.match(created.message, /設備詳細を入力する/);
+	assert.ok(comments.length >= 1);
 
-	const projectRelationUpdate = updates.find((update) => {
-		const properties = update.properties as Record<string, unknown>;
-		return Boolean(properties.資料作成依頼);
+	const financeWithoutProposalCase = makeNotion({
+		projectPropertyOverrides: {
+			借入額: numberProp(15000000),
+			金利: numberProp(1.2),
+			返済期間: numberProp(15),
+			実効税率: numberProp(30),
+			今期利益見込: numberProp(8000000),
+			流動比率: numberProp(180),
+			利益剰余金: numberProp(70000000),
+			自己資本比率: numberProp(42),
+			土地代: numberProp(3000000),
+			システム本体価格: numberProp(17000000),
+			権利代: numberProp(2000000),
+		},
 	});
-	assert.ok(projectRelationUpdate);
-	const projectProps = projectRelationUpdate.properties as Record<string, unknown>;
+	const financeWithoutProposal = await processProjectFinanceRequestForTest(
+		{ projectPageId: "project-1", dryRun: false },
+		financeWithoutProposalCase.notion as never,
+	);
+	assert.equal(financeWithoutProposal.action, "needs-input");
+	assert.equal(financeWithoutProposal.requestPageId, null);
+	assert.match(financeWithoutProposal.message, /シミュレーション作成/);
+	assert.equal(financeWithoutProposalCase.creates.length, 0);
+	assert.ok(financeWithoutProposalCase.updates.length >= 1);
+	assert.ok(financeWithoutProposalCase.comments.length >= 1);
+
+	const financeIncompleteProposalCase = makeNotion({
+		existingByDocumentType: {
+			提案書: [requestPage("request-proposal-incomplete", "提案書")],
+		},
+	});
+	const financeIncompleteProposal = await processProjectFinanceRequestForTest(
+		{ projectPageId: "project-1", dryRun: false },
+		financeIncompleteProposalCase.notion as never,
+	);
+	assert.equal(financeIncompleteProposal.action, "needs-input");
+	assert.equal(financeIncompleteProposal.requestPageId, "request-proposal-incomplete");
+	assert.match(financeIncompleteProposal.message, /シミュレーション入力を完了/);
+	assert.equal(financeIncompleteProposalCase.creates.length, 0);
+	assert.ok(financeIncompleteProposalCase.updates.length >= 1);
+	assert.ok(financeIncompleteProposalCase.comments.length >= 1);
+
+	const financeRequestCase = makeNotion({
+		projectPropertyOverrides: {
+			借入額: numberProp(15000000),
+			金利: numberProp(1.2),
+			返済期間: numberProp(15),
+			実効税率: numberProp(30),
+			今期利益見込: numberProp(8000000),
+			流動比率: numberProp(180),
+			利益剰余金: numberProp(70000000),
+			自己資本比率: numberProp(42),
+			土地代: numberProp(3000000),
+			システム本体価格: numberProp(17000000),
+			権利代: numberProp(2000000),
+		},
+		existingByDocumentType: {
+			提案書: [readyProposalRequestPage()],
+		},
+	});
+	const financeRequest = await processProjectFinanceRequestForTest(
+		{ projectPageId: "project-1", dryRun: false },
+		financeRequestCase.notion as never,
+	);
+	assert.equal(financeRequest.action, "created");
+	assert.equal(financeRequest.requestPageId, "request-created-1");
+	assert.match(financeRequest.message, /投資条件入力ページ/);
+	assert.equal(financeRequestCase.creates.length, 2);
+	const financeRequestCreate = financeRequestCase.creates.find((create) =>
+		(create.parent as { data_source_id?: string })?.data_source_id ===
+		"9701e891-ffd0-43d7-b6f9-911fedc65391"
+	);
+	assert.ok(financeRequestCreate);
+	const financeRequestProps = financeRequestCreate!.properties as Record<string, unknown>;
+	assert.equal(
+		(financeRequestProps.資料種別 as { select: { name: string } }).select.name,
+		"ファイナンスシミュレーション",
+	);
+	assert.equal(
+		(financeRequestProps.借入額 as { number: number }).number,
+		15000000,
+	);
+	assert.equal(
+		(financeRequestProps.金利 as { number: number }).number,
+		1.2,
+	);
+	assert.equal(
+		(financeRequestProps.流動比率 as { number: number }).number,
+		180,
+	);
+	assert.equal(
+		(financeRequestProps.利益剰余金 as { number: number }).number,
+		70000000,
+	);
+	assert.equal(
+		(financeRequestProps.自己資本比率 as { number: number }).number,
+		42,
+	);
+	assert.match(JSON.stringify(financeRequestProps.案件名), /投資条件入力/);
+	const financeDraftCreate = financeRequestCase.creates.find((create) =>
+		(create.parent as { data_source_id?: string })?.data_source_id ===
+		"7e4d0168-6e54-4071-bd55-f9730202225c"
+	);
+	assert.ok(financeDraftCreate);
+	const financeDraftUpdate = financeRequestCase.updates.find((update) => update.page_id === "finance-created-1");
+	assert.ok(financeDraftUpdate);
+	const financeDraftProps = financeDraftUpdate!.properties as Record<string, unknown>;
 	assert.deepEqual(
-		(projectProps.資料作成依頼 as { relation: Array<{ id: string }> }).relation,
+		(financeDraftProps.関連案件 as { relation: Array<{ id: string }> }).relation,
+		[{ id: "project-1" }],
+	);
+	assert.deepEqual(
+		(financeDraftProps.関連提案シミュレーション as { relation: Array<{ id: string }> }).relation,
 		[{ id: "request-created-1" }],
 	);
-	assert.equal(comments.length, 2);
+	assert.equal(
+		(financeDraftProps.ファイナンス状態 as { select: { name: string } }).select.name,
+		"入力待ち",
+	);
+	assert.match(JSON.stringify(financeDraftProps.ファイナンスメモ), /借入額・金利・返済期間/);
+	assert.match(JSON.stringify(financeDraftProps["B/S評価メモ"]), /案件/);
+	assert.match(JSON.stringify(financeDraftProps.金利メモ), /システム本体価格/);
+	assert.match(JSON.stringify(financeDraftProps.購入タイミング理由), /未判定/);
+	const financeDraftAppend = financeRequestCase.appends.find(
+		(append) => append.block_id === "finance-created-1",
+	);
+	assert.ok(financeDraftAppend);
+	assert.match(JSON.stringify(financeDraftAppend), /投資条件入力/);
+	assert.match(JSON.stringify(financeDraftAppend), /借入額/);
+	assert.match(JSON.stringify(financeDraftAppend), /案件サマリー/);
+	const financeProjectUpdate = financeRequestCase.updates.find((update) => {
+		const properties = update.properties as Record<string, unknown>;
+		return Boolean(properties.関連ファイナンスシミュレーション);
+	});
+	assert.ok(financeProjectUpdate);
+	const financeProjectProps = financeProjectUpdate!.properties as Record<string, unknown>;
+	assert.deepEqual(
+		(financeProjectProps.関連ファイナンスシミュレーション as { relation: Array<{ id: string }> }).relation,
+		[{ id: "finance-created-1" }],
+	);
 
 	const simulationCase = makeNotion({
 		existingByDocumentType: {
@@ -507,6 +756,16 @@ async function main() {
 		(grossProps.予定粗利の根拠 as { select: { name: string } }).select.name,
 		"価格あり",
 	);
+	const financeRecordCreate = simulationCase.creates.find((create) =>
+		(create.parent as { data_source_id?: string })?.data_source_id ===
+		"7e4d0168-6e54-4071-bd55-f9730202225c"
+	);
+	assert.ok(financeRecordCreate);
+	const financeRecordProps = financeRecordCreate!.properties as Record<string, unknown>;
+	assert.deepEqual(
+		(financeRecordProps.関連案件 as { relation: Array<{ id: string }> }).relation,
+		[{ id: "project-1" }],
+	);
 	const projectPdfAppend = simulationCase.appends.find((append) => append.block_id === "project-1");
 	assert.ok(projectPdfAppend);
 	assert.match(JSON.stringify(projectPdfAppend), /"type":"pdf"/);
@@ -517,6 +776,7 @@ async function main() {
 
 	const existingCase = makeNotion({
 		projectRequestIds: ["request-existing"],
+		projectPageOverride: projectPageWithEquipmentOnly(),
 		existingByDocumentType: {
 			提案書: [requestPage("request-existing", "提案書")],
 		},
@@ -527,11 +787,30 @@ async function main() {
 		existingCase.notion as never,
 	);
 
-	assert.ok(["existing", "needs-input"].includes(existing.action));
+	assert.equal(existing.action, "existing");
 	assert.equal(existing.requestPageId, "request-existing");
 	assert.equal(existingCase.creates.length, 0);
-	assert.equal(existingCase.updates.length, 0);
-	assert.equal(existingCase.comments.length, 2);
+	assert.ok(existingCase.updates.length >= 1);
+	const existingRequestUpdate = existingCase.updates.find((update) => {
+		if (update.page_id !== "request-existing") return false;
+		const properties = update.properties as Record<string, unknown>;
+		return Boolean(properties.関連設備詳細);
+	});
+	assert.ok(existingRequestUpdate);
+	const existingRequestProps = existingRequestUpdate!.properties as Record<string, unknown>;
+	assert.deepEqual(
+		(existingRequestProps.関連設備詳細 as { relation: Array<{ id: string }> }).relation,
+		[{ id: "equipment-1" }],
+	);
+	assert.equal(
+		(existingRequestProps.発電所名 as { rich_text: Array<{ text: { content: string } }> }).rich_text[0]!.text.content,
+		"湖南市250kW 太陽光発電所",
+	);
+	assert.equal(
+		(existingRequestProps.年間売電収入 as { number: number }).number,
+		2090000,
+	);
+	assert.ok(existingCase.comments.length >= 1);
 
 	const residentCase = makeNotion({
 		projectRequestIds: ["request-proposal-existing"],

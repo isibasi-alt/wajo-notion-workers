@@ -29,33 +29,6 @@ function numberProp(value: number | null = null) {
 	return { type: "number", number: value };
 }
 
-function proposalRequestDataSourceSchema() {
-	return {
-		properties: {
-			案件名: { type: "title", title: {} },
-			資料種別: {
-				type: "select",
-				select: {
-					options: [
-						{ name: "提案書" },
-						{ name: "概要書" },
-						{ name: "住民説明会資料" },
-					],
-				},
-			},
-			シミュレーションステータス: { type: "select", select: { options: [{ name: "入力待ち" }] } },
-			資料作成ステータス: { type: "select", select: { options: [{ name: "入力待ち" }] } },
-			関連案件: { type: "relation", relation: {} },
-			関連設備詳細: { type: "relation", relation: {} },
-			資料作成メモ: { type: "rich_text", rich_text: {} },
-			周知方法: {
-				type: "select",
-				select: { options: [{ name: "所有者変更周知" }] },
-			},
-		},
-	};
-}
-
 function inquiryPage(projectIds: string[] = []) {
 	return {
 		id: "inquiry-1",
@@ -65,7 +38,7 @@ function inquiryPage(projectIds: string[] = []) {
 			関連企業: relationProp(["company-1"]),
 			顧客接点ログ: relationProp(["log-1"]),
 			予定粗利額: numberProp(3000000),
-			"予定粗利の根拠": selectProp("案件多数見込み"),
+			"予定粗利の根拠": selectProp("売り｜担当者と仲が良い"),
 			売買区分: selectProp("売却相談"),
 			問い合わせ分類コード: selectProp("④ 高圧"),
 			紐づき案件: relationProp(projectIds),
@@ -142,7 +115,6 @@ async function main() {
 				queries.push(args);
 				return { results: [] };
 			},
-			retrieve: async () => proposalRequestDataSourceSchema(),
 		},
 		blocks: {
 			children: {
@@ -192,7 +164,7 @@ async function main() {
 	const createdBodyText = JSON.stringify(appends[0]!.children ?? []);
 	assert.match(createdBodyText, /営業サマリーと次の一手/);
 	assert.match(createdBodyText, /現地写真と設備IDの確認待ち/);
-	assert.match(createdBodyText, /設備詳細、シミュレーション、説明会用資料/);
+	assert.match(createdBodyText, /次に見る場所/);
 
 	const projectUpdate = updates.find((update) => update.page_id === "project-created");
 	assert.ok(projectUpdate);
@@ -220,6 +192,13 @@ async function main() {
 		projectProperties["予定粗利の根拠"],
 		undefined,
 		"予定粗利の根拠は問い合わせ段階では存在しない前提のため引き継がない（大ちゃん方針）",
+	);
+	const createProperties = creates[0]!.properties as Record<string, unknown>;
+	assert.equal((createProperties["予定粗利額"] as { number: number }).number, 3000000);
+	assert.equal(
+		(createProperties["予定粗利の根拠"] as { select: { name: string } }).select.name,
+		"売り｜担当者と仲が良い",
+		"案件新規作成の初回プロパティにも予定粗利の根拠を入れる",
 	);
 	assert.equal(
 		(projectProperties.売買区分 as { select: { name: string } }).select.name,
@@ -274,7 +253,9 @@ async function main() {
 			...notion.pages,
 			retrieve: async ({ page_id }: { page_id: string }) => {
 				if (page_id === "inquiry-1") return inquiryPage(["project-existing"]);
-				return projectPage(page_id);
+				const page = projectPage(page_id);
+				page.properties["予定粗利の根拠"] = selectProp("価格あり");
+				return page;
 			},
 		},
 		dataSources: {
@@ -285,7 +266,6 @@ async function main() {
 				}
 				return { results: [] };
 			},
-			retrieve: async () => proposalRequestDataSourceSchema(),
 		},
 	};
 
@@ -303,6 +283,15 @@ async function main() {
 	assert.match(
 		JSON.stringify((enrichedProjectUpdate!.properties as Record<string, unknown>)["問い合わせ要約"]),
 		/FIT24円/,
+	);
+	assert.equal(
+		(
+			(enrichedProjectUpdate!.properties as Record<string, unknown>)["予定粗利の根拠"] as {
+				select: { name: string };
+			}
+		).select.name,
+		"売り｜担当者と仲が良い",
+		"既存案件が価格ありのままでも、問い合わせ側の根拠へ修復する",
 	);
 	const existingInquiryUpdate = updates.find((update) => update.page_id === "inquiry-1");
 	assert.ok(existingInquiryUpdate);

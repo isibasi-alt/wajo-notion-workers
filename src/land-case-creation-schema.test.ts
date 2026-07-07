@@ -30,3 +30,9 @@ assert.match(
 	/仕入れ元区分\s*:\s*select\("土地情報"\)/,
 	"土地案件化は既存プロパティ 仕入れ元区分 に土地情報を入れる",
 );
+
+assert.match(
+	createProjectFromLand,
+	/売買区分\s*:\s*select\("売却案件"\)/,
+	"土地案件化は 売買区分=売却案件 で固定する",
+);
