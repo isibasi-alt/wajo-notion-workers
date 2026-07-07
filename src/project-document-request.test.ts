@@ -318,6 +318,33 @@ function queryDocumentType(args: Record<string, unknown> | undefined): string {
 	return "";
 }
 
+// Minimal filter emulation for relation/select filters so that a data-source
+// query returns only the records that actually match (models real Notion,
+// enabling the finance-record dedup fallback to be exercised faithfully).
+function recordMatchesFilter(record: Record<string, unknown>, filter: unknown): boolean {
+	if (!filter || typeof filter !== "object") return true;
+	const f = filter as Record<string, unknown>;
+	if (Array.isArray(f.and)) return f.and.every((sub) => recordMatchesFilter(record, sub));
+	if (Array.isArray(f.or)) return f.or.some((sub) => recordMatchesFilter(record, sub));
+	const property = typeof f.property === "string" ? f.property : "";
+	if (!property) return true;
+	const properties = (record.properties ?? {}) as Record<string, unknown>;
+	const prop = (properties[property] ?? {}) as Record<string, unknown>;
+	if (f.relation && typeof f.relation === "object") {
+		const contains = (f.relation as Record<string, unknown>).contains;
+		const relationIds = Array.isArray(prop.relation)
+			? (prop.relation as Array<Record<string, unknown>>).map((item) => item?.id)
+			: [];
+		return relationIds.includes(contains);
+	}
+	if (f.select && typeof f.select === "object") {
+		const equals = (f.select as Record<string, unknown>).equals;
+		const selectName = (prop.select as Record<string, unknown> | undefined)?.name;
+		return selectName === equals;
+	}
+	return true;
+}
+
 function makeNotion(options: {
 	projectRequestIds?: string[];
 	projectPropertyOverrides?: Record<string, unknown>;
@@ -339,8 +366,9 @@ function makeNotion(options: {
 				queries.push(args);
 				const dataSourceId = typeof args.data_source_id === "string" ? args.data_source_id : "";
 				if (dataSourceId && options.existingByDataSource?.[dataSourceId]) {
+					const records = options.existingByDataSource[dataSourceId] ?? [];
 					return {
-						results: options.existingByDataSource[dataSourceId] ?? [],
+						results: records.filter((record) => recordMatchesFilter(record, args.filter)),
 					};
 				}
 				return {
@@ -396,6 +424,10 @@ function makeNotion(options: {
 					};
 				}
 				for (const pages of Object.values(options.existingByDocumentType ?? {})) {
+					const found = pages.find((page) => page.id === page_id);
+					if (found) return found;
+				}
+				for (const pages of Object.values(options.existingByDataSource ?? {})) {
 					const found = pages.find((page) => page.id === page_id);
 					if (found) return found;
 				}
@@ -772,6 +804,62 @@ async function main() {
 	assert.equal(
 		simulationCase.fileUploads.some((upload) => upload.action === "complete"),
 		false,
+	);
+
+	// 二重化しない: 同一案件に既存 finance 入力箱があり、その 関連提案シミュレーション が
+	// 今回の提案ページ(request-ready-1)と不一致でも、新規作成せず既存箱を update し、
+	// 計算値(年間返済額等)が書かれ、関連案件が保持されること。
+	const dedupExistingBox = {
+		id: "finance-existing-1",
+		url: "https://www.notion.so/finance-existing-1",
+		properties: {
+			...financeSimulationPage("finance-existing-1").properties,
+			関連案件: relationProp(["project-1"]),
+			関連提案シミュレーション: relationProp(["request-other-9999"]),
+			ファイナンス状態: selectProp("入力待ち"),
+		},
+	};
+	const dedupCase = makeNotion({
+		existingByDocumentType: {
+			提案書: [readyProposalRequestPage()],
+		},
+		existingByDataSource: {
+			"7e4d0168-6e54-4071-bd55-f9730202225c": [dedupExistingBox],
+		},
+	});
+	await processProposalSimulationForTest(
+		{ pageId: "request-ready-1", dryRun: false },
+		dedupCase.notion as never,
+	);
+	const dedupFinanceCreates = dedupCase.creates.filter(
+		(create) =>
+			(create.parent as { data_source_id?: string })?.data_source_id ===
+			"7e4d0168-6e54-4071-bd55-f9730202225c",
+	);
+	assert.equal(
+		dedupFinanceCreates.length,
+		0,
+		"既存の finance 入力箱があるときは新規作成せず update すること",
+	);
+	const dedupUpdate = dedupCase.updates.find(
+		(update) =>
+			update.page_id === "finance-existing-1" &&
+			(update.properties as Record<string, unknown>).年間返済額 !== undefined,
+	);
+	assert.ok(dedupUpdate, "既存 finance 箱へ計算値の update が行われること");
+	const dedupProps = dedupUpdate!.properties as Record<string, unknown>;
+	assert.deepEqual(
+		(dedupProps.関連案件 as { relation: Array<{ id: string }> }).relation,
+		[{ id: "project-1" }],
+		"関連案件が必ず保持/設定されること",
+	);
+	assert.equal(
+		(dedupProps.ファイナンス状態 as { select: { name: string } }).select.name,
+		"準備完了",
+	);
+	assert.equal(
+		typeof (dedupProps.年間返済額 as { number: number }).number,
+		"number",
 	);
 
 	const existingCase = makeNotion({

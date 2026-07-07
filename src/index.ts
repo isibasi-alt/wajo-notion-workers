@@ -17589,7 +17589,8 @@ async function syncFinanceSimulationRecord(
 ): Promise<{ pageId: string; action: "created" | "updated" } | null> {
 	if (!draft.financeSimulation) return null;
 	try {
-		const existing = await notion.dataSources.query({
+		const projectId = relationIdsFromProperty(proposalPage.properties?.["関連案件"])[0] ?? null;
+		const byProposal = await notion.dataSources.query({
 			data_source_id: FINANCE_SIMULATION_DATA_SOURCE_ID,
 			filter: {
 				property: "関連提案シミュレーション",
@@ -17597,8 +17598,27 @@ async function syncFinanceSimulationRecord(
 			},
 			page_size: 1,
 		});
-		const existingPage = existing.results[0] ?? null;
-		const properties = buildFinanceSimulationRecordProperties(proposalPage, draft);
+		let existingPage = byProposal.results[0] ?? null;
+		// 提案シミュレーション紐づけで見つからない場合は、同一案件に既にある入力箱へ
+		// フォールバックして書き込む（投資条件ボタンで作られた入力待ちの箱との二重化を防ぐ）。
+		if (!existingPage && projectId) {
+			const byProject = await notion.dataSources.query({
+				data_source_id: FINANCE_SIMULATION_DATA_SOURCE_ID,
+				filter: {
+					property: "関連案件",
+					relation: { contains: projectId },
+				},
+				page_size: 10,
+			});
+			const candidates = byProject.results ?? [];
+			existingPage =
+				candidates.find(
+					(candidate) => text(candidate.properties?.["ファイナンス状態"]) === "入力待ち",
+				) ??
+				candidates[0] ??
+				null;
+		}
+		const properties = buildFinanceSimulationRecordProperties(proposalPage, draft, projectId);
 		if (existingPage) {
 			await notion.pages.update({
 				page_id: existingPage.id,
@@ -18030,16 +18050,18 @@ function buildSalesProposalNextActionLines(
 function buildFinanceSimulationRecordProperties(
 	proposalPage: Page,
 	draft: ProposalSimulationDraft,
+	projectIdOverride?: string | null,
 ): Record<string, unknown> {
 	const finance = draft.financeSimulation!;
 	const equityBase = draft.salePrice ?? draft.purchaseCost ?? 0;
 	const selfFunding = Math.max(0, equityBase - finance.loanAmount);
-	const relatedProjectIds = relationIdsFromProperty(proposalPage.properties?.["関連案件"]);
+	const relatedProjectId =
+		projectIdOverride ?? relationIdsFromProperty(proposalPage.properties?.["関連案件"])[0] ?? null;
 	const properties: Record<string, unknown> = {
 		Name: title(`${draft.titleLabel || readGenericPageTitle(proposalPage) || proposalPage.id}｜ファイナンス`),
 		関連提案シミュレーション: relation(proposalPage.id),
-		...(relatedProjectIds.length > 0
-			? { 関連案件: relation(relatedProjectIds[0]!) }
+		...(relatedProjectId
+			? { 関連案件: relation(relatedProjectId) }
 			: {}),
 			借入額: { number: finance.loanAmount },
 			金利: { number: finance.interestRate },
