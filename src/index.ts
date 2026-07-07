@@ -7434,7 +7434,9 @@ async function processInquiryEmailIntake(
 
 	const created = await createInquiryFromEmail(notion, emailInfo);
 	let companyAction: string | null = null;
-	if (input.linkCompany !== false) {
+	// 企業連携は既定でWorkerが行わない（企業連携AIエージェントの仕事）。
+	// 明示的に linkCompany: true を渡した時だけ旧経路を使う。2026-07-07分担変更
+	if (input.linkCompany === true) {
 		const linked = await processInquiryCompanyLink(
 			{ inquiryPageId: created.id, pageData: created, dryRun: false },
 			notion,
@@ -28961,26 +28963,19 @@ async function createInquiryFromEmail(
 	emailInfo: InquiryEmailInfo,
 ): Promise<Page> {
 	const receptionNumber = await nextInquiryReceptionNumber(notion, emailInfo.receivedAt);
-	const displayTitle = buildNumberedInquiryDisplayTitle(
-		receptionNumber,
-		emailInfo.displayTitle || emailInfo.subject || "新規お問い合わせ",
-	);
-	const numberedEmailInfo = {
-		...emailInfo,
-		displayTitle,
-		receptionNumber,
-	};
+	// 起票時の件名は中立な仮題のみ。売買タグ・対象物入りの完成形件名は、本文を読解した
+	// 整形エージェントが付ける（Workerのキーワード推定が誤タグを先置きしない）。2026-07-07分担変更
+	const intakeParty =
+		emailInfo.contactName || emailInfo.companyName || emailInfo.subject || "新規お問い合わせ";
+	const displayTitle = buildNumberedInquiryDisplayTitle(receptionNumber, `新着｜${intakeParty}`);
+	// 判断系（売買区分・種別・分類・要約・トーク方針・企業登録可否）はWorkerが書かない。
+	// 空欄で起票し、本文を読解する整形エージェントが埋める（書き手1人の原則）。2026-07-07分担変更
 	const properties: Record<string, unknown> = {
 		件名: title(displayTitle),
 		受付番号: richText(receptionNumber),
 		元メール件名: richText(emailInfo.subject),
-		問い合わせ分類コード: select(emailInfo.categoryCode),
 		ステータス: select("未対応"),
 		本文: richText(emailInfo.body),
-		要約: richText(buildInquiryEmailSummary(numberedEmailInfo)),
-		初回トーク方針: richText(buildInquiryEmailFirstTalk(numberedEmailInfo)),
-		問い合わせ種別: select(emailInfo.inquiryType),
-		売買区分: select(emailInfo.dealType),
 		重複チェックキー: richText(emailInfo.primaryKey),
 		"メールID（ユニークキー）": richText(emailInfo.primaryKey),
 		"Message-ID": richText(emailInfo.messageId),
@@ -28989,9 +28984,8 @@ async function createInquiryFromEmail(
 		"送信者（メール）": richText(emailInfo.fromRaw || emailInfo.fromEmail),
 		"宛先（To）": richText(emailInfo.to),
 		企業連携ステータス: select("未処理"),
-		企業登録可否: select("要確認"),
 		重複判定ステータス: select("正常"),
-		企業連携メモ: richText("メール入口Workerが新規作成。企業連携はWorker側で後続処理。"),
+		企業連携メモ: richText("メール入口Workerが新規作成。読解は整形エージェント、企業連携は企業連携AIが後続処理。"),
 	};
 	if (emailInfo.receivedAt) {
 		properties["受信日時"] = { date: { start: emailInfo.receivedAt } };
