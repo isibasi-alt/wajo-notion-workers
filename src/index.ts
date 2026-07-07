@@ -29029,6 +29029,31 @@ function isNearbyInquiryDate(left: string, right: string): boolean {
 	return diffMs <= 14 * 24 * 60 * 60 * 1000;
 }
 
+// 問い合わせ1件を「分析済みの成果物」にする営業ブリーフィング。
+// 営業がページを開いた瞬間に、結論・相手・数字・勝ち筋・今日の一手まで揃っている状態を作る。
+// 数字は本文にある値からの単純計算だけ（推測相場の捏造は禁止）。2026-07-07
+async function buildInquiryAnalysisBriefing(emailInfo: InquiryEmailInfo): Promise<string> {
+	const system = [
+		"あなたは和上ホールディングス（太陽光発電所・系統用蓄電池の売買仲介）の営業チームの分析担当です。",
+		"問い合わせメール1通を読み、営業がページを開いた瞬間に「もう分析が終わっている」と感じる営業ブリーフィングを書きます。",
+		"構成は5部固定。見出しは【結論】【相手】【数字】【勝ち筋】【今日の一手】。",
+		"【結論】2行以内。この問い合わせは何で、どれくらい価値があるか。",
+		"【相手】正体（実需/仲介/同業/個人オーナー/既存顧客）と本気度。根拠を必ず添える。",
+		"【数字】本文にある数字から単純計算できる事実だけ書く（例：連系年からFIT残存年数、年間売電×残存年数=残存総収入、他社提示額との比率、希望価格との差）。本文に無い相場・査定額を推測で書くことは絶対禁止。計算に使った元の数字を併記する。数字が無いメールなら「本文に数字なし」と書く。",
+		"【勝ち筋】競合・相見積もり・残債・期限などを踏まえ、何で勝負するかを1つに絞る。",
+		"【今日の一手】具体的な次のアクション1つと、電話で聞くことリスト（3〜5個）。",
+		"文体：営業がそのままセリフに使える具体的な言葉。「条件をヒアリングする」のような一般論は禁止。全体で400字以内。",
+	].join("\n");
+	const user = [
+		`件名: ${emailInfo.subject || "（無題）"}`,
+		`差出人: ${emailInfo.contactName || "名前不明"} / ${emailInfo.companyName || "会社名なし"}`,
+		"",
+		"=== メール本文 ===",
+		emailInfo.body.slice(0, 8000),
+	].join("\n");
+	return callAnthropicChat({ system, user, maxTokens: 1200, temperature: 0 });
+}
+
 async function createInquiryFromEmail(
 	notion: NotionClient,
 	emailInfo: InquiryEmailInfo,
@@ -29082,7 +29107,32 @@ async function createInquiryFromEmail(
 		properties,
 		pageTemplate(INQUIRY_TEMPLATE_ID),
 	);
+	// 営業ブリーフィング（分析済みの証）をページ本文へ。生成失敗でも起票は止めない。
+	let analysisBriefing = "";
+	try {
+		analysisBriefing = (await buildInquiryAnalysisBriefing(emailInfo)).trim();
+	} catch (error) {
+		console.log("問い合わせ営業ブリーフィング生成をスキップしました", String(error));
+	}
 	await appendBlocksIfAny(notion, created.id, [
+		...(analysisBriefing
+			? [
+					{
+						object: "block",
+						type: "callout",
+						callout: {
+							rich_text: [
+								{
+									type: "text",
+									text: { content: `営業ブリーフィング（AI分析）\n${analysisBriefing}`.slice(0, 1900) },
+								},
+							],
+							icon: { emoji: "🔍" },
+							color: "blue_background",
+						},
+					},
+				]
+			: []),
 		{
 			object: "block",
 			type: "callout",
