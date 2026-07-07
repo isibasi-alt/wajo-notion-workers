@@ -4713,6 +4713,29 @@ worker.webhook("processProjectDealStartWebhook", {
 	},
 });
 
+worker.webhook("processProjectEnrichFromInquiryWebhook", {
+	title: "WAJO 案件 引き継ぎ（B）Webhook",
+	description:
+		"案件管理DBのヘッダー『引き継ぎ』ボタンから起動。案件の『元問い合わせ』を辿り、顧客接点ログ・案件資料・関連企業などのリレーションを案件へ引き継ぎます。案件名（Aの仮名）は上書きしません。",
+	execute: async (events, { notion }) => {
+		// Notionボタン起動のためverifyWebhookSecretは不要（URLに認証トークン含む）
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const projectPageId = extractProjectPageIdFromWebhook(body);
+			if (!projectPageId) {
+				throw new Error(
+					"projectPageId / pageId / entity.id のいずれからも案件ページIDを特定できませんでした。",
+				);
+			}
+			await processProjectEnrichFromInquiry(
+				projectPageId,
+				notion as unknown as NotionClient,
+				extractTriggerUserIdFromWebhook(body),
+			);
+		}
+	},
+});
+
 worker.webhook("processInquiryEmailIntakeWebhook", {
 	title: "WAJO 問い合わせメール入口Webhook",
 	description:
@@ -31880,7 +31903,8 @@ async function enrichProjectFromInquiry(
 		"次に確認すること: 対象物、売買条件、必要資料、価格、所有者/決裁者。",
 	].join("\n");
 	const patches: Record<string, SafePatch> = {
-		案件名: { kind: "text", value: buildInquiryProjectName(inquiryTitle) },
+		// 案件名はAボタン（案件化申請）が付けた仮名（お名前｜受付番号）を尊重し、Bでは上書きしない。
+		// 最終命名（言いやすい呼び名）は別ステップで扱う。
 		案件詳細: { kind: "text", value: memo },
 		情報ソース: { kind: "text", value: "お問い合わせDB / Worker案件化" },
 		確認待ち内容: {
@@ -31990,6 +32014,43 @@ async function enrichProjectFromInquiry(
 			await appendBlocksIfAny(notion, projectPage.id, bodyBlocks);
 		}
 	}
+}
+
+// Bボタン（案件ヘッダー）本体：案件の『元問い合わせ』を辿り、顧客接点ログ等のリレーションを案件へ引き継ぐ。
+// 案件はA（ネイティブ）が作成済みで、ここでは新規作成せず enrich のみ行う。
+async function processProjectEnrichFromInquiry(
+	projectPageId: string,
+	notion: NotionClient,
+	triggerUserId?: string,
+): Promise<void> {
+	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
+	const inquiryIds = uniqueStrings(
+		relationIdsFromProperty(projectPage.properties?.["元問い合わせ"]),
+	);
+	if (inquiryIds.length === 0) {
+		await createPageComment(
+			notion,
+			projectPageId,
+			"⚠ この案件に『元問い合わせ』が紐づいていないため、引き継ぐ元がありません。Aボタン（案件化申請）で作成した案件で押してください。",
+		);
+		return;
+	}
+	const inquiryPage = await notion.pages.retrieve({ page_id: inquiryIds[0]! });
+	await enrichProjectFromInquiry(notion, projectPage, inquiryPage, triggerUserId);
+	const contactLogCount = relationIdsFromProperty(
+		inquiryPage.properties?.["顧客接点ログ"],
+	).length;
+	const nextMeeting =
+		dateStartFromProperty(projectPage.properties?.["次回面談日時"]) ||
+		dateStartFromProperty(inquiryPage.properties?.["次回面談日時"]);
+	const alert = nextMeeting
+		? ""
+		: "\n⚠ 次回面談日時が未設定です。案件化の必須条件なので、面談日時を入れてください。";
+	await createPageComment(
+		notion,
+		projectPageId,
+		`✅ 引き継ぎ完了：顧客接点ログ ${contactLogCount} 件・案件資料・関連企業を案件へ引き継ぎました。${alert}`,
+	);
 }
 
 function buildInquiryProjectFollowupChildren(input: {
