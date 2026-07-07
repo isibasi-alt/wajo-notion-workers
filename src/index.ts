@@ -32002,9 +32002,29 @@ function projectAssetTypeFromInquiryCategory(categoryCode: string): string | nul
 	return null;
 }
 
+// 案件名の最終命名（正本 CASE_TITLE_NAMING_RULE）: 長い問い合わせ件名を、社内で呼べる短い通称へ。
+// 落とすもの: 受付番号 / 売買区分 / 起点マーカー(⚠等) / 種別コードの丸数字。残すのは芯(対象物・規模)と識別子。
+// 地域は所在地からだが問い合わせ起点には無いことが多く、でっち上げない（地域付き完全形は土地起点で別途）。
 function buildInquiryProjectName(inquiryTitle: string): string {
 	const clean = inquiryTitle.replace(/\s+/g, " ").trim();
-	return (clean || `問い合わせ案件 ${todayDateJST()}`).slice(0, 1800);
+	if (!clean) return `問い合わせ案件 ${todayDateJST()}`;
+	const dealWords = new Set([
+		"売", "買", "売却", "購入", "売買", "売買両方", "売却査定", "購入相談",
+		"その他相談", "相談", "査定", "その他",
+	]);
+	const segments = clean
+		.split(/[｜|]/)
+		.map((seg) =>
+			seg
+				.replace(/^[\s①-⑳*＊・\-—]+/, "")
+				.replace(/[⚠️⚠🔺！]/g, "")
+				.trim(),
+		)
+		.filter((seg) => seg.length > 0)
+		.filter((seg) => !/^問\s*-?\s*\d/.test(seg))
+		.filter((seg) => !dealWords.has(seg));
+	const name = segments.join("｜").trim();
+	return (name || clean).slice(0, 60);
 }
 
 
