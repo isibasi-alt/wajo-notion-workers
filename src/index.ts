@@ -31774,6 +31774,21 @@ async function enrichProjectFromInquiry(
 	if (contactLogIds.length > 0) {
 		patches["顧客接点ログ"] = { kind: "relation", ids: contactLogIds };
 	}
+	// 案件資料DB（電力会社申請書面・図面・シミュレーション・登記簿・経産省データ等）を案件へ引き継ぐ。
+	// 問い合わせ/土地フェーズで集めた資料を案件へ確実に運ぶのが今回の最大ポイント。
+	const inquiryDocumentIds = relationIdsFromProperty(properties["案件資料DB"]);
+	if (inquiryDocumentIds.length > 0) {
+		patches["案件資料DB"] = { kind: "relation", ids: inquiryDocumentIds };
+	}
+	// 案件化の必須2条件を問い合わせから案件へ転記する（次回面談日時・決裁者）。
+	const nextMeetingDate = dateStartFromProperty(properties["次回面談日時"]);
+	if (nextMeetingDate) {
+		patches["次回面談日時"] = { kind: "date", value: nextMeetingDate };
+	}
+	const decisionMakerText = text(properties["決裁者"]);
+	if (decisionMakerText) {
+		patches["決裁者"] = { kind: "text", value: decisionMakerText };
+	}
 	// 案件化時、お問い合わせ内容を案件側の専用引き継ぎ列へ写す（DB設計者が用意した受け皿）。
 	const inquirySummary = text(properties["メール要約"]);
 	if (inquirySummary) {
