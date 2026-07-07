@@ -6337,6 +6337,31 @@ function extractNotionPageIdFromUrl(value: string | undefined): string | null {
 	return `${p.slice(0, 8)}-${p.slice(8, 12)}-${p.slice(12, 16)}-${p.slice(16, 20)}-${p.slice(20)}`;
 }
 
+// 紹介経由パシャ: 共有されたのが名刺ページならそのまま、社外顧問ページなら「関連名刺」の1枚目に変換する。
+// 「誰に紹介してもらった？」は名刺→名刺のrelationのため、名刺に解決できなければnull(原文はメモに残る)。
+async function resolveReferrerCardPageId(
+	notion: NotionClient,
+	pageId: string | null,
+): Promise<string | null> {
+	if (!pageId) return null;
+	try {
+		const page = (await notion.pages.retrieve({ page_id: pageId })) as {
+			properties?: Record<string, unknown>;
+			parent?: { data_source_id?: string };
+		};
+		const parentId = (page.parent?.data_source_id ?? "").replace(/-/g, "");
+		if (parentId === BUSINESS_CARD_DATA_SOURCE_ID.replace(/-/g, "")) return pageId;
+		if (parentId === ADVISOR_DATA_SOURCE_ID.replace(/-/g, "")) {
+			const cardIds = relationIdsFromProperty(page.properties?.["関連名刺"]);
+			return cardIds[0] ?? null;
+		}
+		return null;
+	} catch {
+		// 参照に失敗しても名刺登録全体は止めない(紹介元の原文はメモに残る)
+		return null;
+	}
+}
+
 function normalizeCardEngagement(value: string | undefined): "active" | "save-only" {
 	const raw = String(value ?? "").trim();
 	const normalized = raw.toLowerCase();
@@ -7166,13 +7191,17 @@ async function processBusinessCardImage(
 	);
 	const routingLabel =
 		routing === "broker" ? "🤝社外顧問" : routing === "later" ? "❓あとで決める" : "🏢企業";
-	// 紹介経由パシャ(案2): 紹介者の名刺ページ共有から起動された場合、紹介元を最初から確定させる(嘘のつけない一次情報)。
-	const referrerPageId = extractNotionPageIdFromUrl(input.referrerPageUrl);
+	// 紹介経由パシャ(案2): 紹介者のページ共有から起動された場合、紹介元を最初から確定させる(嘘のつけない一次情報)。
+	// 名刺ページでも社外顧問ページでも受ける: 社外顧問なら「関連名刺」を辿って名刺に変換する(relation先は名刺DBのため)。
+	const referrerPageId = await resolveReferrerCardPageId(
+		notion,
+		extractNotionPageIdFromUrl(input.referrerPageUrl),
+	);
 	const entryMemo = [
 		`撮影時の振り分け: ${routingLabel}`,
 		routing !== "later" && `営業判断: ${engagementLabel}`,
 		input.referrerPageUrl &&
-			`紹介経由パシャ: ${String(input.referrerPageUrl).trim()}${referrerPageId ? "" : "(ページID抽出不可のためrelation未設定)"}`,
+			`紹介経由パシャ: ${String(input.referrerPageUrl).trim()}${referrerPageId ? "" : "(紹介元の名刺を特定できずrelation未設定)"}`,
 	]
 		.filter(Boolean)
 		.join("\n");
