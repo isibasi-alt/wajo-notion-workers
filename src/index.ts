@@ -6337,28 +6337,54 @@ function extractNotionPageIdFromUrl(value: string | undefined): string | null {
 	return `${p.slice(0, 8)}-${p.slice(8, 12)}-${p.slice(12, 16)}-${p.slice(16, 20)}-${p.slice(20)}`;
 }
 
-// 紹介経由パシャ: 共有されたのが名刺ページならそのまま、社外顧問ページなら「関連名刺」の1枚目に変換する。
-// 「誰に紹介してもらった？」は名刺→名刺のrelationのため、名刺に解決できなければnull(原文はメモに残る)。
-async function resolveReferrerCardPageId(
+// 紹介経由パシャ: 共有されたのが名刺ページでも社外顧問ページでも受けて、両レイヤーのIDに解決する。
+// cardPageId=名刺relation(誰に紹介してもらった？)用 / advisorPageId=社外顧問側の「紹介してくれた人」用。
+type ReferrerResolution = { cardPageId: string | null; advisorPageId: string | null };
+
+async function resolveReferrerPages(
 	notion: NotionClient,
 	pageId: string | null,
-): Promise<string | null> {
-	if (!pageId) return null;
+): Promise<ReferrerResolution> {
+	if (!pageId) return { cardPageId: null, advisorPageId: null };
 	try {
 		const page = (await notion.pages.retrieve({ page_id: pageId })) as {
 			properties?: Record<string, unknown>;
 			parent?: { data_source_id?: string };
 		};
 		const parentId = (page.parent?.data_source_id ?? "").replace(/-/g, "");
-		if (parentId === BUSINESS_CARD_DATA_SOURCE_ID.replace(/-/g, "")) return pageId;
+		if (parentId === BUSINESS_CARD_DATA_SOURCE_ID.replace(/-/g, "")) {
+			const advisorIds = relationIdsFromProperty(page.properties?.["関連社外顧問"]);
+			return { cardPageId: pageId, advisorPageId: advisorIds[0] ?? null };
+		}
 		if (parentId === ADVISOR_DATA_SOURCE_ID.replace(/-/g, "")) {
 			const cardIds = relationIdsFromProperty(page.properties?.["関連名刺"]);
-			return cardIds[0] ?? null;
+			return { cardPageId: cardIds[0] ?? null, advisorPageId: pageId };
 		}
-		return null;
+		return { cardPageId: null, advisorPageId: null };
 	} catch {
 		// 参照に失敗しても名刺登録全体は止めない(紹介元の原文はメモに残る)
-		return null;
+		return { cardPageId: null, advisorPageId: null };
+	}
+}
+
+// 紹介者の社外顧問ページ側にも「紹介してくれた人」を張る(人物の正本から紹介名刺が一覧できるように・2026-07-07)。
+async function appendAdvisorIntroducedCard(
+	notion: NotionClient,
+	advisorPageId: string,
+	cardPageId: string,
+): Promise<void> {
+	try {
+		const page = (await notion.pages.retrieve({ page_id: advisorPageId })) as {
+			properties?: Record<string, unknown>;
+		};
+		const existing = relationIdsFromProperty(page.properties?.["紹介してくれた人"]);
+		if (existing.includes(cardPageId)) return;
+		await notion.pages.update({
+			page_id: advisorPageId,
+			properties: { 紹介してくれた人: relationIds([...existing, cardPageId]) },
+		});
+	} catch {
+		// 失敗しても名刺登録は止めない
 	}
 }
 
@@ -7192,11 +7218,12 @@ async function processBusinessCardImage(
 	const routingLabel =
 		routing === "broker" ? "🤝社外顧問" : routing === "later" ? "❓あとで決める" : "🏢企業";
 	// 紹介経由パシャ(案2): 紹介者のページ共有から起動された場合、紹介元を最初から確定させる(嘘のつけない一次情報)。
-	// 名刺ページでも社外顧問ページでも受ける: 社外顧問なら「関連名刺」を辿って名刺に変換する(relation先は名刺DBのため)。
-	const referrerPageId = await resolveReferrerCardPageId(
+	// 名刺ページでも社外顧問ページでも受ける(2026-07-07両対応)。名刺relationと社外顧問側の両レイヤーに張る。
+	const referrer = await resolveReferrerPages(
 		notion,
 		extractNotionPageIdFromUrl(input.referrerPageUrl),
 	);
+	const referrerPageId = referrer.cardPageId;
 	const entryMemo = [
 		`撮影時の振り分け: ${routingLabel}`,
 		routing !== "later" && `営業判断: ${engagementLabel}`,
@@ -7245,6 +7272,11 @@ async function processBusinessCardImage(
 		parent: { data_source_id: BUSINESS_CARD_DATA_SOURCE_ID },
 		properties,
 	});
+
+	// 紹介者の社外顧問ページ側にも「紹介してくれた人」を張る(人物の正本=社外顧問DBから紹介名刺が一覧できる)。
+	if (referrer.advisorPageId) {
+		await appendAdvisorIntroducedCard(notion, referrer.advisorPageId, page.id);
+	}
 
 	// 3. OCR(失敗してもページと画像は残る=要確認で人に渡す)
 	let ocr: BusinessCardOcr;
