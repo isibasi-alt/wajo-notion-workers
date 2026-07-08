@@ -32074,6 +32074,7 @@ async function processProjectEnrichFromInquiry(
 	notion: NotionClient,
 	triggerUserId?: string,
 ): Promise<void> {
+	try {
 	const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
 	const inquiryIds = uniqueStrings(
 		relationIdsFromProperty(projectPage.properties?.["元問い合わせ"]),
@@ -32105,6 +32106,15 @@ async function processProjectEnrichFromInquiry(
 		projectPageId,
 		`✅ 引き継ぎ完了：顧客接点ログ ${contactLogCount} 件・案件資料・関連企業を案件へ引き継ぎ、問い合わせ側へ紐づけ返しました。${alert}`,
 	);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		await createPageComment(
+			notion,
+			projectPageId,
+			`⚠ 引き継ぎに失敗しました: ${message.slice(0, 500)}`,
+		).catch(() => {});
+		throw error;
+	}
 }
 
 function buildInquiryProjectFollowupChildren(input: {
