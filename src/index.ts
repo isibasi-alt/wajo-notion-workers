@@ -3088,6 +3088,37 @@ export const MANAGER_REVIEW_RESPONSE_FORMAT = {
 	},
 } as const;
 
+export const FINANCE_SUMMARY_RESPONSE_FORMAT = {
+	type: "json_schema",
+	json_schema: {
+		name: "finance_investment_summary",
+		strict: true,
+		schema: {
+			type: "object",
+			additionalProperties: false,
+			required: [
+				"headline",
+				"keyPoints",
+				"conclusion",
+				"buyTimingReason",
+				"salesTalk",
+				"balanceSheetNote",
+			],
+			properties: {
+				headline: { type: "string" },
+				keyPoints: {
+					type: "array",
+					items: { type: "string" },
+				},
+				conclusion: { type: "string" },
+				buyTimingReason: { type: "string" },
+				salesTalk: { type: "string" },
+				balanceSheetNote: { type: "string" },
+			},
+		},
+	},
+} as const;
+
 export const SALES_PERFORMANCE_REVIEW_RESPONSE_FORMAT = {
 	type: "json_schema",
 	json_schema: {
@@ -13811,6 +13842,106 @@ function parseManagerReviewAIResponse(raw: string): ManagerReviewAIResponse {
 		};
 	}
 }
+
+// 投資用ファイナンスシミュレーションの「まとめ」をAIに書かせる。
+// 数字は既存の計算(FinanceSimulation)で出ているので、AIは"数字を投資家の言葉へ翻訳"するだけ。
+// formulaの定型文の限界を越えるための本丸。APIが落ちたら呼び出し側が既存の定型文へフォールバックする。
+type FinanceSummaryAIResponse = {
+	headline: string;
+	keyPoints: string[];
+	conclusion: string;
+	buyTimingReason: string;
+	salesTalk: string;
+	balanceSheetNote: string;
+};
+
+async function callAnthropicFinanceSummary(input: {
+	proposalKindLabel: string;
+	area: string;
+	facts: string[];
+	wajoAssurance: string;
+}): Promise<FinanceSummaryAIResponse> {
+	const systemPrompt = [
+		"あなたは和上ホールディングスの投資用ファイナンスシミュレーションの解説AIです。",
+		"太陽光発電所・系統用蓄電池の売買で、投資家（買い手）に渡す提案の『まとめ』を書きます。",
+		"目的は、既に計算済みの数字を、投資家の判断が動く自然な日本語へ翻訳すること。水準の目標はSolar Pro。",
+		"",
+		"必ず守ること:",
+		"- 与えられた数字だけを根拠にする。利回り・DSCR・NPV/IRR・手残り・回収年数などの具体的な数字を必ず本文に引く。",
+		"- 数字を新しく作らない、丸めない、変えない。与えられていない値は語らない。",
+		"- 投資家が『買うか』を判断できる、具体的で自然な日本語にする。営業が現場でそのまま言える言葉にする。",
+		"- 和上の強み＝事故歴・整備・エラーまで正直に開示する姿勢（お墨付き）を、提案の信頼の芯として織り込む。",
+		"- 元本保証・確実な利益など、断定できない保証の言い回しは使わない。",
+		"- 必ずJSONのみを返す。",
+		"",
+		"返す内容:",
+		"- headline: 一行結論（買い/様子見の方向＋核心を数字で）",
+		"- keyPoints: 投資家が最初に見る要点を3つ（各行に数字を入れる）",
+		"- conclusion: 御社への結論（なぜこの案件か、数字根拠で）",
+		"- buyTimingReason: なぜ今が買い時か（購入タイミングの理由）",
+		"- salesTalk: 営業が現場で言えるひと言",
+		"- balanceSheetNote: B/S・財務目線の評価メモ",
+	].join("\n");
+
+	const userPrompt = [
+		`対象: ${input.proposalKindLabel || "未設定"}`,
+		`エリア: ${input.area || "未設定"}`,
+		"",
+		"=== 計算済みの数字（この範囲だけを根拠にする） ===",
+		...input.facts,
+		"",
+		"=== 和上確認（正直開示・提案の信頼の芯） ===",
+		input.wajoAssurance || "未入力",
+	].join("\n");
+
+	const raw = await callAnthropicChat({
+		system: systemPrompt,
+		user: userPrompt,
+		maxTokens: 1500,
+		temperature: 0.4,
+		jsonSchema: FINANCE_SUMMARY_RESPONSE_FORMAT,
+	});
+	return parseFinanceSummaryAIResponse(raw);
+}
+
+function parseFinanceSummaryAIResponse(raw: string): FinanceSummaryAIResponse {
+	try {
+		const parsed = JSON.parse(raw) as Partial<FinanceSummaryAIResponse>;
+		return {
+			headline: typeof parsed.headline === "string" ? parsed.headline : "",
+			keyPoints: stringArray(parsed.keyPoints),
+			conclusion: typeof parsed.conclusion === "string" ? parsed.conclusion : "",
+			buyTimingReason: typeof parsed.buyTimingReason === "string" ? parsed.buyTimingReason : "",
+			salesTalk: typeof parsed.salesTalk === "string" ? parsed.salesTalk : "",
+			balanceSheetNote: typeof parsed.balanceSheetNote === "string" ? parsed.balanceSheetNote : "",
+		};
+	} catch (error) {
+		console.log("parseFinanceSummaryAIResponse failed", String(error));
+		return {
+			headline: "",
+			keyPoints: [],
+			conclusion: "",
+			buyTimingReason: "",
+			salesTalk: "",
+			balanceSheetNote: "",
+		};
+	}
+}
+
+// AI要約が空（API失敗・未設定）かどうか。呼び出し側が定型文フォールバックの判定に使う。
+function isFinanceSummaryEmpty(summary: FinanceSummaryAIResponse): boolean {
+	return (
+		summary.headline.trim() === "" &&
+		summary.conclusion.trim() === "" &&
+		summary.buyTimingReason.trim() === "" &&
+		summary.salesTalk.trim() === "" &&
+		summary.balanceSheetNote.trim() === "" &&
+		summary.keyPoints.length === 0
+	);
+}
+
+export { parseFinanceSummaryAIResponse as parseFinanceSummaryAIResponseForTest };
+export { isFinanceSummaryEmpty as isFinanceSummaryEmptyForTest };
 
 async function processSalesPerformanceReview(
 	input: SalesPerformanceReviewInput,
