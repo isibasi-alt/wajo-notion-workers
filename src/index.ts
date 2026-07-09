@@ -32154,8 +32154,9 @@ async function enrichProjectFromInquiry(
 		kind: "text",
 		value: "設備詳細を作成し、資料作成に必要な情報を埋める。",
 	};
-	// 最終命名（B）：問い合わせの材料から「地域＋芯」の短い通称を作り、案件名を呼びやすく整える。
-	// タイトルから外した場所・kW・規模は捨てず、ヘッダー（案件詳細）の【識別情報】に集める。
+	// 最終命名（B）：問い合わせの材料から遊び心のある短い通称を作り、案件名を営業が呼びやすく整える。
+	// タイトルから外した場所・容量は捨てず、ヘッダーの専用プロパティ（所在地・容量）に持つ。
+	// ＝面白い名前を、正確な所在地・容量で裏打ちする。
 	const caseNaming = await deriveInquiryCaseName({
 		inquiryTitle,
 		summary: inquirySummary,
@@ -32166,17 +32167,11 @@ async function enrichProjectFromInquiry(
 	if (caseNaming.name) {
 		patches["案件名"] = { kind: "text", value: caseNaming.name };
 	}
-	// 案件を特定するデータ（所在地・規模・対象物）をヘッダーの案件詳細先頭に集約する。
-	const identifyParts = [
-		caseNaming.location ? `所在地: ${caseNaming.location}` : "",
-		caseNaming.scale ? `規模: ${caseNaming.scale}` : "",
-		projectAssetType ? `対象物: ${projectAssetType}` : "",
-	].filter(Boolean);
-	if (identifyParts.length > 0) {
-		patches["案件詳細"] = {
-			kind: "text",
-			value: `【識別情報】${identifyParts.join(" ｜ ")}\n${memo}`,
-		};
+	if (caseNaming.location) {
+		patches["所在地"] = { kind: "text", value: caseNaming.location };
+	}
+	if (caseNaming.scale) {
+		patches["容量"] = { kind: "text", value: caseNaming.scale };
 	}
 	await safeUpdateExistingProperties(notion, projectPage, patches);
 	// 押し直し対策：既に引き継ぎ済みなら本文ブロックを二重追記しない。
