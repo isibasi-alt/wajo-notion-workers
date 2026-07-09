@@ -32163,17 +32163,14 @@ async function syncChildRecordTitlesToCaseName(
 				failures.push(`${childId}: タイトル型プロパティ無し`);
 				continue;
 			}
-			const [titleName] = titleEntry;
-			const oldTitle = readGenericPageTitle(childPage) || "";
+			const [titleName, titleValue] = titleEntry;
+			// readGenericPageTitleは欄名決め打ち（設備詳細名を知らない）ため、見つけたtitle欄から直接読む。
+			const oldTitle = text(titleValue) || "";
 			const separatorIndex = oldTitle.indexOf("｜");
 			const suffix = separatorIndex >= 0 ? oldTitle.slice(separatorIndex + 1).trim() : "";
 			const newTitle = suffix ? `${caseName}｜${suffix}` : `${caseName}｜${oldTitle}`.slice(0, 80);
 			if (!oldTitle || oldTitle === newTitle || oldTitle.startsWith(`${caseName}｜`)) {
 				skipped += 1;
-				// debug: スキップ理由を可視化（原因特定後に静音化する）
-				failures.push(
-					`skip ${childId.slice(-6)}: old="${oldTitle.slice(0, 24)}" 理由=${!oldTitle ? "旧名が読めず空" : oldTitle === newTitle ? "新旧同一" : "既に通称接頭"}`,
-				);
 				continue;
 			}
 			await notion.pages.update({
