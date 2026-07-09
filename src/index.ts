@@ -31977,7 +31977,7 @@ const INQUIRY_CASE_NAME_RESPONSE_FORMAT: WajoJsonSchemaResponseFormat = {
 				},
 				所在地: {
 					type: "string",
-					description: "読み取れた地域・所在地（市区町村やエリア通称）。読めなければ空文字。",
+					description: "都道府県＋市区町村まで（例: 徳島県鳴門市）。番地・字・丁目・建物名は入れない＝ヘッダーで横に伸びないように。読めなければ空文字。",
 				},
 				規模: {
 					type: "string",
