@@ -22553,15 +22553,44 @@ async function createProjectFromLand(
 	notion: NotionClient,
 	land: LandInfo,
 ): Promise<Page> {
-	const projectName = `${land.name}｜土地案件`;
+	// 土地は所在地・面積が実データで在るので、遊び心命名だけAIに任せ、
+	// 所在地/規模/相手先は実データから正確に埋める（AI推測でなく事実）。
+	const landCaseType = inferProjectTypeFromLand(land);
+	const landLocation = (land.address.match(/^(.*?[市区町村])/)?.[1] ?? land.address).slice(0, 20);
+	const landScale = land.areaTsubo
+		? `${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪`
+		: "";
+	// 相手先＝所有者（＝売り主）。土地DBの所有者欄を別名許容で読む。無ければ空・捏造しない。
+	const landOwner = readFirstTextByAliases(land.page.properties ?? {}, [
+		"所有者情報",
+		"所有者",
+		"所有者名",
+		"地権者",
+	]);
+	const landNaming = await deriveInquiryCaseName({
+		inquiryTitle: land.name,
+		summary: [
+			`所在地:${land.address}`,
+			landScale ? `面積:${landScale}` : "",
+			land.powerArea ? `電力:${land.powerArea}` : "",
+			land.landUse ? `用途:${land.landUse}` : "",
+		]
+			.filter(Boolean)
+			.join(" "),
+		activityLog: "",
+		assetType: "土地",
+		caseType: landCaseType,
+		dealType: "売却案件",
+	});
+	const projectName = landNaming.name || `${land.name}｜土地案件`;
 	const created = await createProjectRecord(notion, {
 		案件名: title(projectName),
 		ステータス: select("🔴 情報収集中"),
 		獲得ソース: select("土地情報"),
 		仕入れ元区分: select("土地情報"),
 		対象物種別: select("土地"),
-		案件種別: select(inferProjectTypeFromLand(land)),
-		売買区分: select("不明"),
+		案件種別: select(landCaseType),
+		売買区分: select("売却案件"),
 		作成日: { date: { start: todayDateJST() } },
 		最終アクション日: { date: { start: todayDateJST() } },
 		関連土地情報: { relation: [{ id: land.page.id }] },
@@ -22585,6 +22614,16 @@ async function createProjectFromLand(
 				"系統、接道、農転/登記、所有者、売却条件、現地確認を人間が確認してください。",
 		},
 	};
+	// ヘッダー識別5点のうち土地で埋まるもの（所在地/規模/相手先）を実データから入れる。
+	if (landLocation) {
+		patches["所在地"] = { kind: "text", value: landLocation };
+	}
+	if (landScale) {
+		patches["規模"] = { kind: "text", value: landScale };
+	}
+	if (landOwner) {
+		patches["相手先"] = { kind: "text", value: landOwner.slice(0, 40) };
+	}
 	const assigneeIds = personIdsFromProperty(land.page.properties?.["担当営業ユーザー"]);
 	if (assigneeIds.length > 0) {
 		patches["担当営業ユーザー"] = {
