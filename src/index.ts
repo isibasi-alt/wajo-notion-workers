@@ -32095,16 +32095,40 @@ async function processProjectEnrichFromInquiry(
 	// enrich（顧客接点ログ→関連案件の書き戻し・決裁者判定・資料/企業引き継ぎ）に加えて、
 	// 問い合わせ側「紐づき案件」の書き戻し・重複チェック・scaffolding も走る（仕様§7-1）。
 	await processInquiryProjectCreation(inquiryIds[0]!, notion, triggerUserId, false);
-	// 次回面談日時が空なら案件化の必須条件としてアラートを残す。
 	const refreshed = await notion.pages.retrieve({ page_id: projectPageId });
+	// 次回面談日時が空なら案件化の必須条件としてアラートを残す（止めはしない）。
 	const nextMeeting = dateStartFromProperty(refreshed.properties?.["次回面談日時"]);
 	const alert = nextMeeting
 		? ""
 		: "\n⚠ 次回面談日時が未設定です。案件化の必須条件なので、面談日時を入れてください。";
+	// ★確認待ちゲート（案件化＝神聖な申請）：向き＋相手会社1社が無ければ「⏳ 確認待ち」へ差し戻す。
+	// 売却案件→買主企業（青）に目星1社／購入希望→売主企業（赤）に目星1社（デタラメでも目星でOK・空欄不可）。
+	const dealType = text(refreshed.properties?.["売買区分"]);
+	const buyerIds = relationIdsFromProperty(refreshed.properties?.["買主企業"]);
+	const sellerIds = relationIdsFromProperty(refreshed.properties?.["売主企業"]);
+	const gateMissing: string[] = [];
+	if (dealType !== "売却案件" && dealType !== "購入希望") {
+		gateMissing.push("売買区分（売却案件 か 購入希望 に確定）");
+	} else if (dealType === "売却案件" && buyerIds.length === 0) {
+		gateMissing.push("買主企業（青）に目星1社");
+	} else if (dealType === "購入希望" && sellerIds.length === 0) {
+		gateMissing.push("売主企業（赤）に目星1社");
+	}
+	let gateAlert = "";
+	if (gateMissing.length > 0) {
+		await safeUpdateExistingProperties(notion, refreshed, {
+			ステータス: { kind: "select", value: "⏳ 確認待ち" },
+			確認待ち内容: {
+				kind: "text",
+				value: `【確認待ち｜案件化の必須ゲート未達】\n以下が未確定のため、案件化を確認待ちで止めています。\n・${gateMissing.join("\n・")}`,
+			},
+		});
+		gateAlert = `\n⛔ 案件化ゲート未達で「確認待ち」に戻しました：${gateMissing.join(" / ")}`;
+	}
 	await createPageComment(
 		notion,
 		projectPageId,
-		`✅ 引き継ぎ完了：顧客接点ログ ${contactLogCount} 件・案件資料・関連企業を案件へ引き継ぎ、問い合わせ側へ紐づけ返しました。${alert}`,
+		`✅ 引き継ぎ完了：顧客接点ログ ${contactLogCount} 件・案件資料・関連企業を案件へ引き継ぎ、問い合わせ側へ紐づけ返しました。${alert}${gateAlert}`,
 	);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
