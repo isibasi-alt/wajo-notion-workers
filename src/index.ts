@@ -28591,6 +28591,43 @@ function inferDealTypeFromEmail(value: string): string {
 	return "不明";
 }
 
+// フォームが明示している売買の向きだけを確実に読む。本文全体のキーワード先勝ち
+// （inferDealTypeFromEmail）は「査定」が売り買い両方に出るためブレるので、起票時の
+// 売買区分にはこちらを使う。件名のフォーム識別＋本文の「お問い合わせ種類」欄で判定し、
+// 確信できない自由文型は空を返して後続（整形エージェント/ブリーフィング）に委ねる。捏造しない。2026-07-08
+function inferDealTypeFromInquiryForm(subject: string, body: string): string {
+	const s = subject ?? "";
+	// 件名のフォーム識別（LP/査定フォームは件名に売買の向きが出る）。
+	// 査定・買取・売却＝オーナーが和上へ売る＝売却相談。
+	if (/売却|査定|買取|買い取り|資産価値/.test(s)) return "売却相談";
+	// 買いたい・購入＝顧客が発電所を買う＝購入相談。
+	if (/買いたい|購入|買付/.test(s)) return "購入相談";
+	// 件名で決まらない時は、本文ヘッダのLPフォーム名【…】を見る（元メール件名に
+	// フォーム名が乗らず本文側にだけ出る実例があるため。フォーム名は確実な材料で、
+	// 本文全体のキーワード拾い＝ブレる方法とは別物。最初の【…】1個だけを見る）。
+	const formName = (body ?? "").match(/【([^】]{1,60})】/)?.[1] ?? "";
+	if (formName) {
+		if (/売却|査定|買取|買い取り|資産価値/.test(formName)) return "売却相談";
+		if (/買いたい|購入|買付/.test(formName)) return "購入相談";
+	}
+	// それでも決まらない時だけ、本文の明示欄「お問い合わせ種類／内容」を見る。
+	const kind = extractInquiryLineValue(body ?? "", [
+		"お問い合わせ種類",
+		"お問合せ種類",
+		"お問い合わせ種別",
+		"お問合せ内容",
+		"お問い合わせ内容",
+		"ご相談内容",
+		"ご相談種別",
+	]);
+	if (kind) {
+		if (/査定|買取|売却|資産価値|見積/.test(kind)) return "売却相談";
+		if (/買いたい|購入/.test(kind)) return "購入相談";
+	}
+	// フォームの明示が無ければ空。推測で埋めない。
+	return "";
+}
+
 function inferInquiryCategoryCode(input: {
 	subject: string;
 	body: string;
@@ -28600,6 +28637,12 @@ function inferInquiryCategoryCode(input: {
 }): string {
 	const value = `${input.subject}\n${input.body}\n${input.labels ?? ""}`;
 	if (/蓄電池|蓄電所|系統用|BESS|ESS/i.test(value)) return "⑤ 蓄電池";
+	// フォームの「電圧区分」欄が明示されていれば、本文全体のkW推定より優先する（確実側）。2026-07-08
+	const voltageField = extractInquiryLineValue(input.body ?? "", ["電圧区分"]);
+	if (voltageField) {
+		if (/低圧/.test(voltageField)) return "③ 低圧";
+		if (/特高|特別高圧|高圧/.test(voltageField)) return "④ 高圧";
+	}
 	if (/特高|高圧|[5-9]\d\s*kW|[1-9]\d{2,}\s*kW|MW|メガソーラー/i.test(value)) {
 		return "④ 高圧";
 	}
@@ -29107,12 +29150,12 @@ async function buildInquiryAnalysisBriefing(emailInfo: InquiryEmailInfo): Promis
 		"",
 		"構成は5部固定。見出しは【要するに】【相手】【この案件の素性】【疑うべき点】【今日の一手】。",
 		"【要するに】2行以内。誰が何を求めている問い合わせで、追うべきか見送るべきか。",
-		"【相手】正体（売主/買主/仲介/同業/役務営業/既存顧客/冷やかし）と本気度を根拠つきで。仲介や同業なら「情報だけ抜かれる恐れ」を明記。実需の富裕層・法人なら節税ニーズの有無に触れる（太陽光・再エネ投資は節税が本質的な動機になりやすい）。",
+		"【相手】正体（売主/買主/仲介/同業/役務営業/既存顧客/冷やかし）と本気度を根拠つきで。仲介や同業なら「情報だけ抜かれる恐れ」を明記。相手の動機は本文に書かれている範囲だけを読み、書かれていない動機を推測で決めつけない。",
 		"【この案件の素性】売り物・買い希望の中身を解像度高く。対象物（太陽光/蓄電池）・電圧区分（低圧/高圧/特高）・稼働状況（稼働中/停止中/セカンダリー）・所在地・FIT連系年と残存年数・土地の権利・残債/抵当権・稼働リスク（盗難/故障/出力抑制）など、本文にある事実だけを拾って並べる。無い項目は書かない。",
-		"【疑うべき点】本文の数字や主張は顧客の自己申告であって事実ではない。特に他社提示額・売電実績・容量表記などは鵜呑みにせず『この数字は裏取りが必要』と具体的に指摘する。他社が高値を出したという話は、他社のおとり価格か、客がこちらを吊り上げようとしている可能性を疑う。和上は業界の人脈で裏が取れる強みがある。疑う点が無ければ『特になし』。",
+		"【疑うべき点】やりすぎ厳禁。何でもかんでも『疑え』にしない。基本は淡々と。よほど明確に引っかかる時だけ挙げる——例：他社提示が相場からかけ離れて高い（ソルセル宮崎99kWのような、相場を大きく外れた顕著な場合だけ）、本文内で数字が矛盾している、話がうますぎる等。そうした明らかな違和感が無ければ『特になし』でよい。残債・希望価格・売電実績など売買に効く数字は、疑うのではなく『成約前に一次資料で最終確認』と一言添える程度で足りる。",
 		"【今日の一手】具体的な次のアクション1つと、電話で確認することリスト（3〜5個）。「条件をヒアリング」のような一般論は禁止、そのままセリフに使える具体で。",
 		"",
-		"数字に触れる場合は本文にある値だけを引用し、AIが相場・査定額を創作することは絶対禁止。全体で450字以内。営業がそのまま使える具体的な日本語で。",
+		"数字に触れる場合は本文にある値だけを引用し、AIが相場・査定額を創作することは絶対禁止。本文に無い事実・動機・数字は一切書かず、判断できない項目は『本文に記載なし』とする。苦しくても創作しない。全体で450字以内。営業がそのまま使える具体的な日本語で。",
 	].join("\n");
 	const today = new Date().toISOString().slice(0, 10);
 	const user = [
@@ -29136,8 +29179,10 @@ async function createInquiryFromEmail(
 	const intakeParty =
 		emailInfo.contactName || emailInfo.companyName || emailInfo.subject || "新規お問い合わせ";
 	const displayTitle = buildNumberedInquiryDisplayTitle(receptionNumber, `新着｜${intakeParty}`);
-	// 判断系（売買区分・種別・分類・要約・トーク方針・企業登録可否）はWorkerが書かない。
-	// 空欄で起票し、本文を読解する整形エージェントが埋める（書き手1人の原則）。2026-07-07分担変更
+	// 判断系のうち「本文全体のキーワード推定でブレるもの」（要約・トーク方針・企業登録可否・
+	// 自由文型の売買判定）はWorkerが書かない。ただしフォームが明示している売買区分だけは、
+	// 件名フォーム＋本文の明示欄から確実に読めるので確実側としてWorkerが書く（誤り19件対策）。
+	// 読めない自由文型は空のままにし、整形エージェント/ブリーフィングに委ねる。2026-07-08分担変更
 	const properties: Record<string, unknown> = {
 		件名: title(displayTitle),
 		受付番号: richText(receptionNumber),
@@ -29172,6 +29217,12 @@ async function createInquiryFromEmail(
 	}
 	if (emailInfo.phone) {
 		properties["電話番号"] = phoneNumber(emailInfo.phone);
+	}
+	// フォームが売買の向きを明示している時だけ、確実側として売買区分を書く。
+	// 自由文型で確信できない場合は空のまま（推測でブレさせない・捏造しない）。2026-07-08
+	const formDealType = inferDealTypeFromInquiryForm(emailInfo.subject, emailInfo.body);
+	if (formDealType) {
+		properties["売買区分"] = select(formDealType);
 	}
 	const created = await createNotionPageWithMissingPropertyFallback(
 		notion,
