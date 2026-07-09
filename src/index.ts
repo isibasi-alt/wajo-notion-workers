@@ -16374,19 +16374,59 @@ async function ensureFinanceInputRecord(
 	sourcePage: Page,
 ): Promise<string | null> {
 	try {
-		const existing = await notion.dataSources.query({
-			data_source_id: FINANCE_SIMULATION_DATA_SOURCE_ID,
-			filter: {
-				property: "関連案件",
-				relation: { contains: projectPage.id },
-			},
-			page_size: 1,
-		});
-		const existingPage = existing.results[0] ?? null;
+		const financeDataSource = notion.dataSources.retrieve
+			? await notion.dataSources.retrieve({
+					data_source_id: FINANCE_SIMULATION_DATA_SOURCE_ID,
+			  })
+			: { properties: {} };
+		const financeDataSourceProperties =
+			(financeDataSource.properties ?? {}) as Record<string, unknown>;
+		const linkedFinanceIds = relationIdsFromAliases(requestPage.properties ?? {}, [
+			"関連ファイナンスシミュレーション",
+			"ファイナンスシミュレーションDB",
+		]);
+		let existingPage: Page | null = null;
+		if (linkedFinanceIds.length > 0) {
+			try {
+				existingPage = (await notion.pages.retrieve({
+					page_id: linkedFinanceIds[0]!,
+				})) as Page;
+			} catch (error) {
+				console.log("linked finance input record retrieve skipped", {
+					projectPageId: projectPage.id,
+					requestPageId: requestPage.id,
+					financePageId: linkedFinanceIds[0],
+					error: String(error),
+				});
+			}
+		}
+		if (!existingPage) {
+			const existing = await notion.dataSources.query({
+				data_source_id: FINANCE_SIMULATION_DATA_SOURCE_ID,
+				filter: {
+					property: "関連案件",
+					relation: { contains: projectPage.id },
+				},
+				page_size: 1,
+			});
+			existingPage = (existing.results[0] ?? null) as Page | null;
+		}
 		const recordName = `${readGenericPageTitle(projectPage) || projectPage.id}｜投資条件`;
 		const patches = buildFinanceInputRecordPatches(projectPage, requestPage, sourcePage, recordName);
 		if (existingPage) {
-			await safeUpdateExistingProperties(notion, existingPage, patches);
+			await safeUpdateFinanceInputRecordProperties(
+				notion,
+				existingPage as Page,
+				financeDataSourceProperties,
+				patches,
+			);
+			await forceRepairFinanceInputRecordCriticalProperties(
+				notion,
+				existingPage.id,
+				financeDataSourceProperties,
+				patches,
+			);
+			await ensureFinanceInputRecordRelationBacklinks(notion, requestPage, existingPage.id);
 			await ensureFinanceInputRecordBody(notion, existingPage.id, projectPage, sourcePage);
 			return existingPage.id;
 		}
@@ -16397,7 +16437,19 @@ async function ensureFinanceInputRecord(
 			},
 		});
 		const createdPage = await notion.pages.retrieve({ page_id: created.id });
-		await safeUpdateExistingProperties(notion, createdPage, patches);
+		await safeUpdateFinanceInputRecordProperties(
+			notion,
+			createdPage as Page,
+			financeDataSourceProperties,
+			patches,
+		);
+		await forceRepairFinanceInputRecordCriticalProperties(
+			notion,
+			created.id,
+			financeDataSourceProperties,
+			patches,
+		);
+		await ensureFinanceInputRecordRelationBacklinks(notion, requestPage, created.id);
 		await ensureFinanceInputRecordBody(notion, created.id, projectPage, sourcePage);
 		return created.id;
 	} catch (error) {
@@ -16407,6 +16459,103 @@ async function ensureFinanceInputRecord(
 			error: String(error),
 		});
 		return null;
+	}
+}
+
+async function ensureFinanceInputRecordRelationBacklinks(
+	notion: NotionClient,
+	requestPage: Page,
+	financePageId: string,
+): Promise<void> {
+	const patches: Record<string, SafePatch> = {};
+	setAliasPatch(
+		patches,
+		["関連ファイナンスシミュレーション", "ファイナンスシミュレーションDB"],
+		{ kind: "relation", ids: [financePageId] },
+	);
+	if (Object.keys(patches).length === 0) return;
+	await safeUpdateExistingProperties(notion, requestPage, patches);
+}
+
+async function forceRepairFinanceInputRecordCriticalProperties(
+	notion: NotionClient,
+	financePageId: string,
+	dataSourceProperties: Record<string, unknown>,
+	patches: Record<string, SafePatch>,
+): Promise<void> {
+	const financePage = (await notion.pages.retrieve({ page_id: financePageId })) as Page;
+	const criticalPropertyNames = [
+		"関連案件",
+		"関連提案シミュレーション",
+		"元提案シミュレーション",
+		"ファイナンス状態",
+		"ファイナンスメモ",
+		"B/S評価メモ",
+		"金利メモ",
+		"購入タイミング理由",
+	];
+	for (const propertyName of criticalPropertyNames) {
+		const desiredPatch = patches[propertyName];
+		if (!desiredPatch) continue;
+		if (notionPropertyHasValue(financePage.properties?.[propertyName])) continue;
+		const propertyDefinition = dataSourceProperties[propertyName];
+		const value = safePatchToCreatePropertyValueForSchema(propertyDefinition, desiredPatch);
+		if (!value) continue;
+		try {
+			await notion.pages.update({
+				page_id: financePageId,
+				properties: { [propertyName]: value },
+			});
+		} catch (error) {
+			console.log("finance input critical property repair skipped", {
+				pageId: financePageId,
+				propertyName,
+				error: String(error),
+			});
+		}
+	}
+}
+
+async function safeUpdateFinanceInputRecordProperties(
+	notion: NotionClient,
+	page: Page,
+	dataSourceProperties: Record<string, unknown>,
+	patches: Record<string, SafePatch>,
+): Promise<void> {
+	const schemaAwareProperties: Record<string, Record<string, unknown>> = {};
+	for (const [propertyName, patch] of Object.entries(patches)) {
+		const propertyDefinition = dataSourceProperties[propertyName];
+		if (!propertyDefinition) continue;
+		const value = safePatchToCreatePropertyValueForSchema(propertyDefinition, patch);
+		if (!value) continue;
+		schemaAwareProperties[propertyName] = value;
+	}
+	if (Object.keys(schemaAwareProperties).length === 0) return;
+	try {
+		await notion.pages.update({
+			page_id: page.id,
+			properties: schemaAwareProperties,
+		});
+		return;
+	} catch (error) {
+		console.log("finance input schema-aware update skipped; retrying property by property", {
+			pageId: page.id,
+			error: String(error),
+		});
+	}
+	for (const [name, value] of Object.entries(schemaAwareProperties)) {
+		try {
+			await notion.pages.update({
+				page_id: page.id,
+				properties: { [name]: value },
+			});
+		} catch (error) {
+			console.log("finance input property update skipped", {
+				pageId: page.id,
+				name,
+				error: String(error),
+			});
+		}
 	}
 }
 
@@ -16421,9 +16570,18 @@ async function ensureFinanceInputRecordBody(
 		try {
 			const existingBlocks = await notion.blocks.children.list({
 				block_id: financePageId,
-				page_size: 1,
+				page_size: 100,
 			});
 			if (Array.isArray(existingBlocks.results) && existingBlocks.results.length > 0) {
+				const hasRoleGuidance = existingBlocks.results.some((block) =>
+					JSON.stringify(block).includes("営業担当が入力する3項目"),
+				);
+				if (!hasRoleGuidance) {
+					await notion.blocks.children.append({
+						block_id: financePageId,
+						children: buildFinanceInputRoleGuidanceBlocks(),
+					});
+				}
 				return;
 			}
 		} catch (error) {
@@ -16473,27 +16631,39 @@ function buildFinanceInputRecordBlocks(
 	return [
 		headingBlock("投資条件入力", 2),
 		calloutBlock(
-			"このページでは、借入額・金利・返済期間・実効税率・流動比率・利益剰余金・自己資本比率を入力します。",
+			"営業担当が最初に入力するのは、借入額・金利・返済期間の3項目です。税務・B/S情報は、経理または決算書を確認できた時点で補います。",
 			"💴",
 			"gray_background",
 		),
 		...(summaryRows.length > 0 ? [headingBlock("案件サマリー", 3), tableBlock(summaryRows)] : []),
 		...(priceRows.length > 0 ? [headingBlock("価格前提", 3), tableBlock(priceRows)] : []),
-		headingBlock("まず入力する項目", 3),
-		paragraphBlock(
-			[
-				"1. 借入額",
-				"2. 金利",
-				"3. 返済期間",
-				"4. 実効税率",
-				"5. 流動比率",
-				"6. 利益剰余金",
-				"7. 自己資本比率",
-			].join("\n"),
+		...buildFinanceInputRoleGuidanceBlocks(),
+	];
+}
+
+function buildFinanceInputRoleGuidanceBlocks(): Record<string, unknown>[] {
+	return [
+		headingBlock("営業担当が入力する3項目", 3),
+		tableBlock([
+			["借入額", "今回の借入予定額を入力"],
+			["金利", "金融機関から提示された年率を入力"],
+			["返済期間", "返済予定年数を入力"],
+		]),
+		headingBlock("決算書を受け取れた場合に入力する項目", 3),
+		tableBlock([
+			["実効税率", "経理・税理士確認後に入力"],
+			["流動比率", "直近決算書から確認"],
+			["利益剰余金", "直近決算書から確認"],
+			["自己資本比率", "直近決算書から確認"],
+		]),
+		calloutBlock(
+			"実効税率とB/S3指標が空欄でも、投資条件ページの作成や借入条件の入力は止まりません。情報がそろった時点で、税効果と購入タイミング判定の根拠を更新します。",
+			"ℹ️",
+			"gray_background",
 		),
 		dividerBlock(),
 		paragraphBlock(
-			"入力後に、シミュレーション側で収支・税効果・購入タイミング判定へ反映します。",
+			"借入条件はFシミュレーション、実効税率とB/S3指標はCシミュレーションの根拠として反映します。",
 		),
 	];
 }
@@ -16811,36 +16981,6 @@ async function processProjectDocumentRequest(
 			return {
 				projectPageId: projectPage.id,
 				requestPageId: null,
-				action: input.dryRun ? "dry-run" : "needs-input",
-				message,
-			};
-		}
-		const proposalSourcePage = mergeProjectWithEquipmentDetail(
-			existingProposalRequest,
-			equipmentPage,
-		);
-		const proposalReadiness = evaluateProjectDocumentRequestReadiness(
-			proposalSourcePage,
-			"proposal",
-		);
-		if (proposalReadiness.missingField) {
-			const message = [
-				"投資条件を設定する前に、シミュレーション入力を完了してください。",
-				buildSequentialMissingMessage(
-					"提案シミュレーション",
-					proposalReadiness.missingField,
-					proposalReadiness.nextRequiredFields,
-				),
-			].join(" ");
-			if (!input.dryRun) {
-				await safeUpdateExistingProperties(notion, projectPage, {
-					資料作成メモ: { kind: "text", value: message },
-				});
-				await createPageComment(notion, projectPage.id, `⚠️ ${message}`);
-			}
-			return {
-				projectPageId: projectPage.id,
-				requestPageId: existingProposalRequest.id,
 				action: input.dryRun ? "dry-run" : "needs-input",
 				message,
 			};

@@ -172,6 +172,7 @@ function requestPage(id: string, documentType: string) {
 			資料種別: { type: "select", select: { name: documentType } },
 			関連案件: relationProp([]),
 			関連設備詳細: relationProp([]),
+			関連ファイナンスシミュレーション: relationProp([]),
 			資料作成メモ: richTextProp(""),
 			発電所名: richTextProp(""),
 			年間売電収入: numberProp(null),
@@ -250,6 +251,38 @@ function requestDataSourceSchema() {
 			説明会対象エリア画像: { type: "files", files: {} },
 			"反射光画像（夏至）": { type: "files", files: {} },
 			"反射光画像（冬至）": { type: "files", files: {} },
+		},
+	};
+}
+
+function financeSimulationDataSourceSchema() {
+	return {
+		properties: {
+			Name: { type: "title", title: {} },
+			関連案件: { type: "relation", relation: {} },
+			関連提案シミュレーション: { type: "relation", relation: {} },
+			元提案シミュレーション: { type: "relation", relation: {} },
+			関連営業提案: { type: "relation", relation: {} },
+			ファイナンス状態: {
+				type: "select",
+				select: { options: [{ name: "入力待ち" }] },
+			},
+			借入比率: { type: "number", number: {} },
+			借入額: { type: "number", number: {} },
+			金利: { type: "number", number: {} },
+			返済期間: { type: "number", number: {} },
+			実効税率: { type: "number", number: {} },
+			今期利益見込: { type: "number", number: {} },
+			流動比率: { type: "number", number: {} },
+			利益剰余金: { type: "number", number: {} },
+			自己資本比率: { type: "number", number: {} },
+			土地代: { type: "number", number: {} },
+			システム本体価格: { type: "number", number: {} },
+			権利代: { type: "number", number: {} },
+			ファイナンスメモ: { type: "rich_text", rich_text: {} },
+			"B/S評価メモ": { type: "rich_text", rich_text: {} },
+			金利メモ: { type: "rich_text", rich_text: {} },
+			購入タイミング理由: { type: "rich_text", rich_text: {} },
 		},
 	};
 }
@@ -352,6 +385,8 @@ function makeNotion(options: {
 	existingByDataSource?: Record<string, Array<Record<string, unknown>>>;
 	projectPageOverride?: Record<string, unknown>;
 	equipmentPageOverride?: Record<string, unknown>;
+	financeCreatedSparseRetrieve?: boolean;
+	financeExistingBody?: boolean;
 } = {}) {
 	const creates: Array<Record<string, unknown>> = [];
 	const updates: Array<Record<string, unknown>> = [];
@@ -361,7 +396,12 @@ function makeNotion(options: {
 	const fileUploads: Array<Record<string, unknown>> = [];
 	const notion = {
 		dataSources: {
-			retrieve: async () => requestDataSourceSchema(),
+			retrieve: async ({ data_source_id }: { data_source_id?: string } = {}) => {
+				if (data_source_id === "7e4d0168-6e54-4071-bd55-f9730202225c") {
+					return financeSimulationDataSourceSchema();
+				}
+				return requestDataSourceSchema();
+			},
 			query: async (args: Record<string, unknown>) => {
 				queries.push(args);
 				const dataSourceId = typeof args.data_source_id === "string" ? args.data_source_id : "";
@@ -388,6 +428,13 @@ function makeNotion(options: {
 						"7e4d0168-6e54-4071-bd55-f9730202225c"
 					)[index];
 					assert.ok(created, `created finance page not found: ${page_id}`);
+					if (options.financeCreatedSparseRetrieve) {
+						return {
+							id: page_id,
+							url: `https://www.notion.so/${page_id}`,
+							properties: created.properties as Record<string, unknown>,
+						};
+					}
 					return {
 						id: page_id,
 						url: `https://www.notion.so/${page_id}`,
@@ -486,8 +533,21 @@ function makeNotion(options: {
 		},
 		blocks: {
 			children: {
-				list: async () => ({
-					results: [],
+				list: async ({ block_id }: { block_id?: string } = {}) => ({
+					results:
+						options.financeExistingBody && block_id === "finance-existing-1"
+							? [
+									{
+										id: "legacy-finance-body",
+										type: "paragraph",
+										paragraph: {
+											rich_text: [
+												{ type: "text", text: { content: "まず入力する項目" } },
+											],
+										},
+									},
+								]
+							: [],
 					has_more: false,
 					next_cursor: null,
 				}),
@@ -642,12 +702,10 @@ async function main() {
 		{ projectPageId: "project-1", dryRun: false },
 		financeIncompleteProposalCase.notion as never,
 	);
-	assert.equal(financeIncompleteProposal.action, "needs-input");
-	assert.equal(financeIncompleteProposal.requestPageId, "request-proposal-incomplete");
-	assert.match(financeIncompleteProposal.message, /シミュレーション入力を完了/);
-	assert.equal(financeIncompleteProposalCase.creates.length, 0);
-	assert.ok(financeIncompleteProposalCase.updates.length >= 1);
-	assert.ok(financeIncompleteProposalCase.comments.length >= 1);
+	assert.equal(financeIncompleteProposal.action, "created");
+	assert.equal(financeIncompleteProposal.requestPageId, "request-created-1");
+	assert.match(financeIncompleteProposal.message, /投資条件入力ページ/);
+	assert.equal(financeIncompleteProposalCase.creates.length, 2);
 
 	const financeRequestCase = makeNotion({
 		projectPropertyOverrides: {
@@ -666,6 +724,7 @@ async function main() {
 		existingByDocumentType: {
 			提案書: [readyProposalRequestPage()],
 		},
+		financeCreatedSparseRetrieve: true,
 	});
 	const financeRequest = await processProjectFinanceRequestForTest(
 		{ projectPageId: "project-1", dryRun: false },
@@ -737,6 +796,8 @@ async function main() {
 	assert.match(JSON.stringify(financeDraftAppend), /投資条件入力/);
 	assert.match(JSON.stringify(financeDraftAppend), /借入額/);
 	assert.match(JSON.stringify(financeDraftAppend), /案件サマリー/);
+	assert.match(JSON.stringify(financeDraftAppend), /営業担当が入力する3項目/);
+	assert.match(JSON.stringify(financeDraftAppend), /決算書を受け取れた場合に入力する項目/);
 	const financeProjectUpdate = financeRequestCase.updates.find((update) => {
 		const properties = update.properties as Record<string, unknown>;
 		return Boolean(properties.関連ファイナンスシミュレーション);
@@ -747,6 +808,62 @@ async function main() {
 		(financeProjectProps.関連ファイナンスシミュレーション as { relation: Array<{ id: string }> }).relation,
 		[{ id: "finance-created-1" }],
 	);
+
+	const financeExistingRepairCase = makeNotion({
+		existingByDocumentType: {
+			提案書: [readyProposalRequestPage()],
+			ファイナンスシミュレーション: [
+				{
+					...requestPage("request-finance-existing", "ファイナンスシミュレーション"),
+					properties: {
+						...requestPage("request-finance-existing", "ファイナンスシミュレーション").properties,
+						関連案件: relationProp(["project-1"]),
+						関連ファイナンスシミュレーション: relationProp(["finance-existing-1"]),
+					},
+				},
+			],
+		},
+		existingByDataSource: {
+			"7e4d0168-6e54-4071-bd55-f9730202225c": [
+				{
+					...financeSimulationPage("finance-existing-1"),
+					properties: {
+						...financeSimulationPage("finance-existing-1").properties,
+						関連案件: relationProp([]),
+						関連提案シミュレーション: relationProp(["request-finance-existing"]),
+						元提案シミュレーション: relationProp(["request-finance-existing"]),
+					},
+				},
+			],
+		},
+		financeExistingBody: true,
+	});
+	const financeExistingRepair = await processProjectFinanceRequestForTest(
+		{ projectPageId: "project-1", dryRun: false },
+		financeExistingRepairCase.notion as never,
+	);
+	assert.equal(financeExistingRepair.action, "existing");
+	assert.equal(financeExistingRepair.requestPageId, "request-finance-existing");
+	const repairedFinanceUpdate = financeExistingRepairCase.updates.find(
+		(update) => update.page_id === "finance-existing-1",
+	);
+	assert.ok(repairedFinanceUpdate);
+	const repairedFinanceProps = repairedFinanceUpdate!.properties as Record<string, unknown>;
+	assert.deepEqual(
+		(repairedFinanceProps.関連案件 as { relation: Array<{ id: string }> }).relation,
+		[{ id: "project-1" }],
+	);
+	const repairedRequestUpdate = financeExistingRepairCase.updates.find(
+		(update) =>
+			update.page_id === "request-finance-existing" &&
+			Boolean((update.properties as Record<string, unknown>).関連ファイナンスシミュレーション),
+	);
+	assert.ok(repairedRequestUpdate);
+	const repairedFinanceBodyAppend = financeExistingRepairCase.appends.find(
+		(append) => append.block_id === "finance-existing-1",
+	);
+	assert.ok(repairedFinanceBodyAppend);
+	assert.match(JSON.stringify(repairedFinanceBodyAppend), /営業担当が入力する3項目/);
 
 	const simulationCase = makeNotion({
 		existingByDocumentType: {
