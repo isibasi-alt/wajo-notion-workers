@@ -32136,7 +32136,7 @@ async function syncChildRecordTitlesToCaseName(
 	notion: NotionClient,
 	projectPage: Page,
 	caseName: string,
-): Promise<void> {
+): Promise<{ updated: number; skipped: number; failures: string[] }> {
 	// relationはenrich中に増えることがあるため、最新の案件ページから読み直す。
 	const freshProjectPage = await notion.pages.retrieve({ page_id: projectPage.id });
 	const properties = freshProjectPage.properties ?? {};
@@ -32144,6 +32144,9 @@ async function syncChildRecordTitlesToCaseName(
 		...relationIdsFromProperty(properties["発電所設備詳細"]),
 		...relationIdsFromProperty(properties["資料作成依頼"]),
 	]);
+	let updated = 0;
+	let skipped = 0;
+	const failures: string[] = [];
 	for (const childId of childIds) {
 		try {
 			const childPage = await notion.pages.retrieve({ page_id: childId });
@@ -32151,21 +32154,29 @@ async function syncChildRecordTitlesToCaseName(
 				([, value]) =>
 					value && typeof value === "object" && (value as Record<string, unknown>).type === "title",
 			);
-			if (!titleEntry) continue;
+			if (!titleEntry) {
+				failures.push(`${childId}: タイトル型プロパティ無し`);
+				continue;
+			}
 			const [titleName] = titleEntry;
 			const oldTitle = readGenericPageTitle(childPage) || "";
 			const separatorIndex = oldTitle.indexOf("｜");
 			const suffix = separatorIndex >= 0 ? oldTitle.slice(separatorIndex + 1).trim() : "";
 			const newTitle = suffix ? `${caseName}｜${suffix}` : `${caseName}｜${oldTitle}`.slice(0, 80);
-			if (!oldTitle || oldTitle === newTitle || oldTitle.startsWith(`${caseName}｜`)) continue;
+			if (!oldTitle || oldTitle === newTitle || oldTitle.startsWith(`${caseName}｜`)) {
+				skipped += 1;
+				continue;
+			}
 			await notion.pages.update({
 				page_id: childId,
 				properties: { [titleName]: title(newTitle) },
 			});
+			updated += 1;
 		} catch (error) {
-			console.log("child title sync item skipped", String(error));
+			failures.push(`${childId}: ${String(error).slice(0, 160)}`);
 		}
 	}
+	return { updated, skipped, failures };
 }
 
 async function enrichProjectFromInquiry(
@@ -32314,10 +32325,23 @@ async function enrichProjectFromInquiry(
 	await safeUpdateExistingProperties(notion, projectPage, patches);
 	// 命名同期：確定した呼び名を子レコード（設備詳細・資料作成依頼）のタイトルにも反映する。
 	// （子はBの命名前に旧仮名「案件-260708-001｜設備詳細」等で作られていることがあるため）
+	// 結果はコメントで見えるようにする（黙って失敗させない＝実機で原因を追える）。
 	if (finalCaseName) {
-		await syncChildRecordTitlesToCaseName(notion, projectPage, finalCaseName).catch((error) => {
-			console.log("child title sync skipped", String(error));
-		});
+		const syncResult = await syncChildRecordTitlesToCaseName(
+			notion,
+			projectPage,
+			finalCaseName,
+		).catch((error) => ({ updated: 0, skipped: 0, failures: [String(error).slice(0, 160)] }));
+		if (syncResult.updated > 0 || syncResult.failures.length > 0) {
+			await createPageComment(
+				notion,
+				projectPage.id,
+				[
+					`🏷 子レコード名の同期: 更新${syncResult.updated}件 / 変更不要${syncResult.skipped}件 / 失敗${syncResult.failures.length}件`,
+					...syncResult.failures.map((failure) => `・${failure}`),
+				].join("\n"),
+			).catch(() => {});
+		}
 	}
 	// 押し直し対策：既に引き継ぎ済みなら本文ブロックを二重追記しない。
 	const existingProjectBody = await fetchPageBlockPlainText(notion, projectPage.id);
