@@ -32147,6 +32147,11 @@ async function syncChildRecordTitlesToCaseName(
 	let updated = 0;
 	let skipped = 0;
 	const failures: string[] = [];
+	if (childIds.length === 0) {
+		failures.push(
+			`同期対象0件: 発電所設備詳細=${relationIdsFromProperty(properties["発電所設備詳細"]).length}件 / 資料作成依頼=${relationIdsFromProperty(properties["資料作成依頼"]).length}件 / props=${Object.keys(properties).length}個`,
+		);
+	}
 	for (const childId of childIds) {
 		try {
 			const childPage = await notion.pages.retrieve({ page_id: childId });
@@ -32165,6 +32170,10 @@ async function syncChildRecordTitlesToCaseName(
 			const newTitle = suffix ? `${caseName}｜${suffix}` : `${caseName}｜${oldTitle}`.slice(0, 80);
 			if (!oldTitle || oldTitle === newTitle || oldTitle.startsWith(`${caseName}｜`)) {
 				skipped += 1;
+				// debug: スキップ理由を可視化（原因特定後に静音化する）
+				failures.push(
+					`skip ${childId.slice(-6)}: old="${oldTitle.slice(0, 24)}" 理由=${!oldTitle ? "旧名が読めず空" : oldTitle === newTitle ? "新旧同一" : "既に通称接頭"}`,
+				);
 				continue;
 			}
 			await notion.pages.update({
