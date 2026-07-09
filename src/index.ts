@@ -1185,6 +1185,14 @@ const PROPOSAL_PDF_URL_PROPERTY_ALIASES = [
 	"PDF URL",
 ];
 
+// Notionのtext/urlプロパティは2000文字制限があり、署名付きURL（セキュリティトークン込みで
+// 2000文字を超えることがある）を超過分は問答無用で切り詰めて保存する。
+// URLは中途半端に切ると「開けない壊れたリンク」になるため、省略はせず書き込み自体を見送る。
+const NOTION_TEXT_PROPERTY_SAFE_LENGTH = 1990;
+function isNotionTextSafeUrl(url: string): boolean {
+	return url.length <= NOTION_TEXT_PROPERTY_SAFE_LENGTH;
+}
+
 const RESIDENT_DOCUMENT_PDF_FILE_PROPERTY_ALIASES = [
 	"住民説明会資料PDF",
 	"説明会用資料PDF",
@@ -15639,7 +15647,7 @@ async function processResidentDocument(
 			["生成ドキュメント名", "資料タイトル", "住民説明会資料名"],
 			{ kind: "text", value: draft.documentTitle },
 		);
-		if (pdfExport.fileUrl) {
+		if (pdfExport.fileUrl && isNotionTextSafeUrl(pdfExport.fileUrl)) {
 			setAliasPatch(patches, RESIDENT_DOCUMENT_PDF_URL_PROPERTY_ALIASES, {
 				kind: "text",
 				value: pdfExport.fileUrl,
@@ -15774,7 +15782,9 @@ async function processProposalSimulation(
 			: pdfExport.destination === "page_block"
 				? "1. このレコード本文の末尾に追加されたPDFを開く"
 				: "1. files型の『提案PDF』または『作成した提案PDFを開く』プロパティを追加する",
-		pdfExport.fileUrl ? "2. 『提案PDFリンク』からも同じPDFを開けます" : "",
+		pdfExport.fileUrl && isNotionTextSafeUrl(pdfExport.fileUrl)
+			? "2. 『提案PDFリンク』からも同じPDFを開けます"
+			: "",
 		"3. 『資料PDF』は今回の提案シミュレーションでは使いません",
 	].join("\n");
 	if (!input.dryRun) {
@@ -15804,7 +15814,7 @@ async function processProposalSimulation(
 			["提案タイプガイド", "提案タイプ説明", "資料タイプ説明"],
 			{ kind: "text", value: draft.typeGuideLines.join("\n") },
 		);
-		if (pdfExport.fileUrl) {
+		if (pdfExport.fileUrl && isNotionTextSafeUrl(pdfExport.fileUrl)) {
 			setAliasPatch(patches, PROPOSAL_PDF_URL_PROPERTY_ALIASES, {
 				kind: "text",
 				value: pdfExport.fileUrl,
@@ -17418,9 +17428,11 @@ async function updateRelatedProjectProposalResult(
 		try {
 			const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
 			const memoLines = [
-				pdfExport.fileUrl
+				pdfExport.fileUrl && isNotionTextSafeUrl(pdfExport.fileUrl)
 					? `提案PDFを作成しました。${pdfExport.fileUrl}`
-					: "提案シミュレーションを作成しました。",
+					: pdfExport.fileUrl
+						? "提案PDFを作成しました。（リンクが長すぎるため、シミュレーション記録側の『作成した提案PDFを開く』から開いてください）"
+						: "提案シミュレーションを作成しました。",
 				draft.grossProfit !== null
 					? `予定粗利額を販売価格 - 仕入れ価格で自動更新: ${formatYen(draft.grossProfit)}`
 					: "",
@@ -17431,7 +17443,7 @@ async function updateRelatedProjectProposalResult(
 					value: memoLines.join("\n"),
 				},
 			};
-			if (pdfExport.fileUrl) {
+			if (pdfExport.fileUrl && isNotionTextSafeUrl(pdfExport.fileUrl)) {
 				setAliasPatch(patches, PROPOSAL_PDF_URL_PROPERTY_ALIASES, {
 					kind: "text",
 					value: pdfExport.fileUrl,
