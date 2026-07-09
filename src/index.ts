@@ -29237,32 +29237,9 @@ async function createInquiryFromEmail(
 		receptionNumber,
 		emailInfo.receivedAt,
 	);
-	// 営業ブリーフィング（分析済みの証）をページ本文へ。生成失敗でも起票は止めない。
-	let analysisBriefing = "";
-	try {
-		analysisBriefing = (await buildInquiryAnalysisBriefing(emailInfo)).trim();
-	} catch (error) {
-		console.log("問い合わせ営業ブリーフィング生成をスキップしました", String(error));
-	}
+	// 営業ブリーフィングはWorkerでは書かない。ページ本文の文面は大ちゃんが手直しできる
+	// Notion整形エージェント（v2）に一本化（二重書き手の解消・2026-07-10）。
 	await appendBlocksIfAny(notion, created.id, [
-		...(analysisBriefing
-			? [
-					{
-						object: "block",
-						type: "callout",
-						callout: {
-							rich_text: [
-								{
-									type: "text",
-									text: { content: `営業ブリーフィング（AI分析）\n${analysisBriefing}`.slice(0, 1900) },
-								},
-							],
-							icon: { emoji: "🔍" },
-							color: "blue_background",
-						},
-					},
-				]
-			: []),
 		{
 			object: "block",
 			type: "callout",
