@@ -15187,6 +15187,22 @@ async function processMeetingPrepReport(
 		};
 	}
 
+	// 器(既存5欄)を作り終えたら、続けて商太を起動する。
+	// 商太実行ステータス=処理中 にすると、商太エージェントがこのレポートを見て
+	// 商太5欄(攻めのトーク)を書く。これで「商談準備レポート作成」ボタン1つで、
+	// 器づくり→商太起動 まで通る(商太5欄本文はWorkerでは作らない=商太が書く)。
+	// 起動セットが失敗してもレポート作成自体は成功扱いにする(器は既にできている)。
+	await notion.pages
+		.update({
+			page_id: targetReport.id,
+			properties: {
+				商太実行ステータス: select("処理中"),
+			},
+		})
+		.catch((e) =>
+			console.log("商太実行ステータスの処理中セットに失敗", String(e)),
+		);
+
 	return {
 		companyId: company.page.id,
 		reportId: targetReport.id,
@@ -32274,7 +32290,15 @@ async function enrichProjectFromInquiry(
 		caseType: projectCaseType,
 		dealType: projectDealType,
 	});
-	if (caseNaming.name) {
+	// 押し直しガード：一度付いた通称は上書きしない（AI命名はゆらぐため、押すたび改名される事故を防ぐ）。
+	// 仮名（A採番「案件-…」／入口タイトル「お名前｜受付番号」）の時だけ命名する。
+	const currentCaseTitle = readGenericPageTitle(projectPage) || "";
+	const hasFinalCaseName =
+		currentCaseTitle.length > 0 &&
+		!/^案件-/.test(currentCaseTitle) &&
+		!currentCaseTitle.includes("｜");
+	const finalCaseName = hasFinalCaseName ? currentCaseTitle : caseNaming.name;
+	if (!hasFinalCaseName && caseNaming.name) {
 		patches["案件名"] = { kind: "text", value: caseNaming.name };
 	}
 	if (caseNaming.location) {
@@ -32290,8 +32314,8 @@ async function enrichProjectFromInquiry(
 	await safeUpdateExistingProperties(notion, projectPage, patches);
 	// 命名同期：確定した呼び名を子レコード（設備詳細・資料作成依頼）のタイトルにも反映する。
 	// （子はBの命名前に旧仮名「案件-260708-001｜設備詳細」等で作られていることがあるため）
-	if (caseNaming.name) {
-		await syncChildRecordTitlesToCaseName(notion, projectPage, caseNaming.name).catch((error) => {
+	if (finalCaseName) {
+		await syncChildRecordTitlesToCaseName(notion, projectPage, finalCaseName).catch((error) => {
 			console.log("child title sync skipped", String(error));
 		});
 	}
