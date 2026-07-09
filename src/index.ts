@@ -31748,6 +31748,7 @@ async function processInquiryProjectCreation(
 	notion: NotionClient,
 	triggerUserId?: string,
 	dryRun = false,
+	preferredProjectId?: string,
 ): Promise<InquiryProjectCreationResult> {
 	const inquiryPage = await notion.pages.retrieve({ page_id: inquiryPageId });
 	const inquiryTitle = readGenericPageTitle(inquiryPage) || "問い合わせ";
@@ -31763,11 +31764,40 @@ async function processInquiryProjectCreation(
 
 	if (existingProjectIds.length > 0) {
 		if (!dryRun) {
-			const targetProjectId = existingProjectIds[0]!;
+			// 重複チェック（既知の穴の対策）：
+			// ①Bで押した案件（preferredProjectId）を必ず補完対象にする＝“最初に見つけた別案件を触る”穴を塞ぐ。
+			// ②同じ元問い合わせに案件が複数ある場合は、自動削除せず（不可逆はしない）押した案件へ重複一覧を警告し、人が1件に整理する。
+			const targetProjectId =
+				preferredProjectId && existingProjectIds.includes(preferredProjectId)
+					? preferredProjectId
+					: existingProjectIds[0]!;
 			try {
 				const existingProjectPage = await notion.pages.retrieve({ page_id: targetProjectId });
 				await enrichProjectFromInquiry(notion, existingProjectPage, inquiryPage, triggerUserId);
 				await initializeProjectScaffolding(notion, targetProjectId);
+				if (existingProjectIds.length > 1) {
+					const duplicateLines = await Promise.all(
+						existingProjectIds
+							.filter((projectId) => projectId !== targetProjectId)
+							.slice(0, 5)
+							.map(async (projectId) => {
+								const duplicatePage = await notion.pages
+									.retrieve({ page_id: projectId })
+									.catch(() => null);
+								const name = duplicatePage ? readGenericPageTitle(duplicatePage) || projectId : projectId;
+								return `・${name}`;
+							}),
+					);
+					await createPageComment(
+						notion,
+						targetProjectId,
+						[
+							`⚠️ 重複注意：この問い合わせ（${inquiryTitle}）には案件が ${existingProjectIds.length} 件紐づいています。`,
+							"引き継ぎはこの案件に行いました。以下の重複案件を1件に整理してください（このシステムは自動削除しません）。",
+							...duplicateLines,
+						].join("\n"),
+					).catch(() => {});
+				}
 			} catch (error) {
 				console.log("inquiry project enrich skipped", String(error));
 			}
@@ -31787,7 +31817,10 @@ async function processInquiryProjectCreation(
 		return {
 			inquiryPageId,
 			action: dryRun ? "dry-run" : "enriched-existing",
-			projectId: existingProjectIds[0] ?? null,
+			projectId:
+				(preferredProjectId && existingProjectIds.includes(preferredProjectId)
+					? preferredProjectId
+					: existingProjectIds[0]) ?? null,
 			created: 0,
 			message: `既存案件 ${existingProjectIds.length} 件を検出。新規作成せず、問い合わせ内容を引き継ぎました。`,
 		};
@@ -32406,7 +32439,8 @@ async function processProjectEnrichFromInquiry(
 	// 元問い合わせを起点に既存案件（＝Aが作ったこの案件）を検出して補完する。
 	// enrich（顧客接点ログ→関連案件の書き戻し・決裁者判定・資料/企業引き継ぎ）に加えて、
 	// 問い合わせ側「紐づき案件」の書き戻し・重複チェック・scaffolding も走る（仕様§7-1）。
-	await processInquiryProjectCreation(inquiryIds[0]!, notion, triggerUserId, false);
+	// 押した案件を必ず補完対象にする（重複がある時に別案件を触らない）。
+	await processInquiryProjectCreation(inquiryIds[0]!, notion, triggerUserId, false, projectPageId);
 	const refreshed = await notion.pages.retrieve({ page_id: projectPageId });
 	// 次回面談日時が空なら案件化の必須条件としてアラートを残す（止めはしない）。
 	const nextMeeting = dateStartFromProperty(refreshed.properties?.["次回面談日時"]);
