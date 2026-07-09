@@ -21047,6 +21047,8 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 		reductionRate,
 		annualReductionAmount,
 		co2ReductionTons,
+		expectedYield,
+		annualNetIncome,
 	});
 	const summaryLines = buildProposalSummaryLines({
 		proposalKind,
@@ -22302,19 +22304,37 @@ function buildProposalConclusionText(input: {
 	reductionRate: number | null;
 	annualReductionAmount: number | null;
 	co2ReductionTons: number | null;
+	expectedYield: number | null;
+	annualNetIncome: number | null;
 }): string {
-	const rateText =
-		input.reductionRate !== null && Number.isFinite(input.reductionRate)
-			? `${trimTrailingZeros(input.reductionRate)}`
-			: "○○";
+	// 想定利回り・年間手残りは投資指標そのものを使う（削減率・削減額と混同しない）。
+	const yieldText =
+		input.expectedYield !== null && Number.isFinite(input.expectedYield)
+			? `${trimTrailingZeros(input.expectedYield)}`
+			: null;
+	const netManText =
+		input.annualNetIncome !== null && Number.isFinite(input.annualNetIncome)
+			? `${trimTrailingZeros(yenToManYen(input.annualNetIncome))}`
+			: null;
 	const amountText =
 		input.annualReductionAmount !== null && Number.isFinite(input.annualReductionAmount)
 			? `${trimTrailingZeros(yenToManYen(input.annualReductionAmount))}`
-			: "○○";
+			: null;
 	const co2Text =
 		input.co2ReductionTons !== null && Number.isFinite(input.co2ReductionTons)
 			? `${trimTrailingZeros(input.co2ReductionTons)}`
-			: "○○";
+			: null;
+	// 収益改善・CO2削減は、数字がある分だけ文にする（無い項目を「○○」で顧客に出さない）。
+	const amountClause = amountText !== null ? `年間${amountText}万円規模の収益改善` : "";
+	const co2Clause = co2Text !== null ? `年間${co2Text}トンのCO2削減効果` : "";
+	const effectSentence =
+		amountClause && co2Clause
+			? `想定では${amountClause}と、${co2Clause}を確認できます。`
+			: amountClause
+				? `想定では${amountClause}を確認できます。`
+				: co2Clause
+					? `想定では${co2Clause}を確認できます。`
+					: "想定効果は、収益改善とCO2削減の両面から具体化します。";
 	if (input.proposalKind === "gridBattery") {
 		return [
 			"本プランは、系統用蓄電池を用いてJEPXの価格差、容量市場、需給調整市場など複数の収益源を検討する次世代エネルギー投資です。",
@@ -22327,20 +22347,26 @@ function buildProposalConclusionText(input: {
 		return [
 			"本プランは、老後資金や家族への資産引き継ぎを見据えた、私的年金型の太陽光発電投資候補です。",
 			"不動産のような入居者退去リスクはありませんが、発電量変動、出力抑制、設備故障、保険免責、将来の解体・廃棄費用は前提として開示します。",
-			`想定では年間${amountText}万円規模の収益改善と、年間${co2Text}トンのCO2削減効果を確認できます。`,
+			effectSentence,
 			"融資利用、投資期間、出口方針、相続方針を確認した上で、無理のない収支表へ落とし込みます。",
 		].join("\n");
 	}
 	if (input.proposalKind === "esg") {
 		return [
 			"本プランは、投資収益だけでなく、脱炭素対応、取引先への説明、金融機関への企業価値訴求に使える再エネ資産候補です。",
-			`想定では年間${co2Text}トンのCO2削減効果と、年間${amountText}万円規模の収益改善を同時に検討できます。`,
+			effectSentence,
 			"環境価値や非化石価値の主張可否は、契約形態、証書、トラッキング、電力利用形態により変わるため、個別に確認します。",
 			"社内稟議では、経済効果、環境指標、リスク、運用体制を同じ資料内で説明できる形にします。",
 		].join("\n");
 	}
+	const corporateHeadline =
+		yieldText !== null && netManText !== null
+			? `本プランは、想定利回り約${yieldText}%、年間手残り${netManText}万円規模を検討できる太陽光発電投資候補です。`
+			: "本プランは、想定利回り・年間手残り・税効果をまとめて検討できる太陽光発電投資候補です。";
+	const corporateCo2Suffix =
+		co2Text !== null ? `あわせて年間${co2Text}トンのCO2排出量削減効果も確認します。` : "";
 	return [
-		`本プランは、想定利回り約${rateText}%、年間手残り${amountText}万円規模を検討できる太陽光発電投資候補です。あわせて年間${co2Text}トンのCO2排出量削減効果も確認します。`,
+		`${corporateHeadline}${corporateCo2Suffix}`,
 		"中小企業経営強化税制は、要件を満たす場合に即時償却または税額控除を選択できる可能性があります。設備取得前の証明書・確認書、経営力向上計画の認定、税理士・会計士確認を前提にします。",
 		"不動産のような入居者退去リスクはありませんが、発電量変動、出力抑制、設備故障、保険免責、将来の解体・廃棄費用は前提として開示します。",
 		"信頼される提案は、表面利回りだけでなく実質利回り、融資条件、20年後の解体・廃棄費用まで正直に示します。",
@@ -22354,6 +22380,8 @@ function buildPlaceholderConclusionText(proposalKind: ProposalKind = "corporate"
 			reductionRate: null,
 			annualReductionAmount: null,
 			co2ReductionTons: null,
+			expectedYield: null,
+			annualNetIncome: null,
 		});
 	}
 	return [
