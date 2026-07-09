@@ -32182,7 +32182,7 @@ async function enrichProjectFromInquiry(
 		patches["所在地"] = { kind: "text", value: caseNaming.location };
 	}
 	if (caseNaming.scale) {
-		patches["容量"] = { kind: "text", value: caseNaming.scale };
+		patches["規模"] = { kind: "text", value: caseNaming.scale };
 	}
 	// 相手先（売却→売り主／購入→買い手の名前）をヘッダー一番上の識別情報として持つ。
 	if (caseNaming.counterparty) {
