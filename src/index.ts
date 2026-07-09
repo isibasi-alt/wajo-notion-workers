@@ -22687,6 +22687,7 @@ async function markLandCaseLinked(
 	const current = relationIdsFromProperty(land.page.properties?.["関連案件"]);
 	await safeUpdateExistingProperties(notion, land.page, {
 		案件化日: { kind: "date", value: todayDateJST() },
+		案件化状態: { kind: "select", value: "案件化済" },
 		関連案件: { kind: "relation", ids: uniqueStrings([...current, ...projectIds]) },
 		案件化メモ: {
 			kind: "text",
