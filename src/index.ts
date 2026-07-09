@@ -31925,6 +31925,76 @@ async function linkContactLogsToProjectAndDeriveDecisionMaker(
 	};
 }
 
+// 案件名の最終命名（B）。命名ルール正本＝CASE_TITLE_NAMING_RULE：
+// 「地域＋案件の芯（＋必要時だけ識別子）」の、営業が口に出して呼べる短い通称にする。
+// タイトル＝呼び名／ヘッダー＝管理情報。長い説明はタイトルに詰めない。
+// 「作れない」は禁止：地域が読めなくても種別・会社名の芯で必ず短い呼び名を返し、失敗してもthrowしない。
+function sanitizeCaseName(raw: string): string {
+	let name =
+		(raw || "")
+			.split("\n")
+			.map((line) => line.trim())
+			.find(Boolean) || "";
+	name = name.replace(/^案件名[:：]\s*/, "");
+	name = name.replace(/^[「『“"'（(]+/, "").replace(/[」』”"'）)]+$/, "");
+	name = name.replace(/[｜|]/g, " ").replace(/[\s　]+/g, " ").trim();
+	return name.slice(0, 24);
+}
+
+function fallbackCaseName(inquiryTitle: string, assetType: string | null): string {
+	const core =
+		assetType && assetType.includes("蓄電")
+			? "蓄電池"
+			: assetType && assetType.includes("太陽")
+				? "太陽光"
+				: "案件";
+	const handle =
+		(inquiryTitle || "")
+			.split(/[｜|\s　]/)
+			.map((part) => part.trim())
+			.find(Boolean) || "新規";
+	return `${handle} ${core}`.slice(0, 24);
+}
+
+async function deriveInquiryCaseName(input: {
+	inquiryTitle: string;
+	summary: string;
+	activityLog: string;
+	assetType: string | null;
+	caseType: string | null;
+}): Promise<string> {
+	const material = [
+		`【件名】${input.inquiryTitle || "（なし）"}`,
+		`【メール要約】${(input.summary || "（なし）").slice(0, 1200)}`,
+		`【活動ログ/本文】${(input.activityLog || "（なし）").slice(0, 1200)}`,
+		`【対象物種別】${input.assetType || "（不明）"}`,
+		`【案件種別】${input.caseType || "（不明）"}`,
+		"上記から、営業が口に出して呼べる短い案件名を1つだけ返す。",
+	].join("\n");
+	try {
+		const raw = await callAnthropicChat({
+			system: [
+				"あなたは再エネ・不動産営業の案件に、営業マンが口に出して呼べる短い通称（案件名）を付ける担当です。",
+				"形は「地域＋案件の芯」。必要なときだけ最後に短い識別子。例: 新潟4メガ / 鳴門500キロ / 蒲田蓄電池 / 岡山野立て / 姫路低圧 / 奈良9000坪。",
+				"地域は営業が普段呼ぶ地名（市区町村・エリア通称）。都道府県＋丁目まで入れない。",
+				"芯は容量（4メガ/500キロ）か種別（低圧/野立て/蓄電池/高圧/バルク）を1〜2語。",
+				"日付・売買区分・担当者名・長い件名・「問い合わせ」等の管理語はタイトルに入れない。",
+				"ポエムや意味不明な愛称にしない。短く・言いやすく・見分けやすく。",
+				"地域が読めないときは、読める要素（会社名の芯や種別）で必ず短い呼び名を作る。「作れない」は禁止。",
+				"出力は案件名の文字列だけを1行で返す。説明・記号・引用符を付けない。",
+			].join("\n"),
+			user: material,
+			maxTokens: 40,
+			temperature: 0,
+		});
+		const name = sanitizeCaseName(raw);
+		if (name) return name;
+	} catch (error) {
+		console.log("inquiry case name AI skipped", String(error));
+	}
+	return fallbackCaseName(input.inquiryTitle, input.assetType);
+}
+
 async function enrichProjectFromInquiry(
 	notion: NotionClient,
 	projectPage: Page,
@@ -31958,8 +32028,8 @@ async function enrichProjectFromInquiry(
 		"次に確認すること: 対象物、売買条件、必要資料、価格、所有者/決裁者。",
 	].join("\n");
 	const patches: Record<string, SafePatch> = {
-		// 案件名はAボタン（案件化申請）が付けた仮名（お名前｜受付番号）を尊重し、Bでは上書きしない。
-		// 最終命名（言いやすい呼び名）は別ステップで扱う。
+		// 案件名（最終命名）はこの関数の末尾で、AIが「地域＋芯」の短い通称を付ける（命名ルール正本）。
+		// Aの仮名（お名前｜受付番号）は、呼びやすい通称へここで正規化する。長い説明はヘッダー側（案件詳細等）に残す。
 		案件詳細: { kind: "text", value: memo },
 		情報ソース: { kind: "text", value: "お問い合わせDB / Worker案件化" },
 		確認待ち内容: {
@@ -32036,6 +32106,18 @@ async function enrichProjectFromInquiry(
 		kind: "text",
 		value: "設備詳細を作成し、資料作成に必要な情報を埋める。",
 	};
+	// 最終命名（B）：問い合わせの材料から「地域＋芯」の短い通称を作り、案件名を呼びやすく整える。
+	// タイトルは呼び名だけ・長い説明はヘッダー側（案件詳細/営業サマリー/確認待ち内容）に残す。
+	const caseName = await deriveInquiryCaseName({
+		inquiryTitle,
+		summary: inquirySummary,
+		activityLog: inquiryActivityLog,
+		assetType: projectAssetType,
+		caseType: projectCaseType,
+	});
+	if (caseName) {
+		patches["案件名"] = { kind: "text", value: caseName };
+	}
 	await safeUpdateExistingProperties(notion, projectPage, patches);
 	// 押し直し対策：既に引き継ぎ済みなら本文ブロックを二重追記しない。
 	const existingProjectBody = await fetchPageBlockPlainText(notion, projectPage.id);
