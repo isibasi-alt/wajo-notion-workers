@@ -31962,6 +31962,7 @@ type InquiryCaseNaming = {
 	name: string;
 	location: string;
 	scale: string;
+	counterparty: string;
 };
 
 const INQUIRY_CASE_NAME_RESPONSE_FORMAT: WajoJsonSchemaResponseFormat = {
@@ -31983,8 +31984,12 @@ const INQUIRY_CASE_NAME_RESPONSE_FORMAT: WajoJsonSchemaResponseFormat = {
 					type: "string",
 					description: "容量や大きさ（例: 500kW / 4MW / 9000坪 / 低圧）。読めなければ空文字。",
 				},
+				相手先: {
+					type: "string",
+					description: "この案件の相手先の名前＝売却案件なら売り主、購入希望なら買い手（個人なら『山田様』、法人なら会社名）。問い合わせ内容から読み取れた実名だけ。読めなければ空文字。でっち上げない。",
+				},
 			},
-			required: ["案件名", "所在地", "規模"],
+			required: ["案件名", "所在地", "規模", "相手先"],
 			additionalProperties: false,
 		},
 	},
@@ -31996,6 +32001,7 @@ async function deriveInquiryCaseName(input: {
 	activityLog: string;
 	assetType: string | null;
 	caseType: string | null;
+	dealType: string | null;
 }): Promise<InquiryCaseNaming> {
 	const material = [
 		`【件名】${input.inquiryTitle || "（なし）"}`,
@@ -32003,12 +32009,14 @@ async function deriveInquiryCaseName(input: {
 		`【活動ログ/本文】${(input.activityLog || "（なし）").slice(0, 1200)}`,
 		`【対象物種別】${input.assetType || "（不明）"}`,
 		`【案件種別】${input.caseType || "（不明）"}`,
-		"上記から、案件名（短い通称）・所在地・規模をJSONで返す。",
+		`【売買区分】${input.dealType || "（不明）"}`,
+		"上記から、案件名（短い通称）・所在地・規模・相手先をJSONで返す。",
 	].join("\n");
 	const fallback: InquiryCaseNaming = {
 		name: fallbackCaseName(input.inquiryTitle, input.assetType),
 		location: "",
 		scale: "",
+		counterparty: "",
 	};
 	try {
 		const raw = await callAnthropicChat({
@@ -32019,7 +32027,7 @@ async function deriveInquiryCaseName(input: {
 				"捻りは実在の材料からだけ作る：数字ダジャレは本物の容量、キャラは活動ログにいる人。案件の事実（容量・売買・所有者・緊急度など）を捏造しない。読めない数値は書かない。日付・売買区分・担当者名・長い件名・『問い合わせ』等の管理語は入れない。短く（全角12文字目安）。",
 				"最優先は『電話で声に出して呼びやすい』こと。語呂よく2〜3拍で、舌を噛む綴りや説明が要る捻りは避ける（例○鳴門ぐるぐる／別府もくもく／熊本くまモン、例×長すぎ・読み方が割れる語）。",
 				"手掛かりが薄くても必ず付ける（会社名の芯＋種別など）。「作れない」は禁止。",
-				"所在地・規模は事実だけを正確に書く（ここは遊ばない。読めなければ空文字・でっち上げない）。",
+				"所在地・規模・相手先は事実だけを正確に書く（ここは遊ばない。読めなければ空文字・でっち上げない）。相手先＝売却案件なら売り主、購入希望なら買い手の実名（個人は『◯◯様』、法人は会社名）。",
 			].join("\n"),
 			user: material,
 			maxTokens: 200,
@@ -32030,12 +32038,14 @@ async function deriveInquiryCaseName(input: {
 			案件名?: unknown;
 			所在地?: unknown;
 			規模?: unknown;
+			相手先?: unknown;
 		};
 		const name = sanitizeCaseName(typeof parsed.案件名 === "string" ? parsed.案件名 : "");
 		return {
 			name: name || fallback.name,
 			location: typeof parsed.所在地 === "string" ? parsed.所在地.trim().slice(0, 40) : "",
 			scale: typeof parsed.規模 === "string" ? parsed.規模.trim().slice(0, 40) : "",
+			counterparty: typeof parsed.相手先 === "string" ? parsed.相手先.trim().slice(0, 40) : "",
 		};
 	} catch (error) {
 		console.log("inquiry case name AI skipped", String(error));
@@ -32163,6 +32173,7 @@ async function enrichProjectFromInquiry(
 		activityLog: inquiryActivityLog,
 		assetType: projectAssetType,
 		caseType: projectCaseType,
+		dealType: projectDealType,
 	});
 	if (caseNaming.name) {
 		patches["案件名"] = { kind: "text", value: caseNaming.name };
@@ -32172,6 +32183,10 @@ async function enrichProjectFromInquiry(
 	}
 	if (caseNaming.scale) {
 		patches["容量"] = { kind: "text", value: caseNaming.scale };
+	}
+	// 相手先（売却→売り主／購入→買い手の名前）をヘッダー一番上の識別情報として持つ。
+	if (caseNaming.counterparty) {
+		patches["相手先"] = { kind: "text", value: caseNaming.counterparty };
 	}
 	await safeUpdateExistingProperties(notion, projectPage, patches);
 	// 押し直し対策：既に引き継ぎ済みなら本文ブロックを二重追記しない。
