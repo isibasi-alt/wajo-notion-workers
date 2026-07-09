@@ -56,6 +56,28 @@ const POWER_PLANT_EQUIPMENT_DATA_SOURCE_ID =
 const PROPOSAL_REQUEST_DATA_SOURCE_ID =
 	process.env.PROPOSAL_REQUEST_DATA_SOURCE_ID ??
 	"9701e891-ffd0-43d7-b6f9-911fedc65391";
+// 発電所設備詳細DBの「入力画面テンプレート」ページ。新規作成時にアイコン/カバーをここから写す。
+// （営業資料作成依頼DBは2026-07-10時点でテンプレ未設定＝設定されたら同様に足す）
+const EQUIPMENT_DETAIL_TEMPLATE_PAGE_ID =
+	process.env.EQUIPMENT_DETAIL_TEMPLATE_PAGE_ID ??
+	"680bc5f3-6d71-42dd-b3bf-23a3d7118f7c";
+
+// テンプレページのアイコン・カバー（壁紙）を読む。失敗しても作成は止めない。
+async function fetchTemplatePageLook(
+	notion: NotionClient,
+	templatePageId: string,
+): Promise<{ icon: unknown; cover: unknown }> {
+	try {
+		const page = (await notion.pages.retrieve({ page_id: templatePageId })) as {
+			icon?: unknown;
+			cover?: unknown;
+		};
+		return { icon: page.icon ?? null, cover: page.cover ?? null };
+	} catch (error) {
+		console.log("template look fetch skipped", String(error));
+		return { icon: null, cover: null };
+	}
+}
 const FINANCE_SIMULATION_DATA_SOURCE_ID =
 	process.env.FINANCE_SIMULATION_DATA_SOURCE_ID ??
 	"7e4d0168-6e54-4071-bd55-f9730202225c";
@@ -16210,14 +16232,19 @@ async function processProjectEquipmentDetailRequest(
 		};
 	}
 
+	// テンプレ再現：Notion APIはDBテンプレを自動適用しないため、テンプレページの
+	// アイコン・カバー（壁紙）を読んでコピーする（テンプレ側を変えれば以後の新規作成に反映）。
+	const templateLook = await fetchTemplatePageLook(notion, EQUIPMENT_DETAIL_TEMPLATE_PAGE_ID);
 	const equipmentPage = await notion.pages.create({
 		parent: { data_source_id: POWER_PLANT_EQUIPMENT_DATA_SOURCE_ID },
+		...(templateLook.icon ? { icon: templateLook.icon } : {}),
+		...(templateLook.cover ? { cover: templateLook.cover } : {}),
 		properties: {
 			設備詳細名: title(equipmentTitle),
 			関連案件: relation(projectPage.id),
 			...buildEquipmentDetailInitialProperties(projectPage),
 		},
-	});
+	} as Parameters<typeof notion.pages.create>[0]);
 	const equipmentUrl = typeof (equipmentPage as Record<string, unknown>).url === "string"
 		? ((equipmentPage as Record<string, unknown>).url as string)
 		: "";
@@ -21682,7 +21709,7 @@ function buildSequentialMissingMessage(
 	nextFields: string[],
 ): string {
 	const remaining = nextFields.length > 0 ? `\n次に確認する項目: ${nextFields.join(" / ")}` : "";
-	return `${workLabel}を実行する前に「${missingField}」を入力してください。修正後にもう一度ボタンを押してください。${remaining}`;
+	return `${workLabel}を実行する前に「${missingField}」を入力してください。\n入力場所: このボタンがあるレコード自身のプロパティです（ページ上部の「詳細を表示する」を開くと出てきます）。修正後にもう一度ボタンを押してください。${remaining}`;
 }
 
 function hasFieldValue(value: string | number | null): boolean {
@@ -31893,51 +31920,18 @@ async function initializeProjectScaffolding(
 	projectPageId: string,
 	dryRun = false,
 ): Promise<void> {
+	// 動線設計正本（2026-07-10）：案件化直後の自動処理は設備詳細の作成だけ。
+	// 提案資料/金融資料/住民説明会は、まだ入力が無い段階で自動発火すると全部「足りません」で転び
+	// 空依頼とエラーコメントが並ぶため、営業がボタンを押した時にだけ作る（1本道：設備詳細→シミュ→ファイナンス）。
 	if (!dryRun) {
-		const requestInput = {
-			projectPageId,
-			dryRun: false,
-		};
-		const initializationErrors: string[] = [];
-		await Promise.all([
-			(async () => {
-				try {
-					await processProjectProposalRequest(requestInput, notion);
-				} catch (error) {
-					initializationErrors.push(`提案資料作成依頼: ${String(error)}`);
-				}
-			})(),
-			(async () => {
-				try {
-					await processProjectFinanceRequest(requestInput, notion);
-				} catch (error) {
-					initializationErrors.push(`金融資料作成依頼: ${String(error)}`);
-				}
-			})(),
-			(async () => {
-				try {
-					await processProjectResidentDocumentRequest(requestInput, notion);
-				} catch (error) {
-					initializationErrors.push(`住民説明会資料作成依頼: ${String(error)}`);
-				}
-			})(),
-			(async () => {
-				try {
-					await processProjectEquipmentDetailRequest(requestInput, notion);
-				} catch (error) {
-					initializationErrors.push(`設備詳細作成: ${String(error)}`);
-				}
-			})(),
-		]);
-		if (initializationErrors.length > 0) {
+		try {
+			await processProjectEquipmentDetailRequest({ projectPageId, dryRun: false }, notion);
+		} catch (error) {
 			await createPageComment(
 				notion,
 				projectPageId,
-				[
-					`⚠️ 初期化の一部で失敗しました。後続で再実行してください。`,
-					...initializationErrors,
-				].join("\n"),
-			);
+				`⚠️ 設備詳細の自動作成に失敗しました。「設備詳細を入力」ボタンから再実行してください。\n${String(error).slice(0, 300)}`,
+			).catch(() => {});
 		}
 	}
 }
@@ -32120,6 +32114,44 @@ async function deriveInquiryCaseName(input: {
 	return fallback;
 }
 
+// 案件名（呼び名）確定時に、子レコードのタイトルを「◯◯｜設備詳細」等へ同期する。
+// 旧仮名（案件-260708-001｜…）のまま残ると、タブの中で別案件に見えるため。
+async function syncChildRecordTitlesToCaseName(
+	notion: NotionClient,
+	projectPage: Page,
+	caseName: string,
+): Promise<void> {
+	// relationはenrich中に増えることがあるため、最新の案件ページから読み直す。
+	const freshProjectPage = await notion.pages.retrieve({ page_id: projectPage.id });
+	const properties = freshProjectPage.properties ?? {};
+	const childIds = uniqueStrings([
+		...relationIdsFromProperty(properties["発電所設備詳細"]),
+		...relationIdsFromProperty(properties["資料作成依頼"]),
+	]);
+	for (const childId of childIds) {
+		try {
+			const childPage = await notion.pages.retrieve({ page_id: childId });
+			const titleEntry = Object.entries(childPage.properties ?? {}).find(
+				([, value]) =>
+					value && typeof value === "object" && (value as Record<string, unknown>).type === "title",
+			);
+			if (!titleEntry) continue;
+			const [titleName] = titleEntry;
+			const oldTitle = readGenericPageTitle(childPage) || "";
+			const separatorIndex = oldTitle.indexOf("｜");
+			const suffix = separatorIndex >= 0 ? oldTitle.slice(separatorIndex + 1).trim() : "";
+			const newTitle = suffix ? `${caseName}｜${suffix}` : `${caseName}｜${oldTitle}`.slice(0, 80);
+			if (!oldTitle || oldTitle === newTitle || oldTitle.startsWith(`${caseName}｜`)) continue;
+			await notion.pages.update({
+				page_id: childId,
+				properties: { [titleName]: title(newTitle) },
+			});
+		} catch (error) {
+			console.log("child title sync item skipped", String(error));
+		}
+	}
+}
+
 async function enrichProjectFromInquiry(
 	notion: NotionClient,
 	projectPage: Page,
@@ -32256,6 +32288,13 @@ async function enrichProjectFromInquiry(
 		patches["相手先"] = { kind: "text", value: caseNaming.counterparty };
 	}
 	await safeUpdateExistingProperties(notion, projectPage, patches);
+	// 命名同期：確定した呼び名を子レコード（設備詳細・資料作成依頼）のタイトルにも反映する。
+	// （子はBの命名前に旧仮名「案件-260708-001｜設備詳細」等で作られていることがあるため）
+	if (caseNaming.name) {
+		await syncChildRecordTitlesToCaseName(notion, projectPage, caseNaming.name).catch((error) => {
+			console.log("child title sync skipped", String(error));
+		});
+	}
 	// 押し直し対策：既に引き継ぎ済みなら本文ブロックを二重追記しない。
 	const existingProjectBody = await fetchPageBlockPlainText(notion, projectPage.id);
 	if (!existingProjectBody.includes("営業サマリーと次の一手")) {

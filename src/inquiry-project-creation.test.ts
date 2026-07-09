@@ -169,14 +169,16 @@ async function main() {
 
 	assert.equal(created.action, "created-project");
 	assert.equal(created.projectId, "project-created");
-	assert.ok(creates.length >= 5, `案件1件と関連4件の初期化が同時に起きるはず: ${creates.length}`);
+	// 動線設計正本（2026-07-10）：案件化直後の自動作成は設備詳細1件だけ。
+	// 提案/金融/住民説明会の依頼は営業がボタンを押した時にだけ作る（1本道）。
+	assert.ok(creates.length >= 2, `案件1件と設備詳細1件が作成されるはず: ${creates.length}`);
 	assert.ok(queries.length >= 1);
 	assert.deepEqual(creates[0]!.template, {
 		type: "template_id",
 		template_id: "0b9815a4-37c4-4e4c-90b6-1d54fd9664a3",
 		timezone: "Asia/Tokyo",
 	});
-	assert.equal(creates.slice(1).length, 4, "案件作成後に案内3件＋設備1件の依頼が作成されるはず");
+	assert.equal(creates.slice(1).length, 1, "案件作成後に設備詳細1件だけが作成されるはず（4連自動発火は廃止）");
 	assert.deepEqual(creates[0]!.icon, {
 		type: "icon",
 		icon: { name: "school", color: "orange" },
@@ -295,7 +297,7 @@ async function main() {
 
 	assert.equal(skipped.action, "enriched-existing");
 	assert.equal(skipped.projectId, "project-existing");
-	assert.equal(creates.length, 4, "既存案件でも関連4件の初期化は走る");
+	assert.equal(creates.length, 1, "既存案件でも設備詳細1件だけの初期化が走る（4連自動発火は廃止）");
 	const enrichedProjectUpdate = updates.find((update) => update.page_id === "project-existing");
 	assert.ok(enrichedProjectUpdate, "既存案件へ問い合わせ内容の引き継ぎ更新が走る");
 	assert.match(
