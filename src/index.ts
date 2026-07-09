@@ -31956,43 +31956,90 @@ function fallbackCaseName(inquiryTitle: string, assetType: string | null): strin
 	return `${handle} ${core}`.slice(0, 24);
 }
 
+// 命名は「タイトル＝呼び名／ヘッダー＝管理情報」。タイトルから外す場所・kW・規模は捨てず、
+// ここで一緒に抜き出してヘッダー（案件詳細）へ集める（案件DBに専用の所在地/容量列が無いため）。
+type InquiryCaseNaming = {
+	name: string;
+	location: string;
+	scale: string;
+};
+
+const INQUIRY_CASE_NAME_RESPONSE_FORMAT: WajoJsonSchemaResponseFormat = {
+	type: "json_schema",
+	json_schema: {
+		name: "inquiry_case_name",
+		schema: {
+			type: "object",
+			properties: {
+				案件名: {
+					type: "string",
+					description: "営業が口に出して呼べる短い通称。地域＋芯（＋必要時だけ識別子）。",
+				},
+				所在地: {
+					type: "string",
+					description: "読み取れた地域・所在地（市区町村やエリア通称）。読めなければ空文字。",
+				},
+				規模: {
+					type: "string",
+					description: "容量や大きさ（例: 500kW / 4MW / 9000坪 / 低圧）。読めなければ空文字。",
+				},
+			},
+			required: ["案件名", "所在地", "規模"],
+			additionalProperties: false,
+		},
+	},
+};
+
 async function deriveInquiryCaseName(input: {
 	inquiryTitle: string;
 	summary: string;
 	activityLog: string;
 	assetType: string | null;
 	caseType: string | null;
-}): Promise<string> {
+}): Promise<InquiryCaseNaming> {
 	const material = [
 		`【件名】${input.inquiryTitle || "（なし）"}`,
 		`【メール要約】${(input.summary || "（なし）").slice(0, 1200)}`,
 		`【活動ログ/本文】${(input.activityLog || "（なし）").slice(0, 1200)}`,
 		`【対象物種別】${input.assetType || "（不明）"}`,
 		`【案件種別】${input.caseType || "（不明）"}`,
-		"上記から、営業が口に出して呼べる短い案件名を1つだけ返す。",
+		"上記から、案件名（短い通称）・所在地・規模をJSONで返す。",
 	].join("\n");
+	const fallback: InquiryCaseNaming = {
+		name: fallbackCaseName(input.inquiryTitle, input.assetType),
+		location: "",
+		scale: "",
+	};
 	try {
 		const raw = await callAnthropicChat({
 			system: [
-				"あなたは再エネ・不動産営業の案件に、営業マンが口に出して呼べる短い通称（案件名）を付ける担当です。",
-				"形は「地域＋案件の芯」。必要なときだけ最後に短い識別子。例: 新潟4メガ / 鳴門500キロ / 蒲田蓄電池 / 岡山野立て / 姫路低圧 / 奈良9000坪。",
-				"地域は営業が普段呼ぶ地名（市区町村・エリア通称）。都道府県＋丁目まで入れない。",
-				"芯は容量（4メガ/500キロ）か種別（低圧/野立て/蓄電池/高圧/バルク）を1〜2語。",
-				"日付・売買区分・担当者名・長い件名・「問い合わせ」等の管理語はタイトルに入れない。",
-				"ポエムや意味不明な愛称にしない。短く・言いやすく・見分けやすく。",
+				"あなたは再エネ・不動産営業の案件に、営業マンが口に出して呼べる短い通称（案件名）を付け、識別情報を抜き出す担当です。",
+				"案件名の形は「地域＋案件の芯」。必要なときだけ最後に短い識別子。例: 新潟4メガ / 鳴門500キロ / 蒲田蓄電池 / 岡山野立て / 姫路低圧 / 奈良9000坪。",
+				"地域は営業が普段呼ぶ地名（市区町村・エリア通称）。都道府県＋丁目まで入れない。芯は容量（4メガ/500キロ）か種別（低圧/野立て/蓄電池/高圧/バルク）を1〜2語。",
+				"日付・売買区分・担当者名・長い件名・「問い合わせ」等の管理語は案件名に入れない。ポエムや意味不明な愛称にしない。短く・言いやすく・見分けやすく。",
 				"地域が読めないときは、読める要素（会社名の芯や種別）で必ず短い呼び名を作る。「作れない」は禁止。",
-				"出力は案件名の文字列だけを1行で返す。説明・記号・引用符を付けない。",
+				"所在地・規模は、読み取れた事実だけを短く書く（読めなければ空文字。でっち上げない）。",
 			].join("\n"),
 			user: material,
-			maxTokens: 40,
+			maxTokens: 200,
 			temperature: 0,
+			jsonSchema: INQUIRY_CASE_NAME_RESPONSE_FORMAT,
 		});
-		const name = sanitizeCaseName(raw);
-		if (name) return name;
+		const parsed = JSON.parse(raw) as {
+			案件名?: unknown;
+			所在地?: unknown;
+			規模?: unknown;
+		};
+		const name = sanitizeCaseName(typeof parsed.案件名 === "string" ? parsed.案件名 : "");
+		return {
+			name: name || fallback.name,
+			location: typeof parsed.所在地 === "string" ? parsed.所在地.trim().slice(0, 40) : "",
+			scale: typeof parsed.規模 === "string" ? parsed.規模.trim().slice(0, 40) : "",
+		};
 	} catch (error) {
 		console.log("inquiry case name AI skipped", String(error));
 	}
-	return fallbackCaseName(input.inquiryTitle, input.assetType);
+	return fallback;
 }
 
 async function enrichProjectFromInquiry(
@@ -32107,16 +32154,28 @@ async function enrichProjectFromInquiry(
 		value: "設備詳細を作成し、資料作成に必要な情報を埋める。",
 	};
 	// 最終命名（B）：問い合わせの材料から「地域＋芯」の短い通称を作り、案件名を呼びやすく整える。
-	// タイトルは呼び名だけ・長い説明はヘッダー側（案件詳細/営業サマリー/確認待ち内容）に残す。
-	const caseName = await deriveInquiryCaseName({
+	// タイトルから外した場所・kW・規模は捨てず、ヘッダー（案件詳細）の【識別情報】に集める。
+	const caseNaming = await deriveInquiryCaseName({
 		inquiryTitle,
 		summary: inquirySummary,
 		activityLog: inquiryActivityLog,
 		assetType: projectAssetType,
 		caseType: projectCaseType,
 	});
-	if (caseName) {
-		patches["案件名"] = { kind: "text", value: caseName };
+	if (caseNaming.name) {
+		patches["案件名"] = { kind: "text", value: caseNaming.name };
+	}
+	// 案件を特定するデータ（所在地・規模・対象物）をヘッダーの案件詳細先頭に集約する。
+	const identifyParts = [
+		caseNaming.location ? `所在地: ${caseNaming.location}` : "",
+		caseNaming.scale ? `規模: ${caseNaming.scale}` : "",
+		projectAssetType ? `対象物: ${projectAssetType}` : "",
+	].filter(Boolean);
+	if (identifyParts.length > 0) {
+		patches["案件詳細"] = {
+			kind: "text",
+			value: `【識別情報】${identifyParts.join(" ｜ ")}\n${memo}`,
+		};
 	}
 	await safeUpdateExistingProperties(notion, projectPage, patches);
 	// 押し直し対策：既に引き継ぎ済みなら本文ブロックを二重追記しない。
