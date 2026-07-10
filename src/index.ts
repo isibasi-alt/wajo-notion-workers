@@ -34349,6 +34349,13 @@ async function enrichProjectFromLandSource(
 		dealTypeComment: "",
 		doneComment: `✅ 土地引き継ぎ完了：土地情報「${land.name}」の実データ（所在地・面積・所有者）で案件ヘッダーを補完しました。売り先候補・売却条件を確認してください。`,
 	});
+	// ネイティブA（着地型）は土地側を触れないため、Bで土地側の案件化状態・関連案件を書き戻す（旧一体型と同じ出口を保つ）。
+	await markLandCaseLinked(
+		notion,
+		land,
+		[projectPage.id],
+		"案件ページのBボタン（内容を引き継ぐ）から案件化を確定しました。",
+	).catch(() => {});
 }
 
 // Bボタン（案件ヘッダー）本体：案件の出どころ（元問い合わせ／紹介ブローカー／関連土地情報）を辿り、
