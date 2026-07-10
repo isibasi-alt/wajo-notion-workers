@@ -34530,6 +34530,50 @@ function projectHasFinalCaseName(projectPage: Page): { final: boolean; current: 
 // 共通Bの仕上げ：ヘッダーpatch適用→売買区分AIフォールバック根拠コメント→子レコード名同期→完了コメント。
 // ★設備詳細の自動作成はしない（2026-07-10修正）：ブローカー/土地由来は対象物が未確定なことが多く、
 // 太陽光前提の『発電所設備詳細』を勝手に作ると蓄電池・土地で対象が限定される。対象物が定まってから営業が「設備詳細を入力」ボタンで作る。
+// 正当な案件化ゲート（2026-07-11大ちゃん決定）：案件化＝「正当な申請」。
+// 「売りたい相手には買いたいもの、買いたい相手には売りたいもの」の対が目星として立って初めて正規の案件。
+// 未達なら『⏳ 確認待ち』（＝仮申請）に置く＝母艦に半端な案件を正規メンバー面させない。外すのは人の承認（ステータスを手で進める）。
+// 既存の正規ステータス値『⏳ 確認待ち』を使う（下流計算が対応済み）。
+function caseLegitimacyGateMissing(page: Page): string[] {
+	const props = page.properties ?? {};
+	const dealType = text(props["売買区分"]);
+	const missing: string[] = [];
+	if (dealType !== "売却案件" && dealType !== "購入希望") {
+		missing.push("売買区分（売却案件 か 購入希望 に確定）");
+	} else if (dealType === "売却案件" && relationIdsFromProperty(props["買主企業"]).length === 0) {
+		missing.push("買主企業（青）に目星1社（売る相手の当てを立てる）");
+	} else if (dealType === "購入希望" && relationIdsFromProperty(props["売主企業"]).length === 0) {
+		missing.push("売主企業（赤）に目星1社（買う先の当てを立てる）");
+	}
+	if (isBlankOrPlaceholder(text(props["対象物種別"]))) {
+		missing.push("対象物種別（売る/買う“もの”を確定）");
+	}
+	return missing;
+}
+
+// ゲート未達なら『⏳ 確認待ち』へ置き、確認待ち内容にチェックリストを書く。返り値＝完了コメントに足す注意文。
+async function applyCaseLegitimacyGate(
+	notion: NotionClient,
+	projectPageId: string,
+): Promise<string> {
+	const refreshed = await notion.pages.retrieve({ page_id: projectPageId });
+	const missing = caseLegitimacyGateMissing(refreshed);
+	if (missing.length === 0) return "";
+	await safeUpdateExistingProperties(notion, refreshed, {
+		ステータス: { kind: "select", value: "⏳ 確認待ち" },
+		確認待ち内容: {
+			kind: "text",
+			value: [
+				"【確認待ち｜正当な案件化の申請にはこれが要る】",
+				"この案件はまだ正規の案件ではありません。下記が埋まって初めて『正当な案件化』です。人が確認して埋め、ステータスを進めてください。",
+				...missing.map((entry) => `・${entry}`),
+				"・（推奨）予定粗利額：入るほど正式化の判断がしやすくなります。",
+			].join("\n"),
+		},
+	});
+	return `\n⛔ まだ正当な案件化に達していないため「⏳ 確認待ち」に置きました。要確認：${missing.join(" / ")}`;
+}
+
 async function finishProjectEnrichFromSource(input: {
 	notion: NotionClient;
 	projectPage: Page;
@@ -34560,7 +34604,8 @@ async function finishProjectEnrichFromSource(input: {
 			).catch(() => {});
 		}
 	}
-	await createPageComment(notion, projectPage.id, input.doneComment).catch(() => {});
+	const gateAlert = await applyCaseLegitimacyGate(notion, projectPage.id);
+	await createPageComment(notion, projectPage.id, `${input.doneComment}${gateAlert}`).catch(() => {});
 }
 
 // 共通B｜紹介ブローカー由来：預かりメモを材料にAI命名・相手先・売買判定で案件ヘッダーを仕上げる。
@@ -34806,30 +34851,8 @@ async function processProjectEnrichFromInquiry(
 	const alert = nextMeeting
 		? ""
 		: "\n⚠ 次回面談日時が未設定です。案件化の必須条件なので、面談日時を入れてください。";
-	// ★確認待ちゲート（案件化＝神聖な申請）：向き＋相手会社1社が無ければ「⏳ 確認待ち」へ差し戻す。
-	// 売却案件→買主企業（青）に目星1社／購入希望→売主企業（赤）に目星1社（デタラメでも目星でOK・空欄不可）。
-	const dealType = text(refreshed.properties?.["売買区分"]);
-	const buyerIds = relationIdsFromProperty(refreshed.properties?.["買主企業"]);
-	const sellerIds = relationIdsFromProperty(refreshed.properties?.["売主企業"]);
-	const gateMissing: string[] = [];
-	if (dealType !== "売却案件" && dealType !== "購入希望") {
-		gateMissing.push("売買区分（売却案件 か 購入希望 に確定）");
-	} else if (dealType === "売却案件" && buyerIds.length === 0) {
-		gateMissing.push("買主企業（青）に目星1社");
-	} else if (dealType === "購入希望" && sellerIds.length === 0) {
-		gateMissing.push("売主企業（赤）に目星1社");
-	}
-	let gateAlert = "";
-	if (gateMissing.length > 0) {
-		await safeUpdateExistingProperties(notion, refreshed, {
-			ステータス: { kind: "select", value: "⏳ 確認待ち" },
-			確認待ち内容: {
-				kind: "text",
-				value: `【確認待ち｜案件化の必須ゲート未達】\n以下が未確定のため、案件化を確認待ちで止めています。\n・${gateMissing.join("\n・")}`,
-			},
-		});
-		gateAlert = `\n⛔ 案件化ゲート未達で「確認待ち」に戻しました：${gateMissing.join(" / ")}`;
-	}
+	// ★正当な案件化ゲート（全入口共通）：売り⇄買いの対＋売るものが立たなければ「⏳ 確認待ち」へ。
+	const gateAlert = await applyCaseLegitimacyGate(notion, projectPageId);
 	await createPageComment(
 		notion,
 		projectPageId,
