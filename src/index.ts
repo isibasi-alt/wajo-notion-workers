@@ -5688,7 +5688,7 @@ worker.webhook("processProjectFinanceRequestWebhook", {
 worker.webhook("processInvestmentConditionPdfWebhook", {
 	title: "WAJO 投資条件シミュレーションPDF出力Webhook",
 	description:
-		"ファイナンスシミュレーションDBのページIDを受け取り、投資判定・NPV/IRR/DSCR・借入・税効果を1枚のPDFにして同じファイナンス記録本文へ表示します。",
+		"ファイナンスシミュレーションDBのページIDを受け取り、投資判定・NPV/IRR/DSCR・借入・税効果を2ページのPDFにして同じファイナンス記録本文へ表示します。",
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			const body = event.body as Record<string, unknown>;
@@ -15715,12 +15715,9 @@ async function processResidentDocument(
 			["生成ドキュメント名", "資料タイトル", "住民説明会資料名"],
 			{ kind: "text", value: draft.documentTitle },
 		);
-		if (pdfExport.fileUrl && isNotionTextSafeUrl(pdfExport.fileUrl)) {
-			setAliasPatch(patches, RESIDENT_DOCUMENT_PDF_URL_PROPERTY_ALIASES, {
-				kind: "text",
-				value: pdfExport.fileUrl,
-			});
-		}
+		// Notionが発行するS3署名URLは短時間で失効するため、URL型プロパティへ保存しない。
+		// files型プロパティを正本にして、Notionが開く都度URLを更新する。
+		setAliasPatch(patches, RESIDENT_DOCUMENT_PDF_URL_PROPERTY_ALIASES, { kind: "clear" });
 		await safeUpdateExistingProperties(notion, page, patches);
 		await createPageComment(
 			notion,
@@ -15868,14 +15865,11 @@ async function processProposalSimulation(
 		`資料台帳: ${caseDocumentRegistration.message}`,
 		"【確認手順】",
 		pdfExport.destination === "property"
-			? "1. このレコードの『提案PDF』または『作成した提案PDFを開く』を開く"
+			? "1. このレコードのfiles型『提案PDF』を開く"
 			: pdfExport.destination === "page_block"
 				? "1. このレコード本文の末尾に追加されたPDFを開く"
-				: "1. files型の『提案PDF』または『作成した提案PDFを開く』プロパティを追加する",
-		pdfExport.fileUrl && isNotionTextSafeUrl(pdfExport.fileUrl)
-			? "2. 『提案PDFリンク』からも同じPDFを開けます"
-			: "",
-		"3. 『資料PDF』は今回の提案シミュレーションでは使いません",
+				: "1. files型の『提案PDF』プロパティを追加する",
+		"2. 『資料PDF』は今回の提案シミュレーションでは使いません",
 	].join("\n");
 	if (!input.dryRun) {
 		const patches: Record<string, SafePatch> = {};
@@ -15904,12 +15898,10 @@ async function processProposalSimulation(
 			["提案タイプガイド", "提案タイプ説明", "資料タイプ説明"],
 			{ kind: "text", value: draft.typeGuideLines.join("\n") },
 		);
-		if (pdfExport.fileUrl && isNotionTextSafeUrl(pdfExport.fileUrl)) {
-			setAliasPatch(patches, PROPOSAL_PDF_URL_PROPERTY_ALIASES, {
-				kind: "text",
-				value: pdfExport.fileUrl,
-			});
-		}
+		// 期限付きS3直URLを後続画面へ残さない。PDFはfiles型の提案PDFから開く。
+		setAliasPatch(patches, [...PROPOSAL_PDF_URL_PROPERTY_ALIASES, "作成した提案PDFを開く"], {
+			kind: "clear",
+		});
 	if (draft.grossProfit !== null) {
 			setAliasPatch(
 				patches,
@@ -17054,7 +17046,7 @@ async function processProjectDocumentRequest(
 	const documentSourcePage = mergeProjectWithEquipmentDetail(projectPage, equipmentPage);
 	const projectName = readGenericPageTitle(projectPage) || "案件";
 	// 動線1本道の締め（2026-07-10設計正本）：ファイナンスは提案シミュレーション完成後にのみ進める。
-	// 完成の定義＝シミュレーションステータス「シミュレーション準備完了」または提案PDFリンクが入っていること。
+	// 完成の定義＝シミュレーションステータス「シミュレーション準備完了」またはfiles型の提案PDFがあること。
 	if (kind === "finance") {
 		const proposalRequest = await findExistingProjectDocumentRequest(
 			notion,
@@ -17064,13 +17056,15 @@ async function processProjectDocumentRequest(
 		const proposalStatus = proposalRequest
 			? text(proposalRequest.properties?.["シミュレーションステータス"])
 			: "";
-		const proposalPdf = proposalRequest
-			? readFirstTextByAliases(proposalRequest.properties ?? {}, PROPOSAL_PDF_URL_PROPERTY_ALIASES)
-			: "";
-		const simulationDone = proposalStatus === "シミュレーション準備完了" || Boolean(proposalPdf);
+		const proposalPdfAttached = proposalRequest
+			? PROPOSAL_PDF_FILE_PROPERTY_ALIASES.some((name) =>
+					notionPropertyHasValue(proposalRequest.properties?.[name]),
+				)
+			: false;
+		const simulationDone = proposalStatus === "シミュレーション準備完了" || proposalPdfAttached;
 		if (!simulationDone) {
 			const gateMessage = proposalRequest
-				? "先に提案シミュレーションを完成させてください（提案シミュレーションレコードの「シミュレーションPDFを出力」→ 提案PDFリンクが入ったらファイナンスに進めます）。"
+				? "先に提案シミュレーションを完成させてください（提案シミュレーションレコードの「シミュレーションPDFを出力」→ files型の「提案PDF」が表示されたらファイナンスに進めます）。"
 				: "先に「シミュレーション作成」で提案シミュレーションを作り、完成させてからファイナンスに進んでください。";
 			if (!input.dryRun) {
 				await safeUpdateExistingProperties(notion, projectPage, {
@@ -17759,11 +17753,7 @@ async function updateRelatedProjectProposalResult(
 		try {
 			const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
 			const memoLines = [
-				pdfExport.fileUrl && isNotionTextSafeUrl(pdfExport.fileUrl)
-					? `提案PDFを作成しました。${pdfExport.fileUrl}`
-					: pdfExport.fileUrl
-						? "提案PDFを作成しました。（リンクが長すぎるため、シミュレーション記録側の『作成した提案PDFを開く』から開いてください）"
-						: "提案シミュレーションを作成しました。",
+				"提案PDFを作成しました。提案シミュレーションレコードのfiles型『提案PDF』から開いてください。",
 				draft.grossProfit !== null
 					? `予定粗利額を販売価格 - 仕入れ価格で自動更新: ${formatYen(draft.grossProfit)}`
 					: "",
@@ -17774,12 +17764,9 @@ async function updateRelatedProjectProposalResult(
 					value: memoLines.join("\n"),
 				},
 			};
-			if (pdfExport.fileUrl && isNotionTextSafeUrl(pdfExport.fileUrl)) {
-				setAliasPatch(patches, PROPOSAL_PDF_URL_PROPERTY_ALIASES, {
-					kind: "text",
-					value: pdfExport.fileUrl,
-				});
-			}
+			setAliasPatch(patches, [...PROPOSAL_PDF_URL_PROPERTY_ALIASES, "作成した提案PDFを開く"], {
+				kind: "clear",
+			});
 			if (draft.grossProfit !== null) {
 				patches.予定粗利額 = { kind: "number", value: draft.grossProfit };
 				patches.予定粗利の根拠 = { kind: "select", value: "価格あり" };
@@ -18228,10 +18215,8 @@ function buildSalesProposalRecordPatches(
 		"和上保証・整備コメント": { kind: "text", value: enablement.wajoWarrantyMemo },
 		未確認・注意点: { kind: "text", value: enablement.riskNotes },
 	};
-	if (pdfExport.fileUrl) {
-		patches.提案PDFリンク = { kind: "text", value: pdfExport.fileUrl };
-		patches.作成した提案PDFを開く = { kind: "text", value: pdfExport.fileUrl };
-	}
+	patches.提案PDFリンク = { kind: "clear" };
+	patches.作成した提案PDFを開く = { kind: "clear" };
 	if (relatedProjectIds.length > 0) {
 		patches.関連案件 = { kind: "relation", ids: [relatedProjectIds[0]!] };
 	}
@@ -18277,7 +18262,7 @@ function buildSalesProposalEnablementSections(
 		"判定の意味: 発電所そのものの品質評価ではなく、現時点の価格・収益・融資・税効果・B/S前提を合わせた「今この条件で提案するべきか」の投資判定です。",
 		`提案タイプ: ${proposalKindJapaneseLabel(draft.proposalKind)}`,
 		`B/Sルーブリック: ${rubricSummary}`,
-		pdfExport.fileUrl ? `顧客向けPDF: ${pdfExport.fileUrl}` : "顧客向けPDF: files型の提案PDFを確認",
+		"顧客向けPDF: files型の『提案PDF』を開く",
 	].join("\n");
 	const keyNumbers = [
 		`販売価格: ${formatOptionalYen(draft.salePrice)}`,
@@ -18520,9 +18505,7 @@ function buildSalesProposalNextActionLines(
 	pdfExport: ProposalPdfExportResult,
 ): string[] {
 	const lines = [
-		pdfExport.fileUrl
-			? `提案PDF確認: ${pdfExport.fileUrl}`
-			: "提案PDF確認: files型の提案PDFを確認",
+		"提案PDF確認: files型の『提案PDF』を開く",
 	];
 	switch (actionCategory) {
 		case "やるべき案件":
@@ -19573,7 +19556,6 @@ async function exportProposalSimulationPdf(
 		// single_part upload は send 後にそのまま添付へ進める。
 		// complete を呼ぶと uploaded 状態で validation_error になるため呼ばない。
 
-		let fileUrl: string | null = null;
 		if (filePropertyName) {
 			await notion.pages.update({
 				page_id: page.id,
@@ -19589,19 +19571,13 @@ async function exportProposalSimulationPdf(
 					},
 				},
 			});
-			try {
-				const refreshed = await notion.pages.retrieve({ page_id: page.id });
-				fileUrl = readFirstFileUrlByAliases(refreshed.properties ?? {}, [filePropertyName]);
-			} catch {
-				// URL取得に失敗してもPDF保存は成功扱い
-			}
 			return {
 				attached: true,
 				destination: "property",
 				message: `PDFを保存しました（${filePropertyName}）。`,
 				fileName,
 				fileUploadId,
-				fileUrl,
+				fileUrl: null,
 			};
 		}
 
@@ -19628,7 +19604,7 @@ async function exportProposalSimulationPdf(
 				"PDFアップロードは完了しましたが、保存先が未設定です。files型の「提案PDF」または「作成した提案PDFを開く」を追加してください。",
 			fileName,
 			fileUploadId,
-			fileUrl,
+			fileUrl: null,
 		};
 	} catch (error) {
 		return {
@@ -33481,6 +33457,8 @@ interface ClosingFeedbackAIResponse {
 /** 案件DBのページIDをWebhookボディから抽出 */
 function extractProjectPageIdFromWebhook(body: Record<string, unknown>): string | undefined {
 	return firstString(
+		body.financePageId,
+		body.finance_page_id,
 		body.projectPageId,
 		body.project_page_id,
 		body.pageId,

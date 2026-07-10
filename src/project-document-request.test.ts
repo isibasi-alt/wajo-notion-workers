@@ -323,6 +323,15 @@ function readyProposalRequestPage() {
 			想定回収年数: numberProp(null),
 			御社への結論: richTextProp(""),
 			提案タイプガイド: richTextProp(""),
+			提案PDF: { type: "files", files: [] },
+			提案PDFリンク: {
+				type: "url",
+				url: "https://prod-files-secure.example.com/expired-proposal.pdf?X-Amz-Expires=3600",
+			},
+			作成した提案PDFを開く: {
+				type: "url",
+				url: "https://prod-files-secure.example.com/expired-proposal.pdf?X-Amz-Expires=3600",
+			},
 			年間償却額: numberProp(null),
 			税効果: numberProp(null),
 			税引後キャッシュフロー: numberProp(null),
@@ -928,6 +937,25 @@ async function main() {
 		(salesProposalProps["関連提案シミュレーション依頼"] as { relation: Array<{ id: string }> }).relation,
 		[{ id: "request-ready-1" }],
 	);
+	assert.equal(
+		"提案PDFリンク" in salesProposalProps,
+		false,
+		"期限付きS3 URLは営業提案レコードへ保存しないこと",
+	);
+	assert.match(
+		JSON.stringify(salesProposalProps["営業説明サマリー"]),
+		/files型の『提案PDF』を開く/,
+	);
+	assert.doesNotMatch(JSON.stringify(salesProposalProps), /prod-files-secure|X-Amz-/);
+	const proposalRequestPdfCleanup = simulationCase.updates.find((update) => {
+		if (update.page_id !== "request-ready-1") return false;
+		const properties = update.properties as Record<string, unknown>;
+		return Boolean(properties.提案PDFリンク);
+	});
+	assert.ok(proposalRequestPdfCleanup, "提案依頼に残る期限付きURLを削除すること");
+	const proposalRequestCleanupProps = proposalRequestPdfCleanup!.properties as Record<string, unknown>;
+	assert.equal((proposalRequestCleanupProps.提案PDFリンク as { url: unknown }).url, null);
+	assert.equal((proposalRequestCleanupProps.作成した提案PDFを開く as { url: unknown }).url, null);
 	const proposalLedgerCreate = simulationCase.creates.find((create) =>
 		(create.parent as { data_source_id?: string })?.data_source_id ===
 		"fde6d55f-3127-4716-862c-5fb43b2cc3b4"
