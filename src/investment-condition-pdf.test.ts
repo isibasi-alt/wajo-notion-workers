@@ -184,6 +184,11 @@ async function main() {
 	assert.equal(output.action, "prepared", output.message);
 	assert.equal(uploads.length, 1);
 	assert.equal(blockUpdates.length, 1, "既存PDFは追加せず置換する");
+	assert.equal(
+		blockUpdates[0]!.type,
+		"pdf",
+		"Notion Blocks APIでPDFブロックを更新するときはtype: pdfを明示する",
+	);
 	assert.equal(appends.length, 0, "既存PDFがある場合は本文ブロックを重複させない");
 	assert.ok(updates.some((update) => update.page_id === "finance-1"));
 	assert.equal(comments.length, 1);

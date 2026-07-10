@@ -18867,6 +18867,7 @@ async function upsertInvestmentConditionPdfPreview(
 			}
 			await notion.blocks.update({
 				block_id: blockId,
+				type: "pdf",
 				pdf: {
 					file_upload: { id: fileUploadId },
 					caption: [{ type: "text", text: { content: fileName } }],
