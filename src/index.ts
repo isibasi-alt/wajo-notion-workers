@@ -1185,6 +1185,15 @@ const PROPOSAL_PDF_URL_PROPERTY_ALIASES = [
 	"PDF URL",
 ];
 
+const INVESTMENT_CONDITION_PDF_FILE_PROPERTY_ALIASES = [
+	"投資条件シミュレーションPDF",
+	"投資条件PDF",
+	"ファイナンスPDF",
+	"PDFファイル",
+];
+
+const INVESTMENT_CONDITION_PDF_HEADING = "投資条件シミュレーションPDF";
+
 // Notionのtext/urlプロパティは2000文字制限があり、署名付きURL（セキュリティトークン込みで
 // 2000文字を超えることがある）を超過分は問答無用で切り詰めて保存する。
 // URLは中途半端に切ると「開けない壊れたリンク」になるため、省略はせず書き込み自体を見送る。
@@ -5668,6 +5677,48 @@ worker.webhook("processProjectFinanceRequestWebhook", {
 					projectPageId,
 					message: result.message,
 				});
+			}
+		}
+	},
+});
+
+worker.webhook("processInvestmentConditionPdfWebhook", {
+	title: "WAJO 投資条件シミュレーションPDF出力Webhook",
+	description:
+		"ファイナンスシミュレーションDBのページIDを受け取り、投資判定・NPV/IRR/DSCR・借入・税効果を1枚のPDFにして同じファイナンス記録本文へ表示します。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			const body = event.body as Record<string, unknown>;
+			const sourcePageId = extractProjectPageIdFromWebhook(body);
+			if (!sourcePageId) {
+				throw new Error(
+					"financePageId / pageId / entity.id のいずれからも投資条件PDFの対象ページIDを特定できませんでした。",
+				);
+			}
+			const sourcePage = (await notion.pages.retrieve({ page_id: sourcePageId })) as Page & {
+				parent?: { data_source_id?: string };
+			};
+			const sourceDataSourceId = sourcePage.parent
+				?.data_source_id;
+			let financePageId = sourcePageId;
+			if (sourceDataSourceId !== FINANCE_SIMULATION_DATA_SOURCE_ID) {
+				const financeIds = relationIdsFromAliases(sourcePage.properties ?? {}, [
+					"関連ファイナンスシミュレーション",
+					"ファイナンスシミュレーションDB",
+				]);
+				if (financeIds.length !== 1) {
+					throw new Error(
+						"投資条件PDFはファイナンスシミュレーションの入力ページ、または関連ファイナンスが1件だけ紐づいた案件ページから押してください。",
+					);
+				}
+				financePageId = financeIds[0]!;
+			}
+			const result = await processInvestmentConditionPdf(
+				{ financePageId, dryRun: false },
+				notion as unknown as NotionClient,
+			);
+			if (result.action === "needs-input" || result.action === "error") {
+				throw new Error(result.message);
 			}
 		}
 	},
@@ -15707,7 +15758,11 @@ async function processProposalSimulation(
 		}
 	}
 	const sourcePage = mergeProjectWithEquipmentDetail(page, equipmentPage);
-	const draft = evaluateProposalSimulationDraft(sourcePage);
+	// 投資条件ページで入力した借入・税率・B/S値は、提案シミュレーションの計算時に優先する。
+	// これを重ねないと、投資条件を入力しても標準値だけで再計算される。
+	const financeInputPage = await retrieveProposalFinanceInputPage(notion, page);
+	const simulationSourcePage = mergeProposalWithFinanceInput(sourcePage, financeInputPage);
+	const draft = evaluateProposalSimulationDraft(simulationSourcePage);
 
 	if (draft.missingField) {
 		const message = buildSequentialMissingMessage(
@@ -15946,31 +16001,31 @@ async function processProposalSimulation(
 		// 案件idは提案ページ自身の関連案件が空でも、紐づく設備詳細ページの関連案件から確実に辿る。
 		// これが取れないと投資条件レコードが関連案件nullになり、既存入力箱への集約も効かない。
 		const resolvedProjectId =
-			relationIdsFromProperty(sourcePage.properties?.["関連案件"])[0] ??
+			relationIdsFromProperty(simulationSourcePage.properties?.["関連案件"])[0] ??
 			(equipmentPage
 				? relationIdsFromProperty(equipmentPage.properties?.["関連案件"])[0]
 				: undefined) ??
 			null;
 		const financeSync = await syncFinanceSimulationRecord(
 			notion,
-			sourcePage,
+			simulationSourcePage,
 			draft,
 			resolvedProjectId,
 		);
 		const salesProposalSync = await syncSalesProposalRecord(
 			notion,
-			sourcePage,
+			simulationSourcePage,
 			draft,
 			pdfExport,
 			financeSync?.pageId ?? null,
 		);
 		await syncProposalSimulationRelations(
 			notion,
-			sourcePage,
+			simulationSourcePage,
 			financeSync?.pageId ?? null,
 			salesProposalSync?.pageId ?? null,
 		);
-		await updateRelatedProjectProposalResult(notion, sourcePage, draft, pdfExport);
+		await updateRelatedProjectProposalResult(notion, simulationSourcePage, draft, pdfExport);
 		await createPageComment(
 			notion,
 			page.id,
@@ -15987,6 +16042,57 @@ async function processProposalSimulation(
 		paybackYears: draft.paybackYears,
 		message: readyMessage,
 	};
+}
+
+async function retrieveProposalFinanceInputPage(
+	notion: NotionClient,
+	proposalPage: Page,
+): Promise<Page | null> {
+	const directIds = relationIdsFromAliases(proposalPage.properties ?? {}, [
+		"関連ファイナンスシミュレーション",
+		"ファイナンスシミュレーションDB",
+	]);
+	if (directIds.length === 1) {
+		try {
+			return await notion.pages.retrieve({ page_id: directIds[0]! });
+		} catch (error) {
+			console.log("proposal finance input direct retrieve skipped", {
+				proposalPageId: proposalPage.id,
+				financePageId: directIds[0],
+				error: String(error),
+			});
+		}
+	}
+
+	try {
+		const byProposal = await notion.dataSources.query({
+			data_source_id: FINANCE_SIMULATION_DATA_SOURCE_ID,
+			filter: {
+				property: "関連提案シミュレーション",
+				relation: { contains: proposalPage.id },
+			},
+			page_size: 2,
+		});
+		if (byProposal.results.length === 1) return byProposal.results[0] as Page;
+	} catch (error) {
+		console.log("proposal finance input lookup skipped", {
+			proposalPageId: proposalPage.id,
+			error: String(error),
+		});
+	}
+	return null;
+}
+
+function mergeProposalWithFinanceInput(
+	proposalSourcePage: Page,
+	financeInputPage: Page | null,
+): Page {
+	if (!financeInputPage) return proposalSourcePage;
+	const properties: Record<string, unknown> = { ...(proposalSourcePage.properties ?? {}) };
+	for (const [name, value] of Object.entries(financeInputPage.properties ?? {})) {
+		if (notionPropertyHasValue(value)) properties[name] = value;
+	}
+	return { ...proposalSourcePage, properties };
 }
 
 const PROJECT_DOCUMENT_REQUEST_CONFIGS: Record<
@@ -18422,6 +18528,18 @@ type ProposalPdfExportResult = {
 
 type ResidentDocumentPdfExportResult = ProposalPdfExportResult;
 
+type InvestmentConditionPdfInput = {
+	financePageId: string;
+	dryRun: boolean;
+};
+
+type InvestmentConditionPdfResult = {
+	financePageId: string;
+	action: "prepared" | "needs-input" | "error" | "dry-run";
+	missingField: string | null;
+	message: string;
+};
+
 type SalesProposalSyncResult = {
 	pageId: string;
 	action: "created" | "updated";
@@ -18458,6 +18576,534 @@ function buildProposalPdfBlocks(
 			},
 		},
 	];
+}
+
+function buildInvestmentConditionPdfBlocks(
+	fileUploadId: string,
+	fileName: string,
+): Array<Record<string, unknown>> {
+	return [
+		{
+			object: "block",
+			type: "heading_3",
+			heading_3: {
+				rich_text: [{ type: "text", text: { content: INVESTMENT_CONDITION_PDF_HEADING } }],
+			},
+		},
+		{
+			object: "block",
+			type: "pdf",
+			pdf: {
+				file_upload: { id: fileUploadId },
+				caption: [{ type: "text", text: { content: fileName } }],
+			},
+		},
+	];
+}
+
+function blockTextIncludes(block: Record<string, unknown>, textToFind: string): boolean {
+	return JSON.stringify(block).includes(textToFind);
+}
+
+async function upsertInvestmentConditionPdfPreview(
+	notion: NotionClient,
+	financePageId: string,
+	fileUploadId: string,
+	fileName: string,
+): Promise<{ attached: boolean; message: string }> {
+	if (!notion.blocks?.children?.list || !notion.blocks.children.append) {
+		return {
+			attached: false,
+			message: "PDF本文プレビューを保存するBlocks APIが利用できません。",
+		};
+	}
+	try {
+		const listed = await notion.blocks.children.list({ block_id: financePageId, page_size: 100 });
+		const blocks = listed.results ?? [];
+		const headingIndex = blocks.findIndex((block) =>
+			blockTextIncludes(block, INVESTMENT_CONDITION_PDF_HEADING),
+		);
+		const existingPdf =
+			headingIndex >= 0
+				? blocks.slice(headingIndex + 1).find((block) => block.type === "pdf")
+				: undefined;
+
+		if (existingPdf) {
+			const blockId = typeof existingPdf.id === "string" ? existingPdf.id : "";
+			if (!blockId || !notion.blocks.update) {
+				return {
+					attached: false,
+					message: "既存の投資条件PDFを置換するBlocks APIが利用できません。重複追加は行いませんでした。",
+				};
+			}
+			await notion.blocks.update({
+				block_id: blockId,
+				pdf: {
+					file_upload: { id: fileUploadId },
+					caption: [{ type: "text", text: { content: fileName } }],
+				},
+			});
+			return { attached: true, message: "既存の投資条件PDFプレビューを更新しました。" };
+		}
+
+		await notion.blocks.children.append({
+			block_id: financePageId,
+			children:
+				headingIndex >= 0
+					? buildInvestmentConditionPdfBlocks(fileUploadId, fileName).slice(1)
+					: buildInvestmentConditionPdfBlocks(fileUploadId, fileName),
+		});
+		return { attached: true, message: "投資条件ページ本文へPDFプレビューを追加しました。" };
+	} catch (error) {
+		return {
+			attached: false,
+			message: `投資条件PDFプレビューの保存に失敗しました。${String(error)}`,
+		};
+	}
+}
+
+async function buildInvestmentConditionPdfBytes(
+	draft: ProposalSimulationDraft,
+	financePageId: string,
+): Promise<Uint8Array> {
+	const finance = draft.financeSimulation;
+	if (!finance) throw new Error("投資条件PDFに必要なファイナンス計算結果がありません。");
+
+	const pdf = await PDFDocument.create();
+	pdf.registerFontkit(fontkit);
+	const fonts = await embedMonthlyEvalPdfFonts(pdf);
+	const latinFonts = {
+		regular: await pdf.embedFont(StandardFonts.Helvetica),
+		bold: await pdf.embedFont(StandardFonts.HelveticaBold),
+	};
+	const page = pdf.addPage([595.28, 841.89]);
+	const pageWidth = page.getWidth();
+	const pageHeight = page.getHeight();
+	const left = 38;
+	const right = 38;
+	const contentWidth = pageWidth - left - right;
+	const colors = {
+		navy: rgb(0.07, 0.14, 0.2),
+		teal: rgb(0.06, 0.38, 0.39),
+		text: rgb(0.11, 0.14, 0.17),
+		muted: rgb(0.38, 0.42, 0.45),
+		line: rgb(0.8, 0.84, 0.84),
+		panel: rgb(0.95, 0.97, 0.97),
+	};
+	const drawText = (
+		value: string,
+		x: number,
+		y: number,
+		size: number,
+		font: PDFFont,
+		color: ReturnType<typeof rgb>,
+	) => {
+		const runs = value.match(/[\x20-\x7E]+|[^\x20-\x7E]+/g) ?? [value];
+		let currentX = x;
+		for (const run of runs) {
+			const selectedFont = /^[\x20-\x7E]+$/.test(run)
+				? font === fonts.bold
+					? latinFonts.bold
+					: latinFonts.regular
+				: font;
+			page.drawText(run, { x: currentX, y, size, font: selectedFont, color });
+			currentX += selectedFont.widthOfTextAtSize(run, size);
+		}
+	};
+	const drawWrapped = (
+		value: string,
+		x: number,
+		y: number,
+		width: number,
+		size = 8.4,
+		font: PDFFont = fonts.regular,
+		maxLines = 3,
+	) => {
+		const lines = wrapPdfText(value, font, size, width).slice(0, maxLines);
+		let currentY = y;
+		for (const line of lines) {
+			drawText(line, x, currentY, size, font, colors.text);
+			currentY -= size + 3;
+		}
+		return currentY;
+	};
+	const drawMetric = (x: number, yTop: number, width: number, label: string, value: string) => {
+		const height = 58;
+		page.drawRectangle({
+			x,
+			y: yTop - height,
+			width,
+			height,
+			color: colors.panel,
+			borderColor: colors.line,
+			borderWidth: 0.6,
+		});
+		drawText(label, x + 10, yTop - 16, 7.5, fonts.regular, colors.muted);
+		drawWrapped(value, x + 10, yTop - 35, width - 20, 12, fonts.bold, 2);
+	};
+	const drawSection = (title: string, y: number) => {
+		drawText(title, left, y, 10, fonts.bold, colors.teal);
+		page.drawLine({
+			start: { x: left, y: y - 6 },
+			end: { x: pageWidth - right, y: y - 6 },
+			thickness: 0.7,
+			color: colors.line,
+		});
+		return y - 22;
+	};
+	const drawRows = (rows: Array<[string, string]>, yTop: number) => {
+		let y = yTop;
+		for (const [label, value] of rows) {
+			page.drawRectangle({
+				x: left,
+				y: y - 20,
+				width: contentWidth,
+				height: 20,
+				color: rgb(0.985, 0.99, 0.99),
+			});
+			drawText(label, left + 8, y - 13, 7.8, fonts.regular, colors.muted);
+			drawWrapped(value, left + 178, y - 13, contentWidth - 188, 8, fonts.bold, 1);
+			y -= 23;
+		}
+		return y;
+	};
+
+	page.drawRectangle({ x: 0, y: pageHeight - 82, width: pageWidth, height: 82, color: colors.navy });
+	drawText("WAJO Sales OS", left, pageHeight - 30, 15, fonts.bold, rgb(1, 1, 1));
+	drawText("投資条件シミュレーション", left, pageHeight - 53, 12, fonts.bold, rgb(0.9, 0.95, 0.92));
+	drawText(
+		`${draft.titleLabel || "案件"} / 社内投資判断用 / ${todayIsoDateInTokyo()}`,
+		left,
+		pageHeight - 69,
+		7.5,
+		fonts.regular,
+		rgb(0.82, 0.88, 0.86),
+	);
+
+	const metricWidth = (contentWidth - 18) / 4;
+	const metricY = pageHeight - 106;
+	drawMetric(left, metricY, metricWidth, "投資判定", `${finance.timingRank} / ${finance.timingHeadline}`);
+	drawMetric(left + metricWidth + 6, metricY, metricWidth, "NPV", finance.projectNpv !== null ? formatYen(finance.projectNpv) : "未算出");
+	drawMetric(left + (metricWidth + 6) * 2, metricY, metricWidth, "IRR", finance.projectIrr !== null ? `${trimTrailingZeros(finance.projectIrr)}%` : "未算出");
+	drawMetric(left + (metricWidth + 6) * 3, metricY, metricWidth, "DSCR", finance.dscr !== null ? trimTrailingZeros(finance.dscr) : "借入なし");
+
+	let y = drawSection("投資構成", pageHeight - 184);
+	const compositionItems = [
+		{ label: "土地", value: finance.landPrice, color: rgb(0.64, 0.7, 0.72) },
+		{ label: "システム", value: finance.systemPrice, color: colors.teal },
+		{ label: "権利", value: finance.rightsPrice, color: rgb(0.8, 0.64, 0.3) },
+	];
+	const maxComposition = Math.max(...compositionItems.map((item) => item.value), 1);
+	compositionItems.forEach((item, index) => {
+		const rowY = y - index * 21;
+		drawText(item.label, left + 8, rowY, 8, fonts.regular, colors.muted);
+		page.drawRectangle({ x: left + 72, y: rowY - 7, width: 250, height: 10, color: rgb(0.92, 0.94, 0.95) });
+		page.drawRectangle({
+			x: left + 72,
+			y: rowY - 7,
+			width: Math.max(3, 250 * item.value / maxComposition),
+			height: 10,
+			color: item.color,
+		});
+		drawText(formatYen(item.value), left + 334, rowY - 1, 8.3, fonts.bold, colors.text);
+	});
+	y -= 72;
+	drawText(`販売価格 ${formatYen(draft.salePrice ?? 0)} / 構成合計 ${formatYen(finance.composition.componentTotal)} / 差額 ${formatFinanceSignedYen(finance.componentBalanceDifference)}`, left + 8, y, 7.8, fonts.regular, colors.muted);
+
+	y = drawSection("借入・税効果・キャッシュフロー", y - 26);
+	y = drawRows([
+		["借入条件", `${formatYen(finance.loanAmount)} / 年率 ${trimTrailingZeros(finance.interestRate)}% / ${finance.loanYears ?? "未入力"}年返済`],
+		["年間返済", `${formatYen(finance.annualDebtService)}（元本 ${formatYen(finance.annualPrincipalRepayment)} / 利息 ${formatYen(finance.annualInterestExpense)}）`],
+		["減価償却", `年間 ${formatYen(finance.annualDepreciation)}（システム17年 / 権利代5年）`],
+		["税効果", `${formatYen(finance.taxBenefit)} / 実効税率 ${trimTrailingZeros(finance.effectiveTaxRate)}%`],
+		["税効果後CF", `${formatYen(finance.afterTaxCashflow)} / 経済メリット累計 ${formatYen(finance.totalEconomicalBenefit)}`],
+	], y);
+
+	y = drawSection("投資判定の根拠", y - 6);
+	page.drawRectangle({
+		x: left,
+		y: y - 86,
+		width: contentWidth,
+		height: 86,
+		color: colors.panel,
+		borderColor: colors.line,
+		borderWidth: 0.6,
+	});
+	drawText(`${finance.timingRank}`, left + 16, y - 51, 34, fonts.bold, colors.teal);
+	drawText(finance.timingHeadline, left + 72, y - 24, 9.5, fonts.bold, colors.text);
+	drawWrapped(finance.timingReason, left + 72, y - 41, contentWidth - 88, 8.2, fonts.regular, 2);
+	drawWrapped(`S/Aに届かない理由: ${finance.timingUpperGapReason}`, left + 72, y - 64, contentWidth - 88, 7.3, fonts.regular, 1);
+	drawWrapped(`Cを下回らない理由: ${finance.timingFloorReason}`, left + 72, y - 77, contentWidth - 88, 7.3, fonts.regular, 1);
+
+	y -= 104;
+	y = drawSection("B/S適合性と営業の論点", y);
+	page.drawRectangle({
+		x: left,
+		y: y - 78,
+		width: contentWidth,
+		height: 78,
+		color: rgb(0.985, 0.99, 0.99),
+		borderColor: colors.line,
+		borderWidth: 0.6,
+	});
+	const rubric = finance.salesRubric;
+	drawText(
+		`B/S3指標: 流動比率 ${formatRubricMetric(rubric.liquidityRatio, "%")} / 利益剰余金 ${formatRubricMetric(rubric.retainedEarnings, "円")} / 自己資本比率 ${formatRubricMetric(rubric.equityRatio, "%")}`,
+		left + 12,
+		y - 18,
+		7.6,
+		fonts.regular,
+		colors.muted,
+	);
+	const rubricReasonLine = wrapPdfText(
+		`評価: ${formatBalanceSheetSalesRubricSummary(rubric)} / ${rubric.reason
+			.replace(/揃っていない/g, "未入力")
+			.replace(/揃い次第/g, "入力後")}`,
+		fonts.regular,
+		7.6,
+		contentWidth - 24,
+	)[0] ?? "";
+	const salesTalkLine = wrapPdfText(
+		`営業の切り口: ${rubric.killerPhrase.replace(/揃い次第/g, "入力後")}`,
+		fonts.bold,
+		7.6,
+		contentWidth - 24,
+	)[0] ?? "";
+	drawText(rubricReasonLine, left + 12, y - 42, 7.6, fonts.regular, colors.text);
+	drawText(salesTalkLine, left + 12, y - 64, 7.6, fonts.bold, colors.text);
+
+	drawText(`B/Sルーブリック: ${formatBalanceSheetSalesRubricSummary(finance.salesRubric)}`, left, 58, 7.7, fonts.regular, colors.muted);
+	drawText("税務・会計処理は顧問税理士確認前提のシミュレーションです。", left, 43, 7.2, fonts.regular, colors.muted);
+	drawText(`Finance record: ${financePageId}`, pageWidth - right - 140, 28, 6.7, latinFonts.regular, colors.muted);
+	return pdf.save();
+}
+
+async function exportInvestmentConditionPdf(
+	notion: NotionClient,
+	financePage: Page,
+	draft: ProposalSimulationDraft,
+): Promise<ProposalPdfExportResult> {
+	if (!notion.fileUploads?.create || !notion.fileUploads.send) {
+		return { attached: false, destination: "none", message: "この実行環境ではPDFアップロード機能を利用できません。", fileName: "", fileUrl: null };
+	}
+	const titleSeed = draft.titleLabel || readGenericPageTitle(financePage) || "investment-condition";
+	const fileName = `${sanitizeFileName(titleSeed)}_投資条件_${todayIsoDateInTokyo()}.pdf`;
+	try {
+		const pdfBytes = await buildInvestmentConditionPdfBytes(draft, financePage.id);
+		const created = await notion.fileUploads.create({
+			mode: "single_part",
+			filename: fileName,
+			content_type: "application/pdf",
+		});
+		const fileUploadId = firstString(
+			(created as Record<string, unknown>).id,
+			readNestedString(created, ["file_upload", "id"]),
+		) ?? "";
+		if (!fileUploadId) {
+			return { attached: false, destination: "none", message: "投資条件PDFのアップロードIDを取得できませんでした。", fileName, fileUrl: null };
+		}
+		await notion.fileUploads.send({
+			file_upload_id: fileUploadId,
+			file: { filename: fileName, data: new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" }) },
+		});
+
+		const filePropertyName = findFirstFilesPropertyNameByAliases(
+			financePage.properties ?? {},
+			INVESTMENT_CONDITION_PDF_FILE_PROPERTY_ALIASES,
+		);
+		if (filePropertyName) {
+			await notion.pages.update({
+				page_id: financePage.id,
+				properties: {
+					[filePropertyName]: {
+						files: [{ type: "file_upload", file_upload: { id: fileUploadId }, name: fileName }],
+					},
+				},
+			});
+		}
+		const preview = await upsertInvestmentConditionPdfPreview(
+			notion,
+			financePage.id,
+			fileUploadId,
+			fileName,
+		);
+		return {
+			attached: preview.attached,
+			destination: preview.attached ? "page_block" : "none",
+			message: preview.message,
+			fileName,
+			fileUploadId,
+			fileUrl: null,
+		};
+	} catch (error) {
+		return { attached: false, destination: "none", message: `投資条件PDFの保存に失敗しました。${String(error)}`, fileName, fileUrl: null };
+	}
+}
+
+function evaluateInvestmentConditionPdfReadiness(
+	properties: Record<string, unknown>,
+): { missingField: string | null; nextRequiredFields: string[] } {
+	const checks: RequiredFieldCheck[] = [
+		{ label: "土地代", value: readFirstNumberByAliases(properties, ["土地代", "土地価格", "土地取得費"]) },
+		{ label: "システム本体価格", value: readFirstNumberByAliases(properties, ["システム本体価格", "設備本体価格", "発電設備価格", "設備価格"]) },
+		{ label: "権利代", value: readFirstNumberByAliases(properties, ["権利代", "権利金", "権利取得費"]) },
+		{ label: "借入額", value: readFirstNumberByAliases(properties, ["借入額", "融資額", "借入金額", "ローン金額"]) },
+		{ label: "金利", value: readFirstNumberByAliases(properties, ["金利", "借入金利", "融資金利", "ローン金利"]) },
+		{ label: "返済期間", value: readFirstNumberByAliases(properties, ["返済期間", "融資期間", "借入期間", "ローン年数"]) },
+	];
+	const missingIndex = checks.findIndex((check) => !hasFieldValue(check.value));
+	return missingIndex < 0
+		? { missingField: null, nextRequiredFields: [] }
+		: {
+				missingField: checks[missingIndex]!.label,
+				nextRequiredFields: checks.slice(missingIndex + 1).map((check) => check.label),
+		  };
+}
+
+async function resolveInvestmentConditionProposalPage(
+	notion: NotionClient,
+	financePage: Page,
+): Promise<Page | null> {
+	const proposalIds = relationIdsFromAliases(financePage.properties ?? {}, [
+		"関連提案シミュレーション",
+		"元提案シミュレーション",
+	]);
+	if (proposalIds.length === 1) {
+		try {
+			return await notion.pages.retrieve({ page_id: proposalIds[0]! });
+		} catch (error) {
+			console.log("investment condition proposal direct retrieve skipped", {
+				financePageId: financePage.id,
+				proposalPageId: proposalIds[0],
+				error: String(error),
+			});
+		}
+	}
+	const projectIds = relationIdsFromProperty(financePage.properties?.["関連案件"]);
+	if (projectIds.length !== 1) return null;
+	try {
+		return await findExistingProjectDocumentRequest(notion, projectIds[0]!, "提案書");
+	} catch (error) {
+		console.log("investment condition proposal project lookup skipped", {
+			financePageId: financePage.id,
+			projectPageId: projectIds[0],
+			error: String(error),
+		});
+		return null;
+	}
+}
+
+async function processInvestmentConditionPdf(
+	input: InvestmentConditionPdfInput,
+	notion: NotionClient,
+): Promise<InvestmentConditionPdfResult> {
+	const financePage = await notion.pages.retrieve({ page_id: input.financePageId });
+	const proposalPage = await resolveInvestmentConditionProposalPage(notion, financePage);
+	if (!proposalPage) {
+		return {
+			financePageId: financePage.id,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			missingField: "提案シミュレーション",
+			message: "投資条件PDFを出力する前に、関連する提案シミュレーションを1件だけ作成してください。",
+		};
+	}
+
+	let equipmentPage: Page | null = null;
+	const equipmentIds = relationIdsFromAliases(proposalPage.properties ?? {}, [
+		"関連設備詳細",
+		"発電所設備詳細",
+		"設備詳細",
+	]);
+	if (equipmentIds.length > 0) {
+		try {
+			equipmentPage = await notion.pages.retrieve({ page_id: equipmentIds[0]! });
+		} catch (error) {
+			console.log("investment condition equipment retrieve skipped", {
+				financePageId: financePage.id,
+				equipmentPageId: equipmentIds[0],
+				error: String(error),
+			});
+		}
+	}
+	if (!equipmentPage) {
+		const projectIds = relationIdsFromProperty(proposalPage.properties?.["関連案件"]);
+		if (projectIds.length === 1) {
+			try {
+				const projectPage = await notion.pages.retrieve({ page_id: projectIds[0]! });
+				equipmentPage = await retrieveProjectEquipmentDetailPage(notion, projectPage);
+			} catch (error) {
+				console.log("investment condition equipment project fallback skipped", {
+					financePageId: financePage.id,
+					error: String(error),
+				});
+			}
+		}
+	}
+
+	const proposalSourcePage = mergeProjectWithEquipmentDetail(proposalPage, equipmentPage);
+	const simulationSourcePage = mergeProposalWithFinanceInput(proposalSourcePage, financePage);
+	const draft = evaluateProposalSimulationDraft(simulationSourcePage);
+	if (draft.missingField) {
+		return {
+			financePageId: financePage.id,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			missingField: draft.missingField,
+			message: buildSequentialMissingMessage("投資条件PDF", draft.missingField, draft.nextRequiredFields),
+		};
+	}
+	if (!draft.financeSimulation) {
+		return {
+			financePageId: financePage.id,
+			action: input.dryRun ? "dry-run" : "error",
+			missingField: null,
+			message: "現行の投資条件PDFは太陽光のファイナンス計算を対象にしています。系統用蓄電池の投資条件PDFは別ロジックで実装します。",
+		};
+	}
+	const readiness = evaluateInvestmentConditionPdfReadiness(financePage.properties ?? {});
+	if (readiness.missingField) {
+		return {
+			financePageId: financePage.id,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			missingField: readiness.missingField,
+			message: buildSequentialMissingMessage(
+				"投資条件PDF",
+				readiness.missingField,
+				readiness.nextRequiredFields,
+			),
+		};
+	}
+	if (input.dryRun) {
+		return {
+			financePageId: financePage.id,
+			action: "dry-run",
+			missingField: null,
+			message: "dry-run: 投資条件ページ本文へPDFプレビューを作成します。",
+		};
+	}
+
+	const projectId = relationIdsFromProperty(financePage.properties?.["関連案件"])[0] ?? null;
+	await syncFinanceSimulationRecord(notion, simulationSourcePage, draft, projectId);
+	const refreshedFinancePage = await notion.pages.retrieve({ page_id: financePage.id });
+	const pdfExport = await exportInvestmentConditionPdf(notion, refreshedFinancePage, draft);
+	if (!pdfExport.attached) {
+		return {
+			financePageId: financePage.id,
+			action: "error",
+			missingField: null,
+			message: pdfExport.message,
+		};
+	}
+	await createPageComment(
+		notion,
+		financePage.id,
+		`✅ 投資条件シミュレーションPDFを更新しました。\n${pdfExport.message}`,
+	);
+	return {
+		financePageId: financePage.id,
+		action: "prepared",
+		missingField: null,
+		message: pdfExport.message,
+	};
 }
 
 async function exportProposalSimulationPdf(
@@ -32743,7 +33389,7 @@ async function processInquiryProjectCreation(
 
 	try {
 		const project = await createProjectFromInquiry(notion, inquiryPage, triggerUserId);
-		await ensureProjectGrossBasisMatchesInquiry(notion, project.id, inquiryPage);
+		await initializeProjectScaffolding(notion, project.id, dryRun);
 		await markInquiryProjectLinked(
 			notion,
 			inquiryPage,
@@ -32839,10 +33485,10 @@ async function createProjectFromInquiry(
 	return notion.pages.retrieve({ page_id: created.id });
 }
 
-async function ensureProjectGrossBasisMatchesInquiry(
+async function initializeProjectScaffolding(
 	notion: NotionClient,
 	projectPageId: string,
-	inquiryPage: Page,
+	dryRun = false,
 ): Promise<void> {
 	// 動線設計正本（2026-07-10）：案件化直後の自動処理は設備詳細の作成だけ。
 	// 提案資料/金融資料/住民説明会は、まだ入力が無い段階で自動発火すると全部「足りません」で転び
@@ -34049,6 +34695,10 @@ export {
 };
 export { processResidentDocument as processResidentDocumentForTest };
 export { processProposalSimulation as processProposalSimulationForTest };
+export { processInvestmentConditionPdf as processInvestmentConditionPdfForTest };
+export {
+	evaluateInvestmentConditionPdfReadiness as evaluateInvestmentConditionPdfReadinessForTest,
+};
 export {
 	buildProposalSimulationPdfBytes as buildProposalSimulationPdfBytesForTest,
 	buildResidentDocumentPdfBytes as buildResidentDocumentPdfBytesForTest,

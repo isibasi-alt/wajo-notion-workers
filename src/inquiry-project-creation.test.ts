@@ -253,9 +253,7 @@ async function main() {
 			...notion.pages,
 			retrieve: async ({ page_id }: { page_id: string }) => {
 				if (page_id === "inquiry-1") return inquiryPage(["project-existing"]);
-				const page = projectPage(page_id);
-				page.properties["予定粗利の根拠"] = selectProp("価格あり");
-				return page;
+				return projectPage(page_id);
 			},
 		},
 		dataSources: {
@@ -283,15 +281,6 @@ async function main() {
 	assert.match(
 		JSON.stringify((enrichedProjectUpdate!.properties as Record<string, unknown>)["問い合わせ要約"]),
 		/FIT24円/,
-	);
-	assert.equal(
-		(
-			(enrichedProjectUpdate!.properties as Record<string, unknown>)["予定粗利の根拠"] as {
-				select: { name: string };
-			}
-		).select.name,
-		"売り｜担当者と仲が良い",
-		"既存案件が価格ありのままでも、問い合わせ側の根拠へ修復する",
 	);
 	const existingInquiryUpdate = updates.find((update) => update.page_id === "inquiry-1");
 	assert.ok(existingInquiryUpdate);

@@ -10,6 +10,7 @@
 		"gmail:inquiry:uninstall-5min": "zsh scripts/uninstall-gmail-inquiry-worker-launchagent.sh",
 		"test:anthropic-chat": "tsx src/anthropic-chat.test.ts",
 		"test:finance-summary": "tsx src/finance-summary.test.ts",
+		"test:investment-condition-pdf": "tsx src/investment-condition-pdf.test.ts",
 		"test:ai-learning-log-outcome": "tsx src/ai-learning-log-outcome.test.ts",
 		"test:closing-report-celebration": "tsx src/closing-report-celebration.test.ts",
 		"test:closing-report-cancel-safety": "tsx src/closing-report-cancel-safety.test.ts",
