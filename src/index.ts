@@ -18787,7 +18787,7 @@ async function buildInvestmentConditionPdfBytes(
 
 	const metricWidth = (contentWidth - 18) / 4;
 	const metricY = pageHeight - 106;
-	drawMetric(left, metricY, metricWidth, "投資判定", `${finance.timingRank} / ${finance.timingHeadline}`);
+	drawMetric(left, metricY, metricWidth, "投資判定", formatInvestmentDecisionMetric(finance.timingRank));
 	drawMetric(left + metricWidth + 6, metricY, metricWidth, "NPV", finance.projectNpv !== null ? formatYen(finance.projectNpv) : "未算出");
 	drawMetric(left + (metricWidth + 6) * 2, metricY, metricWidth, "IRR", finance.projectIrr !== null ? `${trimTrailingZeros(finance.projectIrr)}%` : "未算出");
 	drawMetric(left + (metricWidth + 6) * 3, metricY, metricWidth, "DSCR", finance.dscr !== null ? trimTrailingZeros(finance.dscr) : "借入なし");
@@ -18879,8 +18879,15 @@ async function buildInvestmentConditionPdfBytes(
 
 	drawText(`B/Sルーブリック: ${formatBalanceSheetSalesRubricSummary(finance.salesRubric)}`, left, 58, 7.7, fonts.regular, colors.muted);
 	drawText("税務・会計処理は顧問税理士確認前提のシミュレーションです。", left, 43, 7.2, fonts.regular, colors.muted);
-	drawText(`Finance record: ${financePageId}`, pageWidth - right - 140, 28, 6.7, latinFonts.regular, colors.muted);
+	drawText("WAJO Sales OS | Finance Simulation", pageWidth - right - 150, 28, 6.7, latinFonts.regular, colors.muted);
 	return pdf.save();
+}
+
+function formatInvestmentDecisionMetric(rank: "S" | "A" | "B" | "C"): string {
+	if (rank === "S") return "S / 優先提案";
+	if (rank === "A") return "A / 提案可";
+	if (rank === "B") return "B / 要条件調整";
+	return "C / 見送り";
 }
 
 async function exportInvestmentConditionPdf(
