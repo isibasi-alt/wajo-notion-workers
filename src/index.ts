@@ -19026,7 +19026,7 @@ async function buildInvestmentConditionPdfBytes(
 	drawText("WAJO Sales OS", left, pageHeight - 30, 15, fonts.bold, rgb(1, 1, 1));
 	drawText("投資条件シミュレーション", left, pageHeight - 53, 12, fonts.bold, rgb(0.9, 0.95, 0.92));
 	drawText(
-		`${draft.titleLabel || "案件"} / 社内投資判断用 / ${todayIsoDateInTokyo()}`,
+		`${draft.titleLabel || "案件"} / お客様向け投資条件資料 / ${todayIsoDateInTokyo()}`,
 		left,
 		pageHeight - 69,
 		7.5,
@@ -19090,7 +19090,7 @@ async function buildInvestmentConditionPdfBytes(
 	drawWrapped(`Cを下回らない理由: ${finance.timingFloorReason}`, left + 72, y - 77, contentWidth - 88, 7.3, fonts.regular, 1);
 
 	y -= 104;
-	y = drawSection("B/S適合性と営業の論点", y);
+	y = drawSection("財務状況との適合性", y);
 	page.drawRectangle({
 		x: left,
 		y: y - 78,
@@ -19102,7 +19102,7 @@ async function buildInvestmentConditionPdfBytes(
 	});
 	const rubric = finance.salesRubric;
 	drawText(
-		`B/S3指標: 流動比率 ${formatRubricMetric(rubric.liquidityRatio, "%")} / 利益剰余金 ${formatRubricMetric(rubric.retainedEarnings, "円")} / 自己資本比率 ${formatRubricMetric(rubric.equityRatio, "%")}`,
+		`財務3指標: 流動比率 ${formatRubricMetric(rubric.liquidityRatio, "%")} / 利益剰余金 ${formatRubricMetric(rubric.retainedEarnings, "円")} / 自己資本比率 ${formatRubricMetric(rubric.equityRatio, "%")}`,
 		left + 12,
 		y - 18,
 		7.6,
@@ -19110,21 +19110,24 @@ async function buildInvestmentConditionPdfBytes(
 		colors.muted,
 	);
 	const rubricReasonLine = wrapPdfText(
-		`評価: ${formatBalanceSheetSalesRubricSummary(rubric)} / ${rubric.reason
+		`現時点の確認: ${formatBalanceSheetSalesRubricSummary(rubric)} / ${rubric.reason
 			.replace(/揃っていない/g, "未入力")
 			.replace(/揃い次第/g, "入力後")}`,
 		fonts.regular,
 		7.6,
 		contentWidth - 24,
 	)[0] ?? "";
-	const salesTalkLine = wrapPdfText(
-		`営業の切り口: ${rubric.killerPhrase.replace(/揃い次第/g, "入力後")}`,
+	const customerNextStep = rubric.totalScore === null
+		? "財務3指標を確認後、借入・返済・税効果をお客様の財務状況に合わせて最終調整します。"
+		: `財務3指標の確認結果をもとに、${rubric.recommendedModel}を具体的に検討します。`;
+	const customerNextStepLine = wrapPdfText(
+		`確認後のご提案: ${customerNextStep}`,
 		fonts.bold,
 		7.6,
 		contentWidth - 24,
 	)[0] ?? "";
 	drawText(rubricReasonLine, left + 12, y - 42, 7.6, fonts.regular, colors.text);
-	drawText(salesTalkLine, left + 12, y - 64, 7.6, fonts.bold, colors.text);
+	drawText(customerNextStepLine, left + 12, y - 64, 7.6, fonts.bold, colors.text);
 
 	drawText(`B/Sルーブリック: ${formatBalanceSheetSalesRubricSummary(finance.salesRubric)}`, left, 58, 7.7, fonts.regular, colors.muted);
 	drawText("税務・会計処理は顧問税理士確認前提のシミュレーションです。", left, 43, 7.2, fonts.regular, colors.muted);
