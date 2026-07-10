@@ -285,8 +285,9 @@ async function main() {
 
 	const readyWithFinance = evaluateProposalSimulationDraftForTest({
 		id: "proposal-2g",
-		properties: solarRequiredProps({
+	properties: solarRequiredProps({
 			土地代: numberProp(20000000),
+			システム本体価格: numberProp(65000000),
 			権利代: numberProp(35000000),
 			借入額: numberProp(60000000),
 			金利: numberProp(2),
@@ -302,13 +303,13 @@ async function main() {
 	assert.equal(readyWithFinance.financeSimulation?.landPrice, 20000000);
 	assert.equal(readyWithFinance.financeSimulation?.rightsPrice, 35000000);
 	assert.equal(readyWithFinance.financeSimulation?.systemPrice, 65000000);
-	assert.equal(readyWithFinance.financeSimulation?.annualDepreciation, 10835000);
-	assert.equal(readyWithFinance.financeSimulation?.taxBenefit, 3250500);
+	assert.equal(readyWithFinance.financeSimulation?.annualDepreciation, 10823529);
+	assert.equal(readyWithFinance.financeSimulation?.taxBenefit, 3247059);
 	assert.equal(readyWithFinance.financeSimulation?.timingRank, "S");
 	assert.equal(readyWithFinance.financeSimulation?.salesRubric.totalScore, 15);
 	assert.equal(readyWithFinance.financeSimulation?.salesRubric.route, "C");
 	assert.match(readyWithFinance.summaryLines.join("\n"), /今回の投資判定: S/);
-	assert.match(readyWithFinance.summaryLines.join("\n"), /年間税効果: ¥3,250,500/);
+	assert.match(readyWithFinance.summaryLines.join("\n"), /年間税効果: ¥3,247,059/);
 	assert.match(readyWithFinance.summaryLines.join("\n"), /商品構成: 金額入力/);
 	assert.match(readyWithFinance.summaryLines.join("\n"), /B\/Sルーブリック: 15点 \/ Cルート/);
 	assert.match(readyWithFinance.pageTwoLines.join("\n"), /資産組み換え・大型投資型提案/);
@@ -334,8 +335,8 @@ async function main() {
 	assert.equal(readyWithCompositionRatios.financeSimulation?.landRatio, 20);
 	assert.equal(readyWithCompositionRatios.financeSimulation?.systemRatio, 50);
 	assert.equal(readyWithCompositionRatios.financeSimulation?.rightsRatio, 30);
-	assert.equal(readyWithCompositionRatios.financeSimulation?.annualDepreciation, 10740000);
-	assert.equal(readyWithCompositionRatios.financeSimulation?.taxBenefit, 3222000);
+	assert.equal(readyWithCompositionRatios.financeSimulation?.annualDepreciation, 10729412);
+	assert.equal(readyWithCompositionRatios.financeSimulation?.taxBenefit, 3218824);
 	assert.equal(readyWithCompositionRatios.financeSimulation?.salesRubric.totalScore, 11);
 	assert.equal(readyWithCompositionRatios.financeSimulation?.salesRubric.route, "B");
 	assert.match(readyWithCompositionRatios.summaryLines.join("\n"), /構成比: 土地 20% \/ システム 50% \/ 権利代 30%/);

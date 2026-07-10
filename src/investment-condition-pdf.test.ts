@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { PDFDocument } from "pdf-lib";
 import {
+	buildFinanceSimulationForTest,
 	evaluateInvestmentConditionPdfReadinessForTest,
 	processInvestmentConditionPdfForTest,
 } from "./index";
@@ -20,6 +21,10 @@ function titleProp(value: string) {
 
 function selectProp(value: string) {
 	return { type: "select", select: value ? { name: value } : null };
+}
+
+function checkboxProp(value: boolean) {
+	return { type: "checkbox", checkbox: value };
 }
 
 function relationProp(ids: string[]) {
@@ -52,10 +57,22 @@ async function main() {
 		借入額: numberProp(16_000_000),
 		金利: numberProp(1),
 	});
-	assert.equal(partial.missingField, "返済期間");
+	assert.equal(partial.missingField, "土地代ゼロ確認");
+
+	const zeroUnconfirmed = evaluateInvestmentConditionPdfReadinessForTest({
+		土地代: numberProp(0),
+		システム本体価格: numberProp(18_000_000),
+		権利代: numberProp(0),
+		借入額: numberProp(16_000_000),
+		金利: numberProp(1),
+		返済期間: numberProp(15),
+	});
+	assert.equal(zeroUnconfirmed.missingField, "土地代ゼロ確認");
+	assert.deepEqual(zeroUnconfirmed.nextRequiredFields, ["権利代ゼロ確認"]);
 
 	const complete = evaluateInvestmentConditionPdfReadinessForTest({
 		土地代: numberProp(0),
+		土地代ゼロ確認: checkboxProp(true),
 		システム本体価格: numberProp(18_000_000),
 		権利代: numberProp(2_000_000),
 		借入額: numberProp(16_000_000),
@@ -65,6 +82,32 @@ async function main() {
 	assert.equal(complete.missingField, null);
 	assert.deepEqual(complete.nextRequiredFields, []);
 
+	const financeWithExit = buildFinanceSimulationForTest({
+		properties: {
+			土地代: numberProp(0),
+			土地代ゼロ確認: checkboxProp(true),
+			システム本体価格: numberProp(18_000_000),
+			権利代: numberProp(2_000_000),
+			借入額: numberProp(16_000_000),
+			金利: numberProp(1),
+			返済期間: numberProp(15),
+			実効税率: numberProp(30),
+			出口想定年数: numberProp(3),
+			出口想定売却価格: numberProp(17_000_000),
+			出口費用率: numberProp(5),
+		},
+		salePrice: 20_000_000,
+		annualNetIncome: 2_500_000,
+		paybackYears: 8,
+		fitRemainingYears: 10,
+	});
+	assert.equal(financeWithExit.composition.verificationStatus, "確認済み");
+	assert.equal(financeWithExit.exitScenario.missingItems.length, 0);
+	assert.equal(financeWithExit.exitScenario.exitYears, 3);
+	assert.ok((financeWithExit.exitScenario.loanBalanceAtExit ?? 0) > 0);
+	assert.ok((financeWithExit.exitScenario.netExitProceeds ?? 0) > 0);
+	assert.notEqual(financeWithExit.exitScenario.equityIrr, null);
+
 	const financePage = {
 		id: "finance-1",
 		properties: {
@@ -72,12 +115,16 @@ async function main() {
 			関連案件: relationProp(["project-1"]),
 			関連提案シミュレーション: relationProp(["proposal-1"]),
 			土地代: numberProp(0),
+			土地代ゼロ確認: checkboxProp(true),
 			システム本体価格: numberProp(18_000_000),
 			権利代: numberProp(2_000_000),
 			借入額: numberProp(16_000_000),
 			金利: numberProp(1),
 			返済期間: numberProp(15),
 			実効税率: numberProp(30),
+			出口想定年数: numberProp(3),
+			出口想定売却価格: numberProp(17_000_000),
+			出口費用率: numberProp(5),
 			投資条件シミュレーションPDF: { type: "files", files: [] },
 		},
 	};

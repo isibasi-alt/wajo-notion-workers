@@ -15493,7 +15493,7 @@ type ProposalSimulationDraft = {
 type CurtailmentScenario = "抑制なし" | "抑制あり";
 
 type ProductComposition = {
-	mode: "金額入力" | "比率入力" | "標準補完";
+	mode: "金額入力" | "比率入力" | "要確認";
 	landPrice: number;
 	systemPrice: number;
 	rightsPrice: number;
@@ -15502,7 +15502,22 @@ type ProductComposition = {
 	rightsRatio: number;
 	componentTotal: number;
 	componentBalanceDifference: number;
+	verificationStatus: "確認済み" | "要確認";
+	unconfirmedItems: string[];
 	strategyLines: string[];
+};
+
+type FinanceExitScenario = {
+	exitYears: number;
+	exitSalePrice: number | null;
+	exitCostRate: number | null;
+	exitCost: number | null;
+	loanBalanceAtExit: number | null;
+	netExitProceeds: number | null;
+	cumulativeAfterTaxCashflow: number | null;
+	equityNpv: number | null;
+	equityIrr: number | null;
+	missingItems: string[];
 };
 
 function formatFinanceSignedYen(value: number): string {
@@ -15551,6 +15566,7 @@ type FinanceSimulation = {
 	timingHeadline: string;
 	timingUpperGapReason: string;
 	timingFloorReason: string;
+	exitScenario: FinanceExitScenario;
 	salesRubric: BalanceSheetSalesRubric;
 	lines: string[];
 };
@@ -18535,6 +18551,8 @@ function buildFinanceSimulationRecordProperties(
 	const selfFunding = Math.max(0, equityBase - finance.loanAmount);
 	const relatedProjectId =
 		projectIdOverride ?? relationIdsFromProperty(proposalPage.properties?.["関連案件"])[0] ?? null;
+	const compositionItemConfirmed = (label: string) =>
+		!finance.composition.unconfirmedItems.some((item) => item.startsWith(label));
 	const properties: Record<string, unknown> = {
 		Name: title(`${draft.titleLabel || readGenericPageTitle(proposalPage) || proposalPage.id}｜ファイナンス`),
 		関連提案シミュレーション: relation(proposalPage.id),
@@ -18553,13 +18571,37 @@ function buildFinanceSimulationRecordProperties(
 			IRR: { number: finance.projectIrr },
 			経済メリット: { number: finance.economicBenefit },
 			今期利益見込: finance.pretaxProfit !== null ? { number: finance.pretaxProfit } : undefined,
-			土地代: { number: finance.landPrice },
-			システム本体価格: { number: finance.systemPrice },
-		権利代: { number: finance.rightsPrice },
+		土地代: compositionItemConfirmed("土地代") ? { number: finance.landPrice } : undefined,
+		システム本体価格: compositionItemConfirmed("システム本体価格") ? { number: finance.systemPrice } : undefined,
+		権利代: compositionItemConfirmed("権利代") ? { number: finance.rightsPrice } : undefined,
 		年間返済額: { number: finance.annualDebtService },
 		年間償却額: { number: finance.annualDepreciation },
 		税効果: { number: finance.taxBenefit },
 		税引後キャッシュフロー: { number: finance.afterTaxCashflow },
+		投資構成確認: richText(
+			finance.composition.verificationStatus === "確認済み"
+				? "土地代・システム本体価格・権利代の構成を確認済み"
+				: `要確認: ${finance.composition.unconfirmedItems.join("・")}`,
+		),
+		出口想定年数: { number: finance.exitScenario.exitYears },
+		出口想定売却価格: finance.exitScenario.exitSalePrice !== null
+			? { number: finance.exitScenario.exitSalePrice }
+			: undefined,
+		出口費用率: finance.exitScenario.exitCostRate !== null
+			? { number: finance.exitScenario.exitCostRate }
+			: undefined,
+		出口時残債: finance.exitScenario.loanBalanceAtExit !== null
+			? { number: finance.exitScenario.loanBalanceAtExit }
+			: undefined,
+		出口手取り: finance.exitScenario.netExitProceeds !== null
+			? { number: finance.exitScenario.netExitProceeds }
+			: undefined,
+		出口エクイティNPV: finance.exitScenario.equityNpv !== null
+			? { number: finance.exitScenario.equityNpv }
+			: undefined,
+		出口エクイティIRR: finance.exitScenario.equityIrr !== null
+			? { number: finance.exitScenario.equityIrr }
+			: undefined,
 		DSCR: finance.dscr !== null ? { number: finance.dscr } : undefined,
 		実質金利: finance.effectiveInterestRate !== null ? { number: finance.effectiveInterestRate } : undefined,
 		アドオン金利: finance.addOnInterestRate !== null ? { number: finance.addOnInterestRate } : undefined,
@@ -19038,8 +19080,8 @@ async function buildInvestmentConditionPdfBytes(
 	const metricWidth = (contentWidth - 18) / 4;
 	const metricY = pageHeight - 106;
 	drawMetric(left, metricY, metricWidth, "投資判定", formatInvestmentDecisionMetric(finance.timingRank));
-	drawMetric(left + metricWidth + 6, metricY, metricWidth, "NPV", finance.projectNpv !== null ? formatYen(finance.projectNpv) : "未算出");
-	drawMetric(left + (metricWidth + 6) * 2, metricY, metricWidth, "IRR", finance.projectIrr !== null ? `${trimTrailingZeros(finance.projectIrr)}%` : "未算出");
+	drawMetric(left + metricWidth + 6, metricY, metricWidth, `${finance.exitScenario.exitYears}年出口IRR`, finance.exitScenario.equityIrr !== null ? `${trimTrailingZeros(finance.exitScenario.equityIrr)}%` : "要設定");
+	drawMetric(left + (metricWidth + 6) * 2, metricY, metricWidth, `${finance.exitScenario.exitYears}年出口手取り`, finance.exitScenario.netExitProceeds !== null ? formatYen(finance.exitScenario.netExitProceeds) : "要設定");
 	drawMetric(left + (metricWidth + 6) * 3, metricY, metricWidth, "DSCR", finance.dscr !== null ? trimTrailingZeros(finance.dscr) : "借入なし");
 
 	let y = drawSection("投資構成", pageHeight - 184);
@@ -19063,7 +19105,7 @@ async function buildInvestmentConditionPdfBytes(
 		drawText(formatYen(item.value), left + 334, rowY - 1, 8.3, fonts.bold, colors.text);
 	});
 	y -= 72;
-	drawText(`販売価格 ${formatYen(draft.salePrice ?? 0)} / 構成合計 ${formatYen(finance.composition.componentTotal)} / 差額 ${formatFinanceSignedYen(finance.componentBalanceDifference)}`, left + 8, y, 7.8, fonts.regular, colors.muted);
+	drawText(`販売価格 ${formatYen(draft.salePrice ?? 0)} / 構成合計 ${formatYen(finance.composition.componentTotal)} / 差額 ${formatFinanceSignedYen(finance.componentBalanceDifference)} / 構成 ${finance.composition.verificationStatus}`, left + 8, y, 7.4, fonts.regular, colors.muted);
 
 	y = drawSection("借入・税効果・キャッシュフロー", y - 26);
 	y = drawRows([
@@ -19072,25 +19114,49 @@ async function buildInvestmentConditionPdfBytes(
 		["減価償却", `年間 ${formatYen(finance.annualDepreciation)}（システム17年 / 権利代5年）`],
 		["税効果", `${formatYen(finance.taxBenefit)} / 実効税率 ${trimTrailingZeros(finance.effectiveTaxRate)}%`],
 		["税効果後CF", `${formatYen(finance.afterTaxCashflow)} / 経済メリット累計 ${formatYen(finance.totalEconomicalBenefit)}`],
+		["案件NPV / IRR", `${finance.projectNpv !== null ? formatYen(finance.projectNpv) : "未算出"} / ${finance.projectIrr !== null ? `${trimTrailingZeros(finance.projectIrr)}%` : "未算出"}`],
 	], y);
 
 	y = drawSection("投資判定の根拠", y - 6);
 	page.drawRectangle({
 		x: left,
-		y: y - 86,
+		y: y - 96,
 		width: contentWidth,
-		height: 86,
+		height: 96,
 		color: colors.panel,
 		borderColor: colors.line,
 		borderWidth: 0.6,
 	});
 	drawText(`${finance.timingRank}`, left + 16, y - 51, 34, fonts.bold, colors.teal);
-	drawText(finance.timingHeadline, left + 72, y - 24, 9.5, fonts.bold, colors.text);
-	drawWrapped(finance.timingReason, left + 72, y - 41, contentWidth - 88, 8.2, fonts.regular, 2);
-	drawWrapped(`S/Aに届かない理由: ${finance.timingUpperGapReason}`, left + 72, y - 64, contentWidth - 88, 7.3, fonts.regular, 1);
-	drawWrapped(`Cを下回らない理由: ${finance.timingFloorReason}`, left + 72, y - 77, contentWidth - 88, 7.3, fonts.regular, 1);
+	drawText(finance.timingHeadline, left + 72, y - 22, 8.8, fonts.bold, colors.text);
+	drawWrapped(finance.timingReason, left + 72, y - 38, 238, 7.5, fonts.regular, 2);
+	drawWrapped(`確認事項: ${finance.timingUpperGapReason}`, left + 72, y - 61, 238, 7.1, fonts.regular, 1);
+	drawWrapped(`前向きな材料: ${finance.timingFloorReason}`, left + 72, y - 75, 238, 7.1, fonts.regular, 1);
+	const decisionMapX = left + 330;
+	const decisionMap = [
+		["S", "条件確定後に優先検討"],
+		["A", "前向きに進める"],
+		["B", "条件確認のうえ提案"],
+		["C", "前提整理後に再検討"],
+	] as const;
+	decisionMap.forEach(([rank, label], index) => {
+		const rowY = y - 11 - index * 19;
+		const selected = rank === finance.timingRank;
+		page.drawRectangle({
+			x: decisionMapX,
+			y: rowY - 11,
+			width: 146,
+			height: 14,
+			color: selected ? rgb(0.8, 0.9, 0.88) : rgb(0.93, 0.96, 0.96),
+			borderColor: selected ? colors.teal : colors.line,
+			borderWidth: selected ? 0.8 : 0.35,
+			opacity: selected ? 0.9 : 0.45,
+		});
+		drawText(rank, decisionMapX + 7, rowY - 2, 7.3, fonts.bold, selected ? colors.teal : colors.muted);
+		drawText(label, decisionMapX + 24, rowY - 2, 6.5, selected ? fonts.bold : fonts.regular, selected ? colors.text : colors.muted);
+	});
 
-	y -= 104;
+	y -= 114;
 	y = drawSection("財務状況との適合性", y);
 	page.drawRectangle({
 		x: left,
@@ -19210,33 +19276,45 @@ async function buildInvestmentConditionPdfBytes(
 		`年間減価償却 ${formatYen(finance.annualDepreciation)}、実効税率 ${trimTrailingZeros(finance.effectiveTaxRate)}% を前提に計算しています。`,
 	);
 
-	y = drawSection("判断の前提と注意", y - 148);
+	y = drawSection(`${finance.exitScenario.exitYears}年出口と投資特性`, y - 148);
 	page.drawRectangle({
 		x: left,
-		y: y - 112,
+		y: y - 132,
 		width: contentWidth,
-		height: 112,
+		height: 132,
 		color: rgb(0.985, 0.99, 0.99),
 		borderColor: colors.line,
 		borderWidth: 0.6,
 	});
-	drawText("計算前提", left + 12, y - 20, 8.5, fonts.bold, colors.teal);
+	drawText(`${finance.exitScenario.exitYears}年出口の考え方`, left + 12, y - 19, 8.5, fonts.bold, colors.teal);
 	drawWrapped(
-		`販売価格 ${formatYen(draft.salePrice ?? 0)}、借入額 ${formatYen(finance.loanAmount)}、年率 ${trimTrailingZeros(finance.interestRate)}%、返済期間 ${finance.loanYears ?? "未入力"}年、実効税率 ${trimTrailingZeros(finance.effectiveTaxRate)}% を使っています。`,
+		finance.exitScenario.missingItems.length === 0
+			? `出口想定売却価格 ${formatYen(finance.exitScenario.exitSalePrice ?? 0)}、売却費用率 ${trimTrailingZeros(finance.exitScenario.exitCostRate ?? 0)}%、出口時残債 ${formatYen(finance.exitScenario.loanBalanceAtExit ?? 0)} を差し引き、保有中の税効果後キャッシュフローと合わせて計算しています。`
+			: `出口シナリオは ${finance.exitScenario.missingItems.join("・")} が未確認のため、数値を確定していません。入力後に出口時残債・手取り・エクイティIRRを計算します。`,
 		left + 12,
-		y - 37,
+		y - 35,
 		contentWidth - 24,
-		7.5,
+		7.4,
 		fonts.regular,
 		2,
 	);
-	drawText("確認が必要な事項", left + 12, y - 72, 8.5, fonts.bold, colors.teal);
+	drawText("投資特性の比較", left + 12, y - 68, 8.5, fonts.bold, colors.teal);
 	drawWrapped(
-		"税務・会計処理は顧問税理士の確認を前提とします。実際の発電量、売電収入、修繕費、出力抑制、融資条件は将来変動するため、契約・融資実行前に更新してください。",
+		"FIT/FIP太陽光は残存単価・期間から収入の見通しを組み立てやすい一方、発電量・設備・制度・出力抑制・売却価格の変動を伴います。不動産は賃料・空室・修繕、株式・ビットコイン・金は市場価格変動の影響が中心です。ここでは利回り比較ではなく、収入の見通し・価格変動・流動性・運用負荷を同じ軸で確認します。",
 		left + 12,
-		y - 89,
+		y - 84,
 		contentWidth - 24,
-		7.5,
+		7.1,
+		fonts.regular,
+		3,
+	);
+	drawText("共通の注意", left + 12, y - 113, 8.5, fonts.bold, colors.teal);
+	drawWrapped(
+		"税務・会計処理は顧問税理士の確認を前提とします。契約・融資実行前には、発電量、売電収入、修繕費、出力抑制、融資条件、出口条件を最新情報で更新してください。",
+		left + 12,
+		y - 129,
+		contentWidth - 24,
+		7.1,
 		fonts.regular,
 		2,
 	);
@@ -19246,9 +19324,9 @@ async function buildInvestmentConditionPdfBytes(
 
 function formatInvestmentDecisionMetric(rank: "S" | "A" | "B" | "C"): string {
 	if (rank === "S") return "S / 優先提案";
-	if (rank === "A") return "A / 提案可";
-	if (rank === "B") return "B / 要条件調整";
-	return "C / 見送り";
+	if (rank === "A") return "A / 前向き提案";
+	if (rank === "B") return "B / 条件確認提案";
+	return "C / 再検討";
 }
 
 async function exportInvestmentConditionPdf(
@@ -19316,10 +19394,24 @@ async function exportInvestmentConditionPdf(
 function evaluateInvestmentConditionPdfReadiness(
 	properties: Record<string, unknown>,
 ): { missingField: string | null; nextRequiredFields: string[] } {
+	const landPrice = readFirstNumberByAliases(properties, ["土地代", "土地価格", "土地取得費"]);
+	const rightsPrice = readFirstNumberByAliases(properties, ["権利代", "権利金", "権利取得費"]);
 	const checks: RequiredFieldCheck[] = [
-		{ label: "土地代", value: readFirstNumberByAliases(properties, ["土地代", "土地価格", "土地取得費"]) },
-		{ label: "システム本体価格", value: readFirstNumberByAliases(properties, ["システム本体価格", "設備本体価格", "発電設備価格", "設備価格"]) },
-		{ label: "権利代", value: readFirstNumberByAliases(properties, ["権利代", "権利金", "権利取得費"]) },
+		{ label: "土地代", value: landPrice },
+		...(landPrice === 0
+			? [{ label: "土地代ゼロ確認", value: checkboxValue(properties["土地代ゼロ確認"]) ? 1 : null }]
+			: []),
+		{
+			label: "システム本体価格",
+			value: (() => {
+				const value = readFirstNumberByAliases(properties, ["システム本体価格", "設備本体価格", "発電設備価格", "設備価格"]);
+				return value !== null && value > 0 ? value : null;
+			})(),
+		},
+		{ label: "権利代", value: rightsPrice },
+		...(rightsPrice === 0
+			? [{ label: "権利代ゼロ確認", value: checkboxValue(properties["権利代ゼロ確認"]) ? 1 : null }]
+			: []),
 		{ label: "借入額", value: readFirstNumberByAliases(properties, ["借入額", "融資額", "借入金額", "ローン金額"]) },
 		{ label: "金利", value: readFirstNumberByAliases(properties, ["金利", "借入金利", "融資金利", "ローン金利"]) },
 		{ label: "返済期間", value: readFirstNumberByAliases(properties, ["返済期間", "融資期間", "借入期間", "ローン年数"]) },
@@ -19329,7 +19421,10 @@ function evaluateInvestmentConditionPdfReadiness(
 		? { missingField: null, nextRequiredFields: [] }
 		: {
 				missingField: checks[missingIndex]!.label,
-				nextRequiredFields: checks.slice(missingIndex + 1).map((check) => check.label),
+				nextRequiredFields: checks
+					.slice(missingIndex + 1)
+					.filter((check) => !hasFieldValue(check.value))
+					.map((check) => check.label),
 		  };
 }
 
@@ -20835,8 +20930,8 @@ function buildProposalPdfFinanceRows(draft: ProposalSimulationDraft): Array<[str
 	return [
 		["今回の投資判定", `${finance.timingRank} / ${finance.timingHeadline}`],
 		["判定理由", finance.timingReason],
-		["S/Aに届かない理由", finance.timingUpperGapReason],
-		["Cを下回らない理由", finance.timingFloorReason],
+		["上位判断へ進むための確認事項", finance.timingUpperGapReason],
+		["現時点で前向きに検討できる材料", finance.timingFloorReason],
 		["B/Sルーブリック", formatBalanceSheetSalesRubricSummary(finance.salesRubric)],
 		["年間元本返済額", formatYen(finance.annualPrincipalRepayment)],
 		["年間利息額", formatYen(finance.annualInterestExpense)],
@@ -21376,10 +21471,10 @@ function buildProposalPdfPageTwoLines(draft: ProposalSimulationDraft): string[] 
 		? `判定理由: ${draft.financeSimulation.timingReason}`
 		: "";
 	const timingUpperGapLine = draft.financeSimulation
-		? `S/Aに届かない理由: ${draft.financeSimulation.timingUpperGapReason}`
+		? `上位判断へ進むための確認事項: ${draft.financeSimulation.timingUpperGapReason}`
 		: "";
 	const timingFloorLine = draft.financeSimulation
-		? `Cを下回らない理由: ${draft.financeSimulation.timingFloorReason}`
+		? `現時点で前向きに検討できる材料: ${draft.financeSimulation.timingFloorReason}`
 		: "";
 	const wajoLine = `和上確認: ${buildProposalWajoCompactLine(draft.wajoSupport)}`;
 	const riskLine = draft.wajoSupport.remainingRisk
@@ -22488,12 +22583,17 @@ function buildFinanceSimulation(input: {
 		: DEFAULT_SOLAR_LOAN_YEARS;
 	const loanYears = explicitLoanYears ?? (loanAmount > 0 ? defaultLoanYears : null);
 	const annualDebtService = calculateAnnualDebtService(loanAmount, interestRate, loanYears);
-	const debtRepayBreakdown = buildAnnualDebtRepaymentComponents(
+	const debtRepaymentSchedule = buildDebtRepaymentSchedule(
 		loanAmount,
 		interestRate,
 		loanYears,
 		annualDebtService,
 	);
+	const debtRepayBreakdown = debtRepaymentSchedule[0] ?? {
+		annualPrincipalRepayment: 0,
+		annualInterestExpense: 0,
+		remainingBalance: 0,
+	};
 	const effectiveInterestRate = loanAmount > 0 && loanYears && loanYears > 0
 		? interestRate
 		: null;
@@ -22506,7 +22606,7 @@ function buildFinanceSimulation(input: {
 		"割引率",
 		"プロジェクト割引率",
 	]) ?? 5;
-	const annualSystemDepreciation = roundTo(systemPrice * 0.059, 0);
+	const annualSystemDepreciation = roundTo(systemPrice / 17, 0);
 	const annualRightsDepreciation = roundTo(rightsPrice / 5, 0);
 	const annualDepreciation = annualSystemDepreciation + annualRightsDepreciation;
 	const depreciationYears = roundTo(
@@ -22549,6 +22649,18 @@ function buildFinanceSimulation(input: {
 		afterTaxCashflow,
 		projectCashflowYears,
 	);
+	const exitScenario = buildFinanceExitScenario({
+		properties: input.properties,
+		composition,
+		annualNetIncome: input.annualNetIncome,
+		effectiveTaxRate,
+		pretaxProfit,
+		annualSystemDepreciation,
+		annualRightsDepreciation,
+		discountRate,
+		equityInvest,
+		debtRepaymentSchedule,
+	});
 	const totalEconomicalBenefit = roundTo(afterTaxCashflow * projectCashflowYears, 0);
 	const dscr = annualDebtService > 0
 		? roundTo(input.annualNetIncome / annualDebtService, 2)
@@ -22618,12 +22730,14 @@ function buildFinanceSimulation(input: {
 		timingReason: timing.reason,
 		timingUpperGapReason: timing.whyNotUpper,
 		timingFloorReason: timing.whyNotLower,
+		exitScenario,
 		salesRubric,
 		lines: [
 			"ファイナンス・税効果シミュレーション",
 			`商品構成: ${composition.mode}`,
 			`構成比: 土地 ${trimTrailingZeros(composition.landRatio)}% / システム ${trimTrailingZeros(composition.systemRatio)}% / 権利代 ${trimTrailingZeros(composition.rightsRatio)}%`,
 			`構成合計: ${formatYen(composition.componentTotal)} / 販売価格との差額 ${formatFinanceSignedYen(composition.componentBalanceDifference)}`,
+			`構成確認: ${composition.verificationStatus}${composition.unconfirmedItems.length > 0 ? ` / ${composition.unconfirmedItems.join("・")}` : ""}`,
 			"土地は償却対象外です。",
 			"システム本体は17年で償却します。",
 			"権利代は5年で償却します。",
@@ -22644,8 +22758,9 @@ function buildFinanceSimulation(input: {
 			`DSCR: ${dscr !== null ? trimTrailingZeros(dscr) : "借入なし"}`,
 			`今回の投資判定: ${timing.rank} / ${timing.headline}`,
 			`判定理由: ${timing.reason}`,
-			`S/Aに届かない理由: ${timing.whyNotUpper}`,
-			`Cを下回らない理由: ${timing.whyNotLower}`,
+			`上位判断へ進むための確認事項: ${timing.whyNotUpper}`,
+			`現時点で前向きに検討できる材料: ${timing.whyNotLower}`,
+			`3年出口シナリオ: ${formatFinanceExitScenarioLine(exitScenario)}`,
 			`B/Sルーブリック: ${formatBalanceSheetSalesRubricSummary(salesRubric)}`,
 			...buildBalanceSheetSalesRubricLines(salesRubric),
 			...composition.strategyLines,
@@ -22816,20 +22931,21 @@ function buildProductComposition(
 			landPrice,
 			systemPrice,
 			rightsPrice,
+			unconfirmedItems: [],
 		});
 	}
-	const landPrice = readFirstNumberByAliases(properties, [
+	const landPriceInput = readFirstNumberByAliases(properties, [
 		"土地代",
 		"土地価格",
 		"土地取得費",
 		"土地評価額",
-	]) ?? 0;
-	const rightsPrice = readFirstNumberByAliases(properties, [
+	]);
+	const rightsPriceInput = readFirstNumberByAliases(properties, [
 		"権利代",
 		"権利金",
 		"権利取得費",
 		"設備ID権利代",
-	]) ?? 0;
+	]);
 	const systemPriceInput = readFirstNumberByAliases(properties, [
 		"システム本体価格",
 		"設備本体価格",
@@ -22837,13 +22953,29 @@ function buildProductComposition(
 		"設備価格",
 		"太陽光システム価格",
 	]);
-	const systemPrice = systemPriceInput ?? Math.max(0, salePrice - landPrice - rightsPrice);
+	const landPrice = landPriceInput ?? 0;
+	const rightsPrice = rightsPriceInput ?? 0;
+	const systemPrice = systemPriceInput ?? 0;
+	const unconfirmedItems = [
+		landPriceInput === null
+			? "土地代"
+			: landPrice === 0 && !checkboxValue(properties["土地代ゼロ確認"])
+				? "土地代ゼロ確認"
+				: "",
+		systemPriceInput === null || systemPrice <= 0 ? "システム本体価格" : "",
+		rightsPriceInput === null
+			? "権利代"
+			: rightsPrice === 0 && !checkboxValue(properties["権利代ゼロ確認"])
+				? "権利代ゼロ確認"
+				: "",
+	].filter(Boolean);
 	return buildProductCompositionResult({
-		mode: systemPriceInput !== null || landPrice > 0 || rightsPrice > 0 ? "金額入力" : "標準補完",
+		mode: unconfirmedItems.length > 0 ? "要確認" : "金額入力",
 		salePrice,
 		landPrice,
 		systemPrice,
 		rightsPrice,
+		unconfirmedItems,
 	});
 }
 
@@ -22888,6 +23020,7 @@ function buildProductCompositionResult(input: {
 	landPrice: number;
 	systemPrice: number;
 	rightsPrice: number;
+	unconfirmedItems: string[];
 }): ProductComposition {
 	const componentTotal = roundTo(input.landPrice + input.systemPrice + input.rightsPrice, 0);
 	const componentBalanceDifference = roundTo(componentTotal - input.salePrice, 0);
@@ -22905,6 +23038,8 @@ function buildProductCompositionResult(input: {
 		rightsRatio,
 		componentTotal,
 		componentBalanceDifference,
+		verificationStatus: input.unconfirmedItems.length === 0 ? "確認済み" : "要確認",
+		unconfirmedItems: input.unconfirmedItems,
 		strategyLines: buildProductCompositionStrategyLines({
 			landRatio,
 			systemRatio,
@@ -22958,46 +23093,182 @@ function calculateAddOnInterestRate(
 	return roundTo((totalInterest / (loanAmount * loanYears)) * 100, 2);
 }
 
-function buildAnnualDebtRepaymentComponents(
+type DebtRepaymentScheduleRow = {
+	year: number;
+	annualPrincipalRepayment: number;
+	annualInterestExpense: number;
+	annualDebtService: number;
+	remainingBalance: number;
+};
+
+function buildDebtRepaymentSchedule(
 	loanAmount: number,
 	interestRate: number,
 	loanYears: number | null,
 	annualDebtService: number,
-): DebtRepaymentBreakdown {
+): DebtRepaymentScheduleRow[] {
 	if (loanAmount <= 0 || !loanYears || loanYears <= 0) {
-		return {
-			annualPrincipalRepayment: 0,
-			annualInterestExpense: 0,
-		};
+		return [];
 	}
 	if (annualDebtService <= 0) {
-		return {
-			annualPrincipalRepayment: 0,
-			annualInterestExpense: 0,
-		};
+		return [];
 	}
 
 	const rate = interestRate / 100;
 	let remaining = loanAmount;
-	let firstYearInterest = 0;
-	let firstYearPrincipal = 0;
-	const sampleYears = Math.max(1, Math.min(2, loanYears));
-	for (let year = 0; year < sampleYears; year += 1) {
+	const rows: DebtRepaymentScheduleRow[] = [];
+	for (let year = 1; year <= loanYears; year += 1) {
 		const yearInterest = roundTo(Math.max(0, remaining * rate), 0);
 		const yearPrincipal = Math.max(0, annualDebtService - yearInterest);
 		const cappedPrincipal = Math.min(remaining, yearPrincipal);
-		if (year === 0) {
-			firstYearPrincipal = cappedPrincipal;
-		}
-		firstYearInterest += yearInterest;
-		const remainingNext = Math.max(0, remaining - cappedPrincipal);
-		remaining = remainingNext;
+		remaining = Math.max(0, remaining - cappedPrincipal);
+		rows.push({
+			year,
+			annualPrincipalRepayment: roundTo(cappedPrincipal, 0),
+			annualInterestExpense: yearInterest,
+			annualDebtService: roundTo(cappedPrincipal + yearInterest, 0),
+			remainingBalance: roundTo(remaining, 0),
+		});
 	}
-	const annualPrincipalRepayment = roundTo(firstYearPrincipal, 0);
+	return rows;
+}
+
+function buildFinanceExitScenario(input: {
+	properties: Record<string, unknown>;
+	composition: ProductComposition;
+	annualNetIncome: number;
+	effectiveTaxRate: number;
+	pretaxProfit: number | null;
+	annualSystemDepreciation: number;
+	annualRightsDepreciation: number;
+	discountRate: number;
+	equityInvest: number;
+	debtRepaymentSchedule: DebtRepaymentScheduleRow[];
+}): FinanceExitScenario {
+	const exitYears = Math.max(1, Math.min(30, Math.floor(
+		readFirstNumberByAliases(input.properties, ["出口想定年数", "想定保有年数", "売却想定年数"]) ?? 3,
+	)));
+	const exitSalePrice = readFirstNumberByAliases(input.properties, [
+		"出口想定売却価格",
+		"3年後想定売却価格",
+		"想定売却価格",
+	]);
+	const exitCostRate = readFirstNumberByAliases(input.properties, [
+		"出口費用率",
+		"売却費用率",
+		"売却諸費用率",
+	]);
+	const missingItems = [
+		...input.composition.unconfirmedItems,
+		exitSalePrice === null ? "出口想定売却価格" : "",
+		exitCostRate === null ? "出口費用率" : "",
+	].filter(Boolean);
+	if (missingItems.length > 0 || exitSalePrice === null || exitCostRate === null) {
+		return {
+			exitYears,
+			exitSalePrice,
+			exitCostRate,
+			exitCost: null,
+			loanBalanceAtExit: null,
+			netExitProceeds: null,
+			cumulativeAfterTaxCashflow: null,
+			equityNpv: null,
+			equityIrr: null,
+			missingItems,
+		};
+	}
+
+	const panelDegradationRate = Math.max(0, Math.min(
+		readFirstNumberByAliases(input.properties, [
+			"パネル劣化率",
+			"年間劣化率",
+			"経年劣化率",
+		]) ?? 0,
+		20,
+	));
+	const yearlyCashflows: number[] = [];
+	for (let year = 1; year <= exitYears; year += 1) {
+		const annualIncome = roundTo(
+			input.annualNetIncome * Math.pow(1 - panelDegradationRate / 100, year - 1),
+			0,
+		);
+		const debt = input.debtRepaymentSchedule[year - 1];
+		const debtService = debt?.annualDebtService ?? 0;
+		const annualDepreciation =
+			(year <= 17 ? input.annualSystemDepreciation : 0) +
+			(year <= 5 ? input.annualRightsDepreciation : 0);
+		const taxBase = input.pretaxProfit !== null
+			? Math.min(annualDepreciation, Math.max(input.pretaxProfit, 0))
+			: annualDepreciation;
+		const taxBenefit = roundTo(taxBase * (input.effectiveTaxRate / 100), 0);
+		yearlyCashflows.push(roundTo(annualIncome - debtService + taxBenefit, 0));
+	}
+	const exitCost = roundTo(exitSalePrice * (exitCostRate / 100), 0);
+	const loanBalanceAtExit = input.debtRepaymentSchedule[exitYears - 1]?.remainingBalance ?? 0;
+	const netExitProceeds = roundTo(exitSalePrice - exitCost - loanBalanceAtExit, 0);
+	const cashflows = [-input.equityInvest, ...yearlyCashflows];
+	cashflows[cashflows.length - 1] = (cashflows[cashflows.length - 1] ?? 0) + netExitProceeds;
 	return {
-		annualPrincipalRepayment,
-		annualInterestExpense: roundTo(firstYearInterest / sampleYears, 0),
+		exitYears,
+		exitSalePrice,
+		exitCostRate,
+		exitCost,
+		loanBalanceAtExit,
+		netExitProceeds,
+		cumulativeAfterTaxCashflow: roundTo(yearlyCashflows.reduce((sum, value) => sum + value, 0) + netExitProceeds, 0),
+		equityNpv: calculateNpvFromCashflows(cashflows, input.discountRate),
+		equityIrr: calculateIrrFromCashflows(cashflows),
+		missingItems: [],
 	};
+}
+
+function formatFinanceExitScenarioLine(scenario: FinanceExitScenario): string {
+	if (scenario.missingItems.length > 0) {
+		return `${scenario.exitYears}年出口は未算出（${scenario.missingItems.join("・")}を確認）`;
+	}
+	return `${scenario.exitYears}年後の手取り ${formatYen(scenario.netExitProceeds ?? 0)} / 残債 ${formatYen(scenario.loanBalanceAtExit ?? 0)} / エクイティIRR ${scenario.equityIrr !== null ? `${trimTrailingZeros(scenario.equityIrr)}%` : "未算出"}`;
+}
+
+function calculateNpvFromCashflows(cashflows: number[], discountRatePercent: number): number | null {
+	if (cashflows.length < 2 || cashflows.some((value) => !Number.isFinite(value))) return null;
+	if (discountRatePercent < -90) return null;
+	const rate = Math.max(-0.99, discountRatePercent / 100);
+	const value = cashflows.reduce((sum, cashflow, index) => sum + cashflow / Math.pow(1 + rate, index), 0);
+	return Number.isFinite(value) ? roundTo(value, 0) : null;
+}
+
+function calculateIrrFromCashflows(cashflows: number[]): number | null {
+	if (cashflows.length < 2 || cashflows.some((value) => !Number.isFinite(value))) return null;
+	const npv = (rate: number) => cashflows.reduce(
+		(sum, cashflow, index) => sum + cashflow / Math.pow(1 + rate, index),
+		0,
+	);
+	let low = -0.99;
+	let high = 0.8;
+	let lowValue = npv(low);
+	let highValue = npv(high);
+	if (!Number.isFinite(lowValue) || !Number.isFinite(highValue)) return null;
+	while (lowValue * highValue > 0 && high < 5) {
+		high = Math.min(high + 1, 5);
+		highValue = npv(high);
+	}
+	if (lowValue * highValue > 0) return null;
+	for (let index = 0; index < 100; index += 1) {
+		const mid = (low + high) / 2;
+		const midValue = npv(mid);
+		if (!Number.isFinite(midValue)) return null;
+		if (Math.abs(midValue) < 1e-4 || Math.abs(high - low) < 1e-6) {
+			return roundTo(Math.max(-99, mid) * 100, 2);
+		}
+		if (lowValue * midValue <= 0) {
+			high = mid;
+			highValue = midValue;
+		} else {
+			low = mid;
+			lowValue = midValue;
+		}
+	}
+	return roundTo(Math.max(-99, (low + high) / 2) * 100, 2);
 }
 
 function calculateNpv(
@@ -35583,6 +35854,7 @@ export { processProposalSimulation as processProposalSimulationForTest };
 export { processInvestmentConditionPdf as processInvestmentConditionPdfForTest };
 export {
 	evaluateInvestmentConditionPdfReadiness as evaluateInvestmentConditionPdfReadinessForTest,
+	buildFinanceSimulation as buildFinanceSimulationForTest,
 };
 export {
 	buildProposalSimulationPdfBytes as buildProposalSimulationPdfBytesForTest,
