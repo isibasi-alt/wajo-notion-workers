@@ -19466,7 +19466,7 @@ async function buildProposalSimulationPdfBytes(
 			color: rgb(1, 1, 1),
 		});
 	};
-	const drawHeader = (page: PDFPage, pageNo: number, title: string, subtitle: string, breadcrumb: string) => {
+	const drawHeader = (page: PDFPage, pageNo: number, title: string, subtitle: string) => {
 		page.drawRectangle({
 			x: 0,
 			y: pageHeight - 88,
@@ -19490,13 +19490,6 @@ async function buildProposalSimulationPdfBytes(
 			size: 8.5,
 			font: fonts.regular,
 			color: rgb(0.82, 0.88, 0.86),
-		});
-		drawText(page, breadcrumb, {
-			x: left,
-			y: pageHeight - 20,
-			size: 7.2,
-			font: fonts.regular,
-			color: rgb(0.78, 0.84, 0.83),
 		});
 		drawText(page, `${pageNo} / ${totalPages}`, {
 			x: pageWidth - right - 30,
@@ -20177,8 +20170,7 @@ async function buildProposalSimulationPdfBytes(
 		first,
 		1,
 		"提案シミュレーション",
-		`${draft.titleLabel || proposalKindJapaneseLabel(draft.proposalKind)} / ${generatedDate}`,
-		"WAJO提案資料 / 概要面",
+		`提案概要 / ${generatedDate}`,
 	);
 
 	let y = pageHeight - 126;
@@ -20239,8 +20231,7 @@ async function buildProposalSimulationPdfBytes(
 		second,
 		2,
 		"物件情報・税務前提",
-		`${draft.titleLabel || proposalKindJapaneseLabel(draft.proposalKind)} / 詳細確認`,
-		"WAJO提案資料 / 数字と前提",
+		"設備・税務の前提を確認",
 	);
 
 	y = pageHeight - 126;
@@ -20326,8 +20317,7 @@ async function buildProposalSimulationPdfBytes(
 			third,
 			3,
 			"将来推移シミュレーション",
-			`${draft.titleLabel || proposalKindJapaneseLabel(draft.proposalKind)} / 売電推移`,
-			"WAJO提案資料 / 将来推移",
+			"残存FIT期間の売電量・収益推移",
 		);
 
 		y = pageHeight - 126;
@@ -20394,8 +20384,7 @@ async function buildProposalSimulationPdfBytes(
 			fourth,
 			4,
 			"詳細根拠・確認事項",
-			`${draft.titleLabel || proposalKindJapaneseLabel(draft.proposalKind)} / 根拠と写真`,
-			"WAJO提案資料 / 根拠と確認事項",
+			"ファイナンス根拠・現場写真",
 		);
 
 		y = pageHeight - 126;
