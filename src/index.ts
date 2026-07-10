@@ -16335,6 +16335,40 @@ async function processProjectDocumentRequest(
 		source.sourceEquipmentPage;
 	const documentSourcePage = mergeProjectWithEquipmentDetail(projectPage, equipmentPage);
 	const projectName = readGenericPageTitle(projectPage) || "案件";
+	// 動線1本道の締め（2026-07-10設計正本）：ファイナンスは提案シミュレーション完成後にのみ進める。
+	// 完成の定義＝シミュレーションステータス「シミュレーション準備完了」または提案PDFリンクが入っていること。
+	if (kind === "finance") {
+		const proposalRequest = await findExistingProjectDocumentRequest(
+			notion,
+			projectPage.id,
+			PROJECT_DOCUMENT_REQUEST_CONFIGS.proposal.documentType,
+		);
+		const proposalStatus = proposalRequest
+			? text(proposalRequest.properties?.["シミュレーションステータス"])
+			: "";
+		const proposalPdf = proposalRequest
+			? readFirstTextByAliases(proposalRequest.properties ?? {}, PROPOSAL_PDF_URL_PROPERTY_ALIASES)
+			: "";
+		const simulationDone = proposalStatus === "シミュレーション準備完了" || Boolean(proposalPdf);
+		if (!simulationDone) {
+			const gateMessage = proposalRequest
+				? "先に提案シミュレーションを完成させてください（提案シミュレーションレコードの「シミュレーションPDFを出力」→ 提案PDFリンクが入ったらファイナンスに進めます）。"
+				: "先に「シミュレーション作成」で提案シミュレーションを作り、完成させてからファイナンスに進んでください。";
+			if (!input.dryRun) {
+				await createPageComment(
+					notion,
+					projectPage.id,
+					`⛔ ファイナンスはシミュ完成後のみ進めます: ${projectName}\n${gateMessage}`,
+				).catch(() => {});
+			}
+			return {
+				projectPageId: projectPage.id,
+				requestPageId: null,
+				action: "needs-input",
+				message: gateMessage,
+			};
+		}
+	}
 	const readiness = evaluateProjectDocumentRequestReadiness(documentSourcePage, kind);
 	const missingMessage = readiness.missingField
 		? buildSequentialMissingMessage(
