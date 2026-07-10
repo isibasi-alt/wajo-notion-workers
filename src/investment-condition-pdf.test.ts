@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
+import { PDFDocument } from "pdf-lib";
 import {
 	evaluateInvestmentConditionPdfReadinessForTest,
 	processInvestmentConditionPdfForTest,
@@ -180,12 +181,15 @@ async function main() {
 		{ financePageId: "finance-1", dryRun: false },
 		notion as never,
 	);
-	assert.equal(output.action, "prepared");
+	assert.equal(output.action, "prepared", output.message);
 	assert.equal(uploads.length, 1);
 	assert.equal(blockUpdates.length, 1, "既存PDFは追加せず置換する");
 	assert.equal(appends.length, 0, "既存PDFがある場合は本文ブロックを重複させない");
 	assert.ok(updates.some((update) => update.page_id === "finance-1"));
 	assert.equal(comments.length, 1);
+	assert.ok(generatedPdf, "投資条件PDFが生成される");
+	const generatedDocument = await PDFDocument.load(await generatedPdf.arrayBuffer());
+	assert.equal(generatedDocument.getPageCount(), 2, "投資条件PDFは判断ページと解説ページの2枚構成");
 	if (process.env.INVESTMENT_PDF_TEST_OUTPUT && generatedPdf) {
 		await writeFile(
 			process.env.INVESTMENT_PDF_TEST_OUTPUT,

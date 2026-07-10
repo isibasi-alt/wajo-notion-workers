@@ -1321,9 +1321,9 @@ const MONTHLY_EVAL_BUNDLED_JAPANESE_FONT_DIRS = [
 	join(__dirname, "..", "assets", "fonts"),
 ];
 const MONTHLY_EVAL_BUNDLED_REGULAR_FONT_CANDIDATES =
-	MONTHLY_EVAL_BUNDLED_JAPANESE_FONT_DIRS.map((dir) => join(dir, "NotoSansJP-Subset-Regular.otf"));
+	MONTHLY_EVAL_BUNDLED_JAPANESE_FONT_DIRS.map((dir) => join(dir, "Mplus1p-Regular.ttf"));
 const MONTHLY_EVAL_BUNDLED_BOLD_FONT_CANDIDATES =
-	MONTHLY_EVAL_BUNDLED_JAPANESE_FONT_DIRS.map((dir) => join(dir, "NotoSansJP-Subset-Bold.otf"));
+	MONTHLY_EVAL_BUNDLED_JAPANESE_FONT_DIRS.map((dir) => join(dir, "Mplus1p-Bold.ttf"));
 const MONTHLY_EVAL_MACOS_JAPANESE_FONT_CANDIDATES = [
 	"/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
 	"/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
@@ -1533,7 +1533,7 @@ async function embedMonthlyEvalPdfFonts(pdf: PDFDocument): Promise<MonthlyEvalPd
 		return { regular, bold };
 	}
 	throw new Error(
-		"月次評価PDFの日本語フォントが見つかりません。assets/fonts にNoto Sans JPを同梱するか、WAJO_PDF_JAPANESE_FONT_PATH でttf/otfフォントのパスを指定してください。",
+		"月次評価PDFの日本語フォントが見つかりません。assets/fonts にM+ 1pを同梱するか、WAJO_PDF_JAPANESE_FONT_PATH でttf/otfフォントのパスを指定してください。",
 	);
 }
 
@@ -1541,7 +1541,7 @@ async function embedMonthlyEvalPdfFont(pdf: PDFDocument, fontPath: string): Prom
 	const fontBytes = readFileSync(fontPath);
 	return fontPath.toLowerCase().endsWith(".ttc")
 		? pdf.embedFont(fontBytes)
-		: pdf.embedFont(fontBytes, { subset: false });
+		: pdf.embedFont(fontBytes, { subset: true });
 }
 
 function resolveMonthlyEvalJapaneseFontPaths(): MonthlyEvalPdfFontPaths | null {
@@ -18921,7 +18921,7 @@ async function buildInvestmentConditionPdfBytes(
 		regular: await pdf.embedFont(StandardFonts.Helvetica),
 		bold: await pdf.embedFont(StandardFonts.HelveticaBold),
 	};
-	const page = pdf.addPage([595.28, 841.89]);
+	let page = pdf.addPage([595.28, 841.89]);
 	const pageWidth = page.getWidth();
 	const pageHeight = page.getHeight();
 	page.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: rgb(1, 1, 1) });
@@ -19012,6 +19012,30 @@ async function buildInvestmentConditionPdfBytes(
 			y -= 23;
 		}
 		return y;
+	};
+	const drawExplanationPanel = (
+		x: number,
+		yTop: number,
+		width: number,
+		title: string,
+		metric: string,
+		explanation: string,
+		caseReading: string,
+	) => {
+		const height = 124;
+		page.drawRectangle({
+			x,
+			y: yTop - height,
+			width,
+			height,
+			color: rgb(0.985, 0.99, 0.99),
+			borderColor: colors.line,
+			borderWidth: 0.6,
+		});
+		drawText(title, x + 12, yTop - 20, 10, fonts.bold, colors.teal);
+		drawText(metric, x + 12, yTop - 39, 12, fonts.bold, colors.text);
+		drawWrapped(explanation, x + 12, yTop - 58, width - 24, 7.4, fonts.regular, 3);
+		drawWrapped(`今回の読み方: ${caseReading}`, x + 12, yTop - 105, width - 24, 7.2, fonts.bold, 2);
 	};
 
 	page.drawRectangle({ x: 0, y: pageHeight - 82, width: pageWidth, height: 82, color: colors.navy });
@@ -19120,6 +19144,114 @@ async function buildInvestmentConditionPdfBytes(
 
 	drawText(`B/Sルーブリック: ${formatBalanceSheetSalesRubricSummary(finance.salesRubric)}`, left, 58, 7.7, fonts.regular, colors.muted);
 	drawText("税務・会計処理は顧問税理士確認前提のシミュレーションです。", left, 43, 7.2, fonts.regular, colors.muted);
+	drawText("WAJO Sales OS | Finance Simulation", pageWidth - right - 150, 28, 6.7, latinFonts.regular, colors.muted);
+
+	page = pdf.addPage([595.28, 841.89]);
+	page.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: rgb(1, 1, 1) });
+	page.drawRectangle({ x: 0, y: pageHeight - 74, width: pageWidth, height: 74, color: colors.navy });
+	drawText("WAJO Sales OS", left, pageHeight - 28, 14, fonts.bold, rgb(1, 1, 1));
+	drawText("数字の読み方と判断前提", left, pageHeight - 50, 11, fonts.bold, rgb(0.9, 0.95, 0.92));
+	drawText("投資条件シミュレーション / 2 of 2", pageWidth - right - 158, pageHeight - 50, 7.2, fonts.regular, rgb(0.82, 0.88, 0.86));
+
+	y = drawSection("この案件の読み方", pageHeight - 102);
+	page.drawRectangle({
+		x: left,
+		y: y - 58,
+		width: contentWidth,
+		height: 58,
+		color: colors.panel,
+		borderColor: colors.line,
+		borderWidth: 0.6,
+	});
+	drawText("1", left + 14, y - 36, 22, fonts.bold, colors.teal);
+	drawText("投資判定を先に読み、その後に返済余力・収益性・税効果を確認します。", left + 48, y - 22, 9, fonts.bold, colors.text);
+	drawWrapped(
+		"投資判定は発電所の格付けではなく、現在の投資条件で進める妥当性です。数値だけでなく、借入・税務・B/Sの前提と合わせて判断します。",
+		left + 48,
+		y - 39,
+		contentWidth - 62,
+		7.5,
+		fonts.regular,
+		2,
+	);
+
+	y = drawSection("主要指標の読み方", y - 80);
+	const panelGap = 12;
+	const panelWidth = (contentWidth - panelGap) / 2;
+	drawExplanationPanel(
+		left,
+		y,
+		panelWidth,
+		"IRR（内部収益率）",
+		finance.projectIrr !== null ? `${trimTrailingZeros(finance.projectIrr)}%` : "未算出",
+		"初期投資と将来のキャッシュフローから見る、案件全体の年率換算収益性です。高いほど収益性が高い一方、単独では返済余力を示しません。",
+		finance.projectIrr !== null
+			? "案件全体の収益性を、借入返済とは別の角度から確認します。"
+			: "計算に必要な収支前提を確認します。",
+	);
+	drawExplanationPanel(
+		left + panelWidth + panelGap,
+		y,
+		panelWidth,
+		"NPV（正味現在価値）",
+		finance.projectNpv !== null ? formatYen(finance.projectNpv) : "未算出",
+		"将来のキャッシュフローを現在価値へ割り引き、初期投資を差し引いた金額です。プラスであれば、設定した前提のもとで投資価値が残ります。",
+		finance.projectNpv !== null && finance.projectNpv >= 0
+			? "設定した前提では、投資額を上回る価値が見込まれます。"
+			: "割引率・収益・費用の前提を再確認します。",
+	);
+	y -= 136;
+	drawExplanationPanel(
+		left,
+		y,
+		panelWidth,
+		"DSCR（元利金返済カバー率）",
+		finance.dscr !== null ? trimTrailingZeros(finance.dscr) : "借入なし",
+		"年間の返済に対し、返済原資となるキャッシュフローが何倍あるかを示す返済余力の指標です。1.0を下回ると返済原資が不足します。",
+		finance.dscr !== null
+			? `今回の返済余力は ${trimTrailingZeros(finance.dscr)} 倍です。金利・返済期間を変えると連動して変化します。`
+			: "借入条件の入力後に算出します。",
+	);
+	drawExplanationPanel(
+		left + panelWidth + panelGap,
+		y,
+		panelWidth,
+		"減価償却・税効果",
+		`${formatYen(finance.taxBenefit)} / 年`,
+		"減価償却費は現金支出を伴わない費用です。課税所得を圧縮することで税効果が生まれ、税効果後キャッシュフローの見え方が変わります。",
+		`年間減価償却 ${formatYen(finance.annualDepreciation)}、実効税率 ${trimTrailingZeros(finance.effectiveTaxRate)}% を前提に計算しています。`,
+	);
+
+	y = drawSection("判断の前提と注意", y - 148);
+	page.drawRectangle({
+		x: left,
+		y: y - 112,
+		width: contentWidth,
+		height: 112,
+		color: rgb(0.985, 0.99, 0.99),
+		borderColor: colors.line,
+		borderWidth: 0.6,
+	});
+	drawText("計算前提", left + 12, y - 20, 8.5, fonts.bold, colors.teal);
+	drawWrapped(
+		`販売価格 ${formatYen(draft.salePrice ?? 0)}、借入額 ${formatYen(finance.loanAmount)}、年率 ${trimTrailingZeros(finance.interestRate)}%、返済期間 ${finance.loanYears ?? "未入力"}年、実効税率 ${trimTrailingZeros(finance.effectiveTaxRate)}% を使っています。`,
+		left + 12,
+		y - 37,
+		contentWidth - 24,
+		7.5,
+		fonts.regular,
+		2,
+	);
+	drawText("確認が必要な事項", left + 12, y - 72, 8.5, fonts.bold, colors.teal);
+	drawWrapped(
+		"税務・会計処理は顧問税理士の確認を前提とします。実際の発電量、売電収入、修繕費、出力抑制、融資条件は将来変動するため、契約・融資実行前に更新してください。",
+		left + 12,
+		y - 89,
+		contentWidth - 24,
+		7.5,
+		fonts.regular,
+		2,
+	);
 	drawText("WAJO Sales OS | Finance Simulation", pageWidth - right - 150, 28, 6.7, latinFonts.regular, colors.muted);
 	return pdf.save();
 }

@@ -1,10 +1,10 @@
-# Monthly Evaluation PDF Fonts
+# WAJO PDF Fonts
 
-This directory bundles Noto Sans JP subset fonts for `attachMonthlyEvalPdfWebhook`.
+This directory bundles M+ 1p Regular/Bold TrueType fonts for every Worker-generated Japanese PDF.
 
-- Source font: Noto Sans CJK JP Regular/Bold
+- Source font: M+ 1p Regular/Bold
 - License: SIL Open Font License 1.1 (`LICENSE.txt`)
-- Subset coverage: ASCII, Latin-1, Japanese punctuation, Hiragana, Katakana, full-width forms, CJK compatibility forms, and Joyo kanji codepoints.
-- Purpose: keep the Worker bundle small while avoiding macOS-only font paths in production.
+- Coverage: Japanese, Latin, numerals, punctuation, and full-width forms used by the Sales OS documents.
+- Purpose: use a TrueType font that embeds reliably in Notion's PDF viewer and avoid macOS-only font paths in production.
 
-Regenerate with `fonttools pyftsubset` from the upstream Noto Sans CJK JP OTF files if the coverage needs to expand.
+The older Noto CFF subset is kept only as a historical asset until the production PDF visual check is complete. New PDF generation resolves M+ 1p first.
