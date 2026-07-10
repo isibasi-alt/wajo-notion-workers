@@ -20262,7 +20262,7 @@ async function buildProposalSimulationPdfBytes(
 			["所在地", details?.location || "未入力"],
 			["電力会社エリア / 区分", `${details?.powerArea || "未入力"} / ${details?.voltageClass || "未入力"}`],
 			["パネル", details ? `${details.panelMaker} / ${details.panelModel}` : "未入力"],
-			["パネル枚数 / DC", details ? `総枚数 ${formatFullWidthIntegerForPdf(details.panelCount)}枚 / DC ${formatDecimalForPdf(details.dcCapacityKw, 1)}kW` : "未入力"],
+			["パネル枚数 / DC", details ? `総枚数 ${formatIntegerForPdf(details.panelCount)}枚 / DC ${formatDecimalForPdf(details.dcCapacityKw, 1)}kW` : "未入力"],
 			["PCS", details ? `${details.powerConditionerMaker} / ${details.powerConditionerModel} / ${formatDecimalForPdf(details.pcsCapacityKw, 1)}kW` : "未入力"],
 			["FIT/FIP・売電条件", details ? `${details.fitFipType} / ${formatDecimalForPdf(details.unitPrice, 2)}円/kWh / 残存${formatDecimalForPdf(details.remainingSalesYears, 1)}年` : "未入力"],
 			["連系開始日 / 稼働年数", details ? `${details.gridConnectionDate} / ${formatOperationYearsForPdf(details.operationYears)}` : "未入力"],
@@ -20620,7 +20620,7 @@ function buildProposalCoverSafeRows(draft: ProposalSimulationDraft): Array<[stri
 	return nonEmptyLinesAsRows([
 		["パネル情報", details ? `${details.panelMaker} / ${details.panelModel}` : "未入力"],
 		["パネルの見どころ", details?.panelPublicComment || ""],
-		["パネル枚数 / DC", details ? `総枚数 ${formatFullWidthIntegerForPdf(details.panelCount)}枚 / DC ${formatDecimalForPdf(details.dcCapacityKw, 1)}kW` : "未入力"],
+		["パネル枚数 / DC", details ? `総枚数 ${formatIntegerForPdf(details.panelCount)}枚 / DC ${formatDecimalForPdf(details.dcCapacityKw, 1)}kW` : "未入力"],
 		["PCS情報", details ? `${details.powerConditionerMaker} / ${details.powerConditionerModel} / ${formatDecimalForPdf(details.pcsCapacityKw, 1)}kW` : "未入力"],
 		["PCSの見どころ", details?.powerConditionerPublicComment || ""],
 		["売電制度", details ? `${details.fitFipType} / ${formatDecimalForPdf(details.unitPrice, 2)}円/kWh / 残存${formatDecimalForPdf(details.remainingSalesYears, 1)}年` : "未入力"],
@@ -21342,11 +21342,9 @@ function formatDecimalForPdf(value: number | null, digits: number): string {
 	return value.toFixed(digits).replace(/\.?0+$/, "");
 }
 
-function formatFullWidthIntegerForPdf(value: number | null): string {
+function formatIntegerForPdf(value: number | null): string {
 	if (value === null || !Number.isFinite(value)) return "N/A";
-	return value
-		.toFixed(0)
-		.replace(/\d/g, (digit) => String.fromCharCode(digit.charCodeAt(0) + 0xfee0));
+	return value.toFixed(0);
 }
 
 function pdfSafeValue(value: string, fallback: string): string {

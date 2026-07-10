@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PDFDocument } from "pdf-lib";
 import {
 	buildProposalSimulationPdfBytesForTest,
@@ -169,6 +172,19 @@ async function main() {
 	);
 	const solarPdf = await PDFDocument.load(solarPdfBytes);
 	assert.equal(solarPdf.getPageCount(), 4);
+	const pdfCheckDirectory = await mkdtemp(join(tmpdir(), "wajo-proposal-pdf-"));
+	const pdfCheckPath = join(pdfCheckDirectory, "proposal.pdf");
+	try {
+		await writeFile(pdfCheckPath, solarPdfBytes);
+		const extractedPdfText = execFileSync("pdftotext", ["-layout", pdfCheckPath, "-"], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		});
+		assert.match(extractedPdfText, /総枚数 420枚/);
+		assert.doesNotMatch(extractedPdfText, /総枚数 ４２０枚/);
+	} finally {
+		await rm(pdfCheckDirectory, { recursive: true, force: true });
+	}
 	if (process.env.PROPOSAL_PDF_TEST_OUTPUT) {
 		await writeFile(process.env.PROPOSAL_PDF_TEST_OUTPUT, solarPdfBytes);
 	}
