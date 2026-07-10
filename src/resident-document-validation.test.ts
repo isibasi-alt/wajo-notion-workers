@@ -62,6 +62,7 @@ function readyResidentProps(overrides: Record<string, unknown> = {}) {
 		質問受付期間: dateProp("2026-07-01", "2026-07-14"),
 		周知日: dateProp("2026-07-20"),
 		"保守管理責任者 氏名": richTextProp("佐藤花子"),
+		住民向け問い合わせ窓口: richTextProp("和上ホールディングス O&M窓口 / 06-0000-0000"),
 		旧認定事業者: richTextProp("旧認定事業者"),
 		新認定事業者: richTextProp("新認定事業者"),
 		設備ID: richTextProp("A123456789"),
@@ -101,6 +102,15 @@ async function main() {
 
 	assert.equal(missingOldOperator.missingField, "旧認定事業者");
 
+	const missingResidentContact = evaluateResidentDocumentDraftForTest({
+		id: "resident-1b-contact",
+		properties: readyResidentProps({
+			住民向け問い合わせ窓口: richTextProp(""),
+		}),
+	});
+
+	assert.equal(missingResidentContact.missingField, "住民向け問い合わせ窓口");
+
 	const missingMap = evaluateResidentDocumentDraftForTest({
 		id: "resident-1c",
 		properties: readyResidentProps({
@@ -119,6 +129,7 @@ async function main() {
 	assert.equal(ready.documentTitle, "2026S099｜住民説明会資料");
 	assert.match(ready.summaryLines.join("\n"), /質問受付期間: 2026-07-01〜2026-07-14/);
 	assert.match(ready.summaryLines.join("\n"), /認定出力: 250kW/);
+	assert.match(ready.summaryLines.join("\n"), /住民向け問い合わせ窓口: 和上ホールディングス O&M窓口/);
 	const imageSectionCounts = Object.fromEntries(
 		ready.sections.map((section) => [
 			section.title,
