@@ -81,6 +81,9 @@ async function fetchTemplatePageLook(
 const FINANCE_SIMULATION_DATA_SOURCE_ID =
 	process.env.FINANCE_SIMULATION_DATA_SOURCE_ID ??
 	"7e4d0168-6e54-4071-bd55-f9730202225c";
+const CASE_DOCUMENT_DATA_SOURCE_ID =
+	process.env.CASE_DOCUMENT_DATA_SOURCE_ID ??
+	"fde6d55f-3127-4716-862c-5fb43b2cc3b4";
 const SALES_PROPOSAL_DATA_SOURCE_ID =
 	process.env.SALES_PROPOSAL_DATA_SOURCE_ID ??
 	"4c3a7df6-3ca1-458a-b595-d98cdeac2802";
@@ -15669,9 +15672,21 @@ async function processResidentDocument(
 				fileUrl: null as string | null,
 		  }
 		: await exportResidentDocumentPdf(notion, page, draft);
+	const residentProjectId = relationIdsFromProperty(page.properties?.["関連案件"])[0] ?? null;
+	const caseDocumentRegistration = input.dryRun
+		? { action: "skipped" as const, message: "dry-runのため案件資料DBへは登録していません。" }
+		: await upsertGeneratedCaseDocument(notion, {
+				kind: "resident",
+				requestPageId: page.id,
+				projectPageId: residentProjectId,
+				sourceTitle: draft.documentTitle,
+				fileUploadId: pdfExport.fileUploadId,
+				fileName: pdfExport.fileName,
+		  });
 	const resultMessage = [
 		readyMessage,
 		`PDF出力: ${pdfExport.message}`,
+		`資料台帳: ${caseDocumentRegistration.message}`,
 		pdfExport.destination === "property"
 			? "保存先: レコード内のPDFプロパティ（住民説明会資料PDF / 説明会用資料PDF 等）から確認できます。"
 			: pdfExport.destination === "page_block"
@@ -15823,6 +15838,23 @@ async function processProposalSimulation(
 				fileUrl: null as string | null,
 		  }
 		: await exportProposalSimulationPdf(notion, page, draft);
+	// 案件idは提案ページ自身の関連案件が空でも、紐づく設備詳細ページの関連案件から確実に辿る。
+	const resolvedProjectId =
+		relationIdsFromProperty(simulationSourcePage.properties?.["関連案件"])[0] ??
+		(equipmentPage
+			? relationIdsFromProperty(equipmentPage.properties?.["関連案件"])[0]
+			: undefined) ??
+		null;
+	const caseDocumentRegistration = input.dryRun
+		? { action: "skipped" as const, message: "dry-runのため案件資料DBへは登録していません。" }
+		: await upsertGeneratedCaseDocument(notion, {
+				kind: "proposal",
+				requestPageId: page.id,
+				projectPageId: resolvedProjectId,
+				sourceTitle: draft.proposalTitle,
+				fileUploadId: pdfExport.fileUploadId,
+				fileName: pdfExport.fileName,
+		  });
 	const readyMessage = [
 		"提案シミュレーションの必須入力チェックを通過しました。",
 		`提案書タイトル: ${draft.proposalTitle}`,
@@ -15833,6 +15865,7 @@ async function processProposalSimulation(
 		"【提案メモ｜前提・リスク】",
 		...draft.pageTwoLines,
 		`PDF出力: ${pdfExport.message}`,
+		`資料台帳: ${caseDocumentRegistration.message}`,
 		"【確認手順】",
 		pdfExport.destination === "property"
 			? "1. このレコードの『提案PDF』または『作成した提案PDFを開く』を開く"
@@ -16000,14 +16033,6 @@ async function processProposalSimulation(
 		}
 		await safeUpdateExistingProperties(notion, page, patches);
 		await syncProposalSimulationEquipmentSnapshot(notion, equipmentPage, draft);
-		// 案件idは提案ページ自身の関連案件が空でも、紐づく設備詳細ページの関連案件から確実に辿る。
-		// これが取れないと投資条件レコードが関連案件nullになり、既存入力箱への集約も効かない。
-		const resolvedProjectId =
-			relationIdsFromProperty(simulationSourcePage.properties?.["関連案件"])[0] ??
-			(equipmentPage
-				? relationIdsFromProperty(equipmentPage.properties?.["関連案件"])[0]
-				: undefined) ??
-			null;
 		const financeSync = await syncFinanceSimulationRecord(
 			notion,
 			simulationSourcePage,
@@ -18585,6 +18610,166 @@ type ProposalPdfExportResult = {
 
 type ResidentDocumentPdfExportResult = ProposalPdfExportResult;
 
+type GeneratedCaseDocumentKind = "proposal" | "finance" | "resident";
+
+type GeneratedCaseDocumentRegistration = {
+	action: "created" | "updated" | "skipped";
+	message: string;
+};
+
+type GeneratedCaseDocumentInput = {
+	kind: GeneratedCaseDocumentKind;
+	requestPageId: string;
+	projectPageId: string | null;
+	sourceTitle: string;
+	fileUploadId: string | null | undefined;
+	fileName: string;
+};
+
+const GENERATED_CASE_DOCUMENT_CONFIG: Record<
+	GeneratedCaseDocumentKind,
+	{ titleSuffix: string; documentTypeCandidates: string[] }
+> = {
+	proposal: {
+		titleSuffix: "提案シミュレーションPDF",
+		documentTypeCandidates: ["発電シミュレーション"],
+	},
+	finance: {
+		titleSuffix: "投資条件シミュレーションPDF",
+		// 現行の案件資料DBには投資条件専用の選択肢が未確認のため、
+		// 既存選択肢を勝手に増やさず、該当候補がある場合だけ設定する。
+		documentTypeCandidates: ["投資条件シミュレーション", "ファイナンスシミュレーション"],
+	},
+	resident: {
+		titleSuffix: "住民説明会資料PDF",
+		documentTypeCandidates: ["住民説明会資料"],
+	},
+};
+
+const CASE_DOCUMENT_PROPERTY_ALIASES = {
+	title: ["資料名", "Name", "名前", "タイトル"],
+	documentType: ["資料種別", "資料タイプ", "資料分類", "資料カテゴリ"],
+	file: ["添付ファイル", "資料ファイル", "ファイル"],
+	project: ["関連案件", "案件", "案件参照"],
+	request: ["関連資料作成依頼", "資料作成依頼", "関連提案シミュレーション"],
+} as const;
+
+function resolveSchemaPropertyName(
+	properties: Record<string, unknown>,
+	aliases: readonly string[],
+): string | null {
+	for (const alias of aliases) {
+		if (properties[alias]) return alias;
+	}
+	return null;
+}
+
+function schemaSelectOptionNames(property: unknown): string[] {
+	if (!property || typeof property !== "object") return [];
+	const record = property as Record<string, unknown>;
+	if (record.type !== "select" || !record.select || typeof record.select !== "object") return [];
+	const options = (record.select as Record<string, unknown>).options;
+	if (!Array.isArray(options)) return [];
+	return options
+		.map((option) => (option && typeof option === "object" ? (option as Record<string, unknown>).name : ""))
+		.filter((name): name is string => typeof name === "string" && name.length > 0);
+}
+
+function generatedCaseDocumentTitle(input: GeneratedCaseDocumentInput): string {
+	const config = GENERATED_CASE_DOCUMENT_CONFIG[input.kind];
+	const base = input.sourceTitle.trim() || "案件資料";
+	return `${base}｜${config.titleSuffix}`.slice(0, 1800);
+}
+
+async function upsertGeneratedCaseDocument(
+	notion: NotionClient,
+	input: GeneratedCaseDocumentInput,
+): Promise<GeneratedCaseDocumentRegistration> {
+	if (!input.fileUploadId) {
+		return { action: "skipped", message: "PDFアップロードIDがないため案件資料DBへの登録を見送りました。" };
+	}
+	if (!input.projectPageId) {
+		return { action: "skipped", message: "関連案件を解決できないため案件資料DBへの登録を見送りました。" };
+	}
+	if (!notion.dataSources.retrieve) {
+		return { action: "skipped", message: "案件資料DBのスキーマ取得APIがないため台帳登録を見送りました。" };
+	}
+
+	try {
+		const dataSource = await notion.dataSources.retrieve({
+			data_source_id: CASE_DOCUMENT_DATA_SOURCE_ID,
+		});
+		const schemaProperties = (dataSource.properties ?? {}) as Record<string, unknown>;
+		const titleProperty = resolveSchemaPropertyName(schemaProperties, CASE_DOCUMENT_PROPERTY_ALIASES.title);
+		const fileProperty = resolveSchemaPropertyName(schemaProperties, CASE_DOCUMENT_PROPERTY_ALIASES.file);
+		const projectProperty = resolveSchemaPropertyName(schemaProperties, CASE_DOCUMENT_PROPERTY_ALIASES.project);
+		const requestProperty = resolveSchemaPropertyName(schemaProperties, CASE_DOCUMENT_PROPERTY_ALIASES.request);
+		if (!titleProperty || !fileProperty || !projectProperty || !requestProperty) {
+			return {
+				action: "skipped",
+				message: "案件資料DBの必須プロパティ（資料名・添付ファイル・関連案件・関連資料作成依頼）を確認できないため登録を見送りました。",
+			};
+		}
+
+		const titleValue = generatedCaseDocumentTitle(input);
+		const properties: Record<string, Record<string, unknown>> = {
+			[titleProperty]: title(titleValue),
+			[fileProperty]: {
+				files: [
+					{
+						type: "file_upload",
+						file_upload: { id: input.fileUploadId },
+						name: input.fileName,
+					},
+				],
+			},
+			[projectProperty]: relation(input.projectPageId),
+			[requestProperty]: relation(input.requestPageId),
+		};
+		const documentTypeProperty = resolveSchemaPropertyName(
+			schemaProperties,
+			CASE_DOCUMENT_PROPERTY_ALIASES.documentType,
+		);
+		if (documentTypeProperty) {
+			const availableTypes = schemaSelectOptionNames(schemaProperties[documentTypeProperty]);
+			const selectedType = GENERATED_CASE_DOCUMENT_CONFIG[input.kind].documentTypeCandidates.find(
+				(candidate) => availableTypes.includes(candidate),
+			);
+			if (selectedType) properties[documentTypeProperty] = select(selectedType);
+		}
+
+		const existing = await notion.dataSources.query({
+			data_source_id: CASE_DOCUMENT_DATA_SOURCE_ID,
+			filter: {
+				property: requestProperty,
+				relation: { contains: input.requestPageId },
+			},
+			page_size: 50,
+		});
+		const marker = GENERATED_CASE_DOCUMENT_CONFIG[input.kind].titleSuffix;
+		const existingPage = existing.results.find((page) =>
+			readGenericPageTitle(page).includes(marker),
+		);
+		if (existingPage) {
+			await notion.pages.update({ page_id: existingPage.id, properties });
+			return { action: "updated", message: "案件資料DBの既存PDF台帳を更新しました。" };
+		}
+		await notion.pages.create({
+			parent: { data_source_id: CASE_DOCUMENT_DATA_SOURCE_ID },
+			properties,
+		});
+		return { action: "created", message: "案件資料DBへPDF台帳を登録しました。" };
+	} catch (error) {
+		console.log("generated case document registration skipped", {
+			kind: input.kind,
+			requestPageId: input.requestPageId,
+			projectPageId: input.projectPageId,
+			error: String(error),
+		});
+		return { action: "skipped", message: "案件資料DBへの台帳登録に失敗しました。PDF本体は元レコードへ保存済みです。" };
+	}
+}
+
 type InvestmentConditionPdfInput = {
 	financePageId: string;
 	dryRun: boolean;
@@ -19176,16 +19361,25 @@ async function processInvestmentConditionPdf(
 			message: pdfExport.message,
 		};
 	}
+	const caseDocumentRegistration = await upsertGeneratedCaseDocument(notion, {
+		kind: "finance",
+		requestPageId: proposalPage.id,
+		projectPageId: projectId,
+		sourceTitle: readGenericPageTitle(proposalPage),
+		fileUploadId: pdfExport.fileUploadId,
+		fileName: pdfExport.fileName,
+	});
+	const preparedMessage = `${pdfExport.message}\n資料台帳: ${caseDocumentRegistration.message}`;
 	await createPageComment(
 		notion,
 		financePage.id,
-		`✅ 投資条件シミュレーションPDFを更新しました。\n${pdfExport.message}`,
+		`✅ 投資条件シミュレーションPDFを更新しました。\n${preparedMessage}`,
 	);
 	return {
 		financePageId: financePage.id,
 		action: "prepared",
 		missingField: null,
-		message: pdfExport.message,
+		message: preparedMessage,
 	};
 }
 
@@ -19399,6 +19593,7 @@ async function exportResidentDocumentPdf(
 				destination: "property",
 				message: `PDFを保存しました（${filePropertyName}）。`,
 				fileName,
+				fileUploadId,
 				fileUrl,
 			};
 		}
@@ -19440,6 +19635,7 @@ async function exportResidentDocumentPdf(
 				message:
 					"PDF保存先プロパティが無かったため、同じレコード本文の末尾にPDFを追加しました。",
 				fileName,
+				fileUploadId,
 				fileUrl: null,
 			};
 		}
@@ -34168,15 +34364,21 @@ async function enrichProjectFromInquiry(
 	}
 }
 
-// 共通B・命名ガード：一度付いた通称は上書きしない。仮名（「案件-…」始まり／「｜」入り）の時だけ命名対象。
+// 共通B・命名ガード：一度付いた通称は上書きしない。仮名だけ命名対象。
+// 仮名＝空／「案件」＋区切り（- / ｜ 空白）で始まる（AボタンやA採番が付ける自動タイトル）／「｜」入り（入口の「お名前｜受付番号」）。
+// AI通称名（例「瀬名ぐるぐる500キロ」）は「案件」始まりでないので final＝守る＝再押しで改名しない。
 function projectHasFinalCaseName(projectPage: Page): { final: boolean; current: string } {
 	const current = readGenericPageTitle(projectPage) || "";
-	const final =
-		current.length > 0 && !/^案件-/.test(current) && !current.includes("｜");
-	return { final, current };
+	const provisional =
+		current.length === 0 ||
+		/^案件[\s　\-\/／｜]/.test(current) ||
+		current.includes("｜");
+	return { final: !provisional, current };
 }
 
-// 共通Bの仕上げ：ヘッダーpatch適用→売買区分AIフォールバック根拠コメント→子レコード名同期→設備詳細scaffolding→完了コメント。
+// 共通Bの仕上げ：ヘッダーpatch適用→売買区分AIフォールバック根拠コメント→子レコード名同期→完了コメント。
+// ★設備詳細の自動作成はしない（2026-07-10修正）：ブローカー/土地由来は対象物が未確定なことが多く、
+// 太陽光前提の『発電所設備詳細』を勝手に作ると蓄電池・土地で対象が限定される。対象物が定まってから営業が「設備詳細を入力」ボタンで作る。
 async function finishProjectEnrichFromSource(input: {
 	notion: NotionClient;
 	projectPage: Page;
@@ -34207,7 +34409,6 @@ async function finishProjectEnrichFromSource(input: {
 			).catch(() => {});
 		}
 	}
-	await initializeProjectScaffolding(notion, projectPage.id, false);
 	await createPageComment(notion, projectPage.id, input.doneComment).catch(() => {});
 }
 
