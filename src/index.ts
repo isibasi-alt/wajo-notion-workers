@@ -15240,6 +15240,7 @@ export {
 	resolveWajoOpenAiConfig as resolveWajoOpenAiConfigForTest,
 	resolveWajoAnthropicConfig as resolveWajoAnthropicConfigForTest,
 	callAnthropicChat as callAnthropicChatForTest,
+	deriveInquiryCaseName as deriveInquiryCaseNameForTest,
 	applySalesPerformanceQualitativeGuard as applySalesPerformanceQualitativeGuardForTest,
 	buildSalesPerformanceReviewPrompts as buildSalesPerformanceReviewPromptsForTest,
 	SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT as SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT_FOR_TEST,
@@ -17027,6 +17028,40 @@ async function processProjectDocumentRequest(
 		source.sourceEquipmentPage;
 	const documentSourcePage = mergeProjectWithEquipmentDetail(projectPage, equipmentPage);
 	const projectName = readGenericPageTitle(projectPage) || "案件";
+	// 動線1本道の締め（2026-07-10設計正本）：ファイナンスは提案シミュレーション完成後にのみ進める。
+	// 完成の定義＝シミュレーションステータス「シミュレーション準備完了」または提案PDFリンクが入っていること。
+	if (kind === "finance") {
+		const proposalRequest = await findExistingProjectDocumentRequest(
+			notion,
+			projectPage.id,
+			PROJECT_DOCUMENT_REQUEST_CONFIGS.proposal.documentType,
+		);
+		const proposalStatus = proposalRequest
+			? text(proposalRequest.properties?.["シミュレーションステータス"])
+			: "";
+		const proposalPdf = proposalRequest
+			? readFirstTextByAliases(proposalRequest.properties ?? {}, PROPOSAL_PDF_URL_PROPERTY_ALIASES)
+			: "";
+		const simulationDone = proposalStatus === "シミュレーション準備完了" || Boolean(proposalPdf);
+		if (!simulationDone) {
+			const gateMessage = proposalRequest
+				? "先に提案シミュレーションを完成させてください（提案シミュレーションレコードの「シミュレーションPDFを出力」→ 提案PDFリンクが入ったらファイナンスに進めます）。"
+				: "先に「シミュレーション作成」で提案シミュレーションを作り、完成させてからファイナンスに進んでください。";
+			if (!input.dryRun) {
+				await createPageComment(
+					notion,
+					projectPage.id,
+					`⛔ ファイナンスはシミュ完成後のみ進めます: ${projectName}\n${gateMessage}`,
+				).catch(() => {});
+			}
+			return {
+				projectPageId: projectPage.id,
+				requestPageId: null,
+				action: "needs-input",
+				message: gateMessage,
+			};
+		}
+	}
 	const readiness = evaluateProjectDocumentRequestReadiness(documentSourcePage, kind);
 	const proposalDocumentType = resolveProjectDocumentRequestDocumentType(
 		requestDataSourceProperties,
@@ -24285,6 +24320,7 @@ async function markLandCaseLinked(
 	const current = relationIdsFromProperty(land.page.properties?.["関連案件"]);
 	await safeUpdateExistingProperties(notion, land.page, {
 		案件化日: { kind: "date", value: todayDateJST() },
+		案件化状態: { kind: "select", value: "案件化済" },
 		関連案件: { kind: "relation", ids: uniqueStrings([...current, ...projectIds]) },
 		案件化メモ: {
 			kind: "text",
@@ -30906,9 +30942,34 @@ async function createInquiryFromEmail(
 		receptionNumber,
 		emailInfo.receivedAt,
 	);
+	// テンプレID渡しはNotion側で適用されない実績があるため（機械起票ページにアイコン・帯が付かない）、
+	// 案件ページと同じ「コードが直接付ける」方式で見た目を揃える。2026-07-10
+	await notion.pages
+		.update({
+			page_id: created.id,
+			icon: { type: "icon", icon: { name: "move", color: "purple" } },
+		})
+		.catch((error) => console.log("inquiry icon set skipped", String(error)));
 	// 営業ブリーフィングはWorkerでは書かない。ページ本文の文面は大ちゃんが手直しできる
 	// Notion整形エージェント（v2）に一本化（二重書き手の解消・2026-07-10）。
 	await appendBlocksIfAny(notion, created.id, [
+		{
+			object: "block",
+			type: "callout",
+			callout: {
+				rich_text: [
+					{
+						type: "text",
+						text: {
+							content:
+								"📨 いまここ＝「お問い合わせ」の画面\n📨 お問い合わせ　▸　📂 案件　▸　🏆 成約　▸　📝 活動ログ\n迷子になったら、一番上のこの帯を見る。ボタンで次に進むと、帯の色と「いまここ」が変わるで。",
+						},
+					},
+				],
+				icon: { emoji: "📨" },
+				color: "blue_background",
+			},
+		},
 		{
 			object: "block",
 			type: "callout",
@@ -33684,6 +33745,8 @@ function sanitizeCaseName(raw: string): string {
 	name = name.replace(/^案件名[:：]\s*/, "");
 	name = name.replace(/^[「『“"'（(]+/, "").replace(/[」』”"'）)]+$/, "");
 	name = name.replace(/[｜|]/g, " ").replace(/[\s　]+/g, " ").trim();
+	// プロンプトの内部用語「芯」がAI出力に漏れることがある（実測1/5）ため確定的に削ぐ。
+	name = name.replace(/芯$/, "").trim();
 	return name.slice(0, 24);
 }
 
@@ -33709,6 +33772,8 @@ type InquiryCaseNaming = {
 	location: string;
 	scale: string;
 	counterparty: string;
+	dealType: string;
+	dealReason: string;
 };
 
 const INQUIRY_CASE_NAME_RESPONSE_FORMAT: WajoJsonSchemaResponseFormat = {
@@ -33734,8 +33799,16 @@ const INQUIRY_CASE_NAME_RESPONSE_FORMAT: WajoJsonSchemaResponseFormat = {
 					type: "string",
 					description: "この案件の相手先の名前＝売却案件なら売り主、購入希望なら買い手（個人なら『山田様』、法人なら会社名）。問い合わせ内容から読み取れた実名だけ。読めなければ空文字。でっち上げない。",
 				},
+				売買区分: {
+					type: "string",
+					description: "売却案件 / 購入希望 / 不明 のいずれか。判定ルールに従い本文の証拠だけで判定する。",
+				},
+				判定根拠: {
+					type: "string",
+					description: "売買区分の判定根拠。本文からの原文引用を1つ含めて短く（例: 「2018年から」と過去の連系実績を自分の物件として記載→売り）。不明なら何が足りないかを書く。",
+				},
 			},
-			required: ["案件名", "所在地", "規模", "相手先"],
+			required: ["案件名", "所在地", "規模", "相手先", "売買区分", "判定根拠"],
 			additionalProperties: false,
 		},
 	},
@@ -33763,17 +33836,33 @@ async function deriveInquiryCaseName(input: {
 		location: "",
 		scale: "",
 		counterparty: "",
+		dealType: "",
+		dealReason: "",
 	};
 	try {
 		const raw = await callAnthropicChat({
 			system: [
 				"あなたは再エネ・不動産営業の案件に、営業マンが思わず口にしたくなる“覚えやすい通称”を付け、識別情報を抜き出す担当です。",
+				"最優先ルール：材料の件名に既に営業用の通称（例: 尾道ロクジュウサン低圧）が付いている場合は、新しい名前を作らず、その通称をそのまま案件名に採用する（1物件1呼び名。「問-番号」「お名前｜受付番号」等の管理名は通称ではない）。",
 				"命名の型を固定しない。次の引き出しから、その案件の材料に一番ハマるものを毎回選ぶ（地名＋名産に毎回逃げない）：①容量の数字ダジャレ（500→ゴーゴー/3.9M→サンキュー）②活動ログの人・きっかけのキャラ物語（即決社長の◯◯）③地形や現地の顔（崖の上/海沿い/元ゴルフ場）④会社名のもじり（◯◯の隠し球）⑤擬人化・たとえ（眠れる獅子/暴れ馬）⑥音の反復・オノマトペ（ずんずん◯◯）⑦ヒーロー物語もの（うずまき鳴門）⑧スピード・温度感（爆速/じっくり）⑨作戦名っぽく（作戦名・◯◯）⑩ご当地ワンフレーズ（＝使い過ぎ注意）。",
 				"骨は地域か芯（容量4メガ/500キロ・種別 低圧/野立て/蓄電池/高圧）を最低1つ残し、そこに上の引き出しの捻りを効かせる。一発で覚えられて他と被らない通称にする。『姫路低圧』のような無個性名の量産は禁止。同じ切り口を連発しない。",
 				"捻りは実在の材料からだけ作る：数字ダジャレは本物の容量、キャラは活動ログにいる人。案件の事実（容量・売買・所有者・緊急度など）を捏造しない。読めない数値は書かない。日付・売買区分・担当者名・長い件名・『問い合わせ』等の管理語は入れない。短く（全角12文字目安）。",
 				"最優先は『電話で声に出して呼びやすい』こと。語呂よく2〜3拍で、舌を噛む綴りや説明が要る捻りは避ける（例○鳴門ぐるぐる／別府もくもく／熊本くまモン、例×長すぎ・読み方が割れる語）。",
+				"『芯』という単語自体を案件名に入れない（これは説明用の内部用語）。",
+				"地名は材料に書かれた粒度まで：県名しか無ければ県名で作る（例: 徳島2メガ）。市町村名を発明しない（徳島県→鳴門はNG）。",
+				"容量・金額の単位を盛らない：2,000kW=2メガ（ギガ等への誇張は事実誤り）。数字を使う時は実データの桁のまま。",
 				"手掛かりが薄くても必ず付ける（会社名の芯＋種別など）。「作れない」は禁止。",
 				"所在地・規模・相手先は事実だけを正確に書く（ここは遊ばない。読めなければ空文字・でっち上げない）。相手先＝売却案件なら売り主、購入希望なら買い手の実名（個人は『◯◯様』、法人は会社名）。",
+				"売買区分の判定ルール（上から順に・実データ2026-07-10で検証済み）：",
+				"(1) 【売買区分】欄に値が来ていればそれが確定（判定不要・そのまま返す）。",
+				"(2) 特定物件の過去実績を自分の物として書いている＝売却案件で確定：連系開始年（例「2018年から」）・FIT単価・年間売電実績・検針票等。買い手は年式で物件を語らない。内容が薄くても実績記載があれば売りとして動く（誤っても売り前提で動くコストは低い）。",
+				"(2b) 客の行動＝売り確定：「売却一括査定を依頼」「かんたん査定を依頼」「見積もり（査定）を依頼」「資産価値を知りたい」等、自分の物件の査定・見積を求める行動は売却案件。※禁止しているのはLP・サイトの名称そのもの（【高圧太陽光…】等の飾り文句）であって、客が査定を依頼したという行為は最強の売りシグナル。",
+				"(2c) 持ち込み＝売り・ただし向きに注意：相手が物件や土地を「紹介したい」「仕入れルートがある」「ご紹介できます」と差し出してくる＝売却案件（和上の買取基準を尋ねていても売り込みの下調べ）。逆に相手が「紹介してほしい」「案件の紹介依頼」「情報の共有希望」と受け取りたがっている＝購入希望。動詞の向き（差し出す/受け取る）で判定する。",
+				"(3) 希望条件の文脈＝購入希望：「探しています」「予算」「〜前後を1〜2件」「買取希望」等。法人の買いは『購入』と言わないことがある：完成渡し・権利売買の検討・仕入れ・（屋根や土地に）載せたい も購入希望。",
+				"(4) どちらの証拠も無ければ 不明（推測で埋めない）。",
+				"LP名・件名・『高額買取』等の定型文言は売買判定に使わない（全面禁止）。",
+				"規模欄は数量だけ（例: 500kW / 4MW / 9000坪 / 売電210万円/年）。高圧・低圧などの区分はお客様の実データから確定できない限り書かない＝分からなければ空。",
+				"流入ページ名・サイト名・件名の定型部分（例:【高圧太陽光発電所の高額買取査定】等のLP名）は物件の実態ではない。規模・種別・案件名の判定材料に使わない。お客様が書いた本文の実データ（年間売電収入・容量・所在地等）だけを使う。",
 			].join("\n"),
 			user: material,
 			maxTokens: 200,
@@ -33785,13 +33874,19 @@ async function deriveInquiryCaseName(input: {
 			所在地?: unknown;
 			規模?: unknown;
 			相手先?: unknown;
+			売買区分?: unknown;
+			判定根拠?: unknown;
 		};
 		const name = sanitizeCaseName(typeof parsed.案件名 === "string" ? parsed.案件名 : "");
+		const rawDealType = typeof parsed.売買区分 === "string" ? parsed.売買区分.trim() : "";
 		return {
 			name: name || fallback.name,
 			location: typeof parsed.所在地 === "string" ? parsed.所在地.trim().slice(0, 40) : "",
 			scale: typeof parsed.規模 === "string" ? parsed.規模.trim().slice(0, 40) : "",
 			counterparty: typeof parsed.相手先 === "string" ? parsed.相手先.trim().slice(0, 40) : "",
+			// 選択肢に無い値をselectへ流さない（Workerは文字列で読み書きする決定事項）。
+			dealType: rawDealType === "売却案件" || rawDealType === "購入希望" ? rawDealType : "",
+			dealReason: typeof parsed.判定根拠 === "string" ? parsed.判定根拠.trim().slice(0, 200) : "",
 		};
 	} catch (error) {
 		console.log("inquiry case name AI skipped", String(error));
@@ -33996,6 +34091,16 @@ async function enrichProjectFromInquiry(
 	// 相手先（売却→売り主／購入→買い手の名前）をヘッダー一番上の識別情報として持つ。
 	if (caseNaming.counterparty) {
 		patches["相手先"] = { kind: "text", value: caseNaming.counterparty };
+	}
+	// 売買区分のAIフォールバック：機械判定（フォーム明示欄）が空の時だけ採用し、根拠をコメントに残す。
+	// ルール実証（2026-07-10）：連系年等の過去実績記載=売り／希望条件・法人商談語彙=買い／証拠なし=不明のまま。
+	if (!projectDealType && caseNaming.dealType) {
+		patches["売買区分"] = { kind: "select", value: caseNaming.dealType };
+		await createPageComment(
+			notion,
+			projectPage.id,
+			`🧭 売買区分をAI判定で「${caseNaming.dealType}」にしました。\n根拠: ${caseNaming.dealReason || "（根拠記載なし）"}\n違っていたら売買区分を直してください。`,
+		).catch(() => {});
 	}
 	await safeUpdateExistingProperties(notion, projectPage, patches);
 	// 命名同期：確定した呼び名を子レコード（設備詳細・資料作成依頼）のタイトルにも反映する。
@@ -34422,8 +34527,20 @@ async function processBrokerCaseCreation(
 			message: `dry-run: 案件DBへ「[紹介] ${brokerName} 起点案件」を作成できます。Notionへは書き込みません。`,
 		};
 	}
+	// 社外顧問データの案件DB表現（2026-07-10設計）：ヘッダー5点を問い合わせ/土地と同じ水準で埋める。
+	// 命名・抽出は実証済みのAI（deriveInquiryCaseName・売買判定97.9%）を流用。材料は預かりメモ＝営業の一次情報。
+	// ブローカーは会社名を騙る前提＝個人名で扱う。相手先＝実売主がメモに明記されていればその実名、無ければ紹介ブローカー個人名（実売主判明で差替）。
+	const brokerCaseMemoText = options.caseMemo ?? text(brokerPage.properties?.["預かりメモ"]) ?? "";
+	const brokerNaming = await deriveInquiryCaseName({
+		inquiryTitle: `${brokerName} 紹介案件`,
+		summary: brokerCaseMemoText,
+		activityLog: "",
+		assetType: null,
+		caseType: null,
+		dealType: null,
+	});
 	const projectProperties: Record<string, unknown> = {
-		案件名: title(`[紹介] ${brokerName} 起点案件`),
+		案件名: title(brokerNaming.name || `[紹介] ${brokerName} 起点案件`),
 		ステータス: select("🔴 情報収集中"),
 		獲得ソース: select("紹介"),
 		仕入れ元区分: select("ブローカー"),
@@ -34433,7 +34550,17 @@ async function processBrokerCaseCreation(
 		案件詳細: richText(memo),
 		情報ソース: richText("社外顧問DB / Worker紹介案件化"),
 		確認待ち内容: richText("対象物、売買条件、価格、所有者/決裁者、必要資料を確認してください。次の一手は案件詳細に記録しています。"),
+		相手先: richText((brokerNaming.counterparty || `${brokerName}（紹介・実売主未確認）`).slice(0, 40)),
 	};
+	if (brokerNaming.location) {
+		projectProperties["所在地"] = richText(brokerNaming.location);
+	}
+	if (brokerNaming.scale) {
+		projectProperties["規模"] = richText(brokerNaming.scale);
+	}
+	if (brokerNaming.dealType) {
+		projectProperties["売買区分"] = select(brokerNaming.dealType);
+	}
 	if (assignedUserIds.length > 0) {
 		projectProperties["担当営業ユーザー"] = {
 			people: assignedUserIds.map((id) => ({ object: "user", id })),
