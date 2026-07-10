@@ -2554,6 +2554,7 @@ type LandInfo = {
 	farmland: string;
 	farmlandType: string;
 	registry: string;
+	inputEvidenceState: string;
 	nearbyResidentialDistanceM: number | null;
 	nearbyResidentialCheck: string;
 	transmissionLine: string;
@@ -26929,6 +26930,7 @@ function readLand(page: Page): LandInfo {
 			text(properties["登記確認状況"]) ||
 			text(properties["登記確認"]) ||
 			text(properties["農転/登記/近隣確認"]),
+		inputEvidenceState: text(properties["入力根拠区分"]) || "未区分",
 		nearbyResidentialDistanceM:
 			numberValue(properties["近隣住宅距離（m）"]) ??
 			numberValue(properties["近隣住宅距離"]) ??
@@ -28881,6 +28883,7 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 		const investigationGaps = uniqueStrings([
 			...(mapContext.geocodeCandidateRequiresReview ? ["所在地・地番確認"] : []),
 			...landInvestigationGaps(treasure.blockers),
+			...landInputEvidenceGaps(land),
 		]);
 		if (investigationGaps.length > 0) {
 			const scout = buildLandScoutReport({
@@ -29023,6 +29026,17 @@ function landInvestigationGaps(blockers: string[]): string[] {
 	if (/登記|所有者/.test(text)) gaps.push("登記・所有者");
 	if (/近隣住宅/.test(text)) gaps.push("近隣住宅距離");
 	return uniqueStrings(gaps);
+}
+
+function landInputEvidenceGaps(land: LandInfo): string[] {
+	if (land.inputEvidenceState === "原本") return [];
+	const positiveInputs = [
+		[/不要|許可済|可能|確認済/.test(land.farmland), "農地転用可否"],
+		[/確認済|登記済/.test(land.registry), "登記確認状況"],
+		[/4m|４m|6m|６m|大型車進入可|搬入可/.test(land.road), "接道状況"],
+	].filter(([isPositive]) => isPositive).map(([, label]) => label);
+	if (positiveInputs.length === 0) return [];
+	return [`${positiveInputs.join("・")}は入力済みだが根拠区分=${land.inputEvidenceState}のため原本待ち`];
 }
 
 function buildLandScoutReport(input: {

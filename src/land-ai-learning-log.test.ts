@@ -39,6 +39,7 @@ function landPage() {
 			接道: richTextProp("4m道路に接道"),
 			農地転用可否: selectProp("不要"),
 			登記確認状況: selectProp("確認済み"),
+			入力根拠区分: richTextProp("原本"),
 			"近隣住宅距離（m）": numberProp(80),
 			近隣住宅確認: selectProp("30m以上"),
 			変電所距離: richTextProp("3.2km"),

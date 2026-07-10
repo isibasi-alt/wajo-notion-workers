@@ -37,9 +37,10 @@ function highValueLandPage() {
 			電力会社エリア: selectProp("中部電力"),
 			用途地域: richTextProp("準工業地域"),
 			接道状況: richTextProp("南側6m公道に接道。大型車進入可。"),
-			農地転用可否: selectProp("不要"),
-			登記確認状況: selectProp("確認済み"),
-			"変電所距離（km）": numberProp(0.1),
+		農地転用可否: selectProp("不要"),
+		登記確認状況: selectProp("確認済み"),
+		入力根拠区分: richTextProp("原本"),
+		"変電所距離（km）": numberProp(0.1),
 			"近隣住宅距離（m）": numberProp(120),
 			近隣住宅確認: selectProp("30m以上"),
 			送電線の有無: selectProp("近接あり"),
@@ -153,6 +154,19 @@ function nearSubstationButBlockedPage() {
 	};
 }
 
+function secondaryEvidenceHighValuePage() {
+	const page = highValueLandPage();
+	return {
+		...page,
+		id: "land-secondary-evidence-1",
+		properties: {
+			...page.properties,
+			土地名称: titleProp("【TDD】二次資料だけでは原本待ち"),
+			入力根拠区分: richTextProp("二次資料"),
+		},
+	};
+}
+
 function addressOnlyPage() {
 	return {
 		id: "land-address-only-1",
@@ -248,6 +262,18 @@ async function main() {
 	const learningLog = createdPages[0]!.properties as Record<string, unknown>;
 	assert.match(JSON.stringify(learningLog.判定根拠), /2AI/);
 	assert.match(JSON.stringify(learningLog.判定根拠), /SABC/);
+
+	activePage = secondaryEvidenceHighValuePage();
+	const secondaryEvidenceResult = await processLandEvaluationForTest(
+		{ pageId: "land-secondary-evidence-1", dryRun: false },
+		notion as never,
+	);
+	assert.equal(secondaryEvidenceResult.action, "needs-review");
+	assert.equal(secondaryEvidenceResult.bucket, "要確認");
+	assert.match(
+		JSON.stringify(updates.at(-1)?.properties ?? {}),
+		/二次資料|原本待ち/,
+	);
 
 	activePage = linkedCaseLandPage();
 	const linkedCaseUpdateStart = updates.length;
