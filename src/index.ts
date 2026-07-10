@@ -34339,12 +34339,15 @@ async function linkContactLogsToProjectAndDeriveDecisionMaker(
 	for (const logId of uniqueStrings(contactLogIds)) {
 		try {
 			const logPage = await notion.pages.retrieve({ page_id: logId });
-			// 主権者3択（2026-07-11大ちゃん確定・接点ログの独立セレクト）：会えた／担当が決裁者＝把握。不明／空＝未把握。
-			const kessaisha = text(logPage.properties?.["決裁者"]);
-			if (kessaisha === "決裁者に会えた" || kessaisha === "担当が決裁者") {
+			// 主権者3択（2026-07-11大ちゃん確定・接点ログの独立セレクト）。
+			// 「決裁者面談済み」「担当決裁者として面談済み」＝把握／「決裁者不明」空＝未把握。
+			// 判定は『面談済』を含むか＝把握 で見る（文言の細部・決済/決裁の変換揺れに強い）。プロパティ名も両綴りを許容。
+			const kessaisha =
+				text(logPage.properties?.["決裁者"]) || text(logPage.properties?.["決済者"]);
+			if (kessaisha.includes("面談済")) {
 				metDecisionMaker = true;
 			}
-			// 旧「決裁者と活動種別」タグも当面は拾う（移行期の後方互換・既存レコード用）。
+			// 旧「決裁者と活動種別」タグも当面は拾う（移行期の後方互換）。
 			const kinds = multiSelectNames(logPage.properties?.["決裁者と活動種別"]);
 			if (kinds.includes("決裁者同席") || kinds.includes("担当が決裁者")) {
 				metDecisionMaker = true;
