@@ -17518,11 +17518,15 @@ function buildResidentRequestPrefillProperties(
 ): Record<string, Record<string, unknown>> {
 	const properties = projectPage.properties ?? {};
 	const prefill: Record<string, Record<string, unknown>> = {};
-	setTextPrefill(prefill, "案件番号", properties, [
+	const explicitCaseNumber = readFirstTextByAliases(properties, [
 		"案件番号",
 		"発電所問合せ番号",
 		"案件ID",
 	]);
+	const titleCaseNumber = extractInquiryReceptionNumber(readGenericPageTitle(projectPage));
+	if (explicitCaseNumber || titleCaseNumber) {
+		prefill.案件番号 = richText(explicitCaseNumber || titleCaseNumber);
+	}
 	setTextPrefill(prefill, "発電所名", properties, ["発電所名", "物件名", "案件名"]);
 	setTextPrefill(prefill, "発電所住所", properties, ["発電所住所", "所在地", "住所"]);
 	setSelectPrefill(prefill, "周知方法", properties, ["周知方法", "説明会方式", "周知区分"]);
