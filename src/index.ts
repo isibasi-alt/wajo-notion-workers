@@ -20148,7 +20148,7 @@ async function buildProposalSimulationPdfBytes(
 					font: fonts.bold,
 					color: colors.muted,
 				});
-				drawText(page, "画像未登録", {
+				drawText(page, sitePhoto ? "画像を確認できません" : "画像未登録", {
 					x: slotX + 12,
 					y: slotY + slotHeight / 2 - 10,
 					size: 8,
@@ -20551,6 +20551,14 @@ function buildProposalCoverIntroLines(draft: ProposalSimulationDraft): string[] 
 		return [
 			"本資料は、系統用蓄電池候補について、系統条件・設備条件・運用条件を先に整理するための概要資料です。",
 			scaleLine,
+			locationLine,
+		];
+	}
+	if (details?.fitFipType === "FIT" || details?.fitFipType === "FIP") {
+		return [
+			"本資料は、FIT/FIP売電を前提とした太陽光発電投資について、収益・設備・税務の根拠をまとめた提案資料です。",
+			scaleLine,
+			"残存売電期間、売電単価、維持費、融資・税効果を分けて確認し、投資判断の材料を整理します。",
 			locationLine,
 		];
 	}
