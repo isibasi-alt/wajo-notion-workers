@@ -87,7 +87,7 @@ async function main() {
 			関連案件: relationProp(["project-1"]),
 			関連設備詳細: relationProp(["equipment-1"]),
 			提案タイプ: selectProp("法人オーナー"),
-			販売価格: numberProp(20_000_000),
+			販売価格: numberProp(null),
 			仕入れ価格: numberProp(17_000_000),
 			年間売電収入: numberProp(3_000_000),
 			"年間維持費（ランニングコスト）": numberProp(500_000),
@@ -109,6 +109,13 @@ async function main() {
 			現場写真: filesProp(),
 		},
 	};
+	const projectPage = {
+		id: "project-1",
+		properties: {
+			Name: titleProp("投資条件テスト案件"),
+			販売価格: numberProp(20_000_000),
+		},
+	};
 	const updates: Array<Record<string, unknown>> = [];
 	const blockUpdates: Array<Record<string, unknown>> = [];
 	const appends: Array<Record<string, unknown>> = [];
@@ -120,6 +127,7 @@ async function main() {
 			retrieve: async ({ page_id }: { page_id: string }) => {
 				if (page_id === "finance-1") return financePage;
 				if (page_id === "proposal-1") return proposalPage;
+				if (page_id === "project-1") return projectPage;
 				if (page_id === "equipment-1") return { id: "equipment-1", properties: {} };
 				throw new Error(`unknown page ${page_id}`);
 			},

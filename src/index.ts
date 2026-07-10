@@ -16095,6 +16095,20 @@ function mergeProposalWithFinanceInput(
 	return { ...proposalSourcePage, properties };
 }
 
+function mergePageWithFallback(
+	primaryPage: Page,
+	fallbackPage: Page | null,
+	skipPropertyNames: string[] = [],
+): Page {
+	if (!fallbackPage) return primaryPage;
+	const merged: Record<string, unknown> = { ...(primaryPage.properties ?? {}) };
+	for (const [name, value] of Object.entries(fallbackPage.properties ?? {})) {
+		if (skipPropertyNames.includes(name)) continue;
+		if (!notionPropertyHasValue(merged[name])) merged[name] = value;
+	}
+	return { ...primaryPage, properties: merged };
+}
+
 const PROJECT_DOCUMENT_REQUEST_CONFIGS: Record<
 	ProjectDocumentRequestKind,
 	ProjectDocumentRequestConfig
@@ -17621,17 +17635,7 @@ function relationIdsFromAliases(
 }
 
 function mergeProjectWithEquipmentDetail(projectPage: Page, equipmentPage: Page | null): Page {
-	if (!equipmentPage) return projectPage;
-	const projectProperties = projectPage.properties ?? {};
-	const merged: Record<string, unknown> = { ...projectProperties };
-	for (const [name, value] of Object.entries(equipmentPage.properties ?? {})) {
-		if (name === "設備詳細名" || name === "関連案件") continue;
-		if (!notionPropertyHasValue(merged[name])) merged[name] = value;
-	}
-	return {
-		...projectPage,
-		properties: merged,
-	};
+	return mergePageWithFallback(projectPage, equipmentPage, ["設備詳細名", "関連案件"]);
 }
 
 function notionPropertyHasValue(property: unknown): boolean {
@@ -19041,7 +19045,22 @@ async function processInvestmentConditionPdf(
 		}
 	}
 
-	const proposalSourcePage = mergeProjectWithEquipmentDetail(proposalPage, equipmentPage);
+	const projectIds = relationIdsFromProperty(proposalPage.properties?.["関連案件"]);
+	let projectPage: Page | null = null;
+	if (projectIds.length === 1) {
+		try {
+			projectPage = await notion.pages.retrieve({ page_id: projectIds[0]! });
+		} catch (error) {
+			console.log("investment condition project retrieve skipped", {
+				financePageId: financePage.id,
+				projectPageId: projectIds[0],
+				error: String(error),
+			});
+		}
+	}
+	// 案件ページを価格の正本にし、既存の提案シミュレーションが古くても二重入力を求めない。
+	const proposalWithProject = mergePageWithFallback(proposalPage, projectPage, ["関連案件"]);
+	const proposalSourcePage = mergeProjectWithEquipmentDetail(proposalWithProject, equipmentPage);
 	const simulationSourcePage = mergeProposalWithFinanceInput(proposalSourcePage, financePage);
 	const draft = evaluateProposalSimulationDraft(simulationSourcePage);
 	if (draft.missingField) {
@@ -19049,7 +19068,10 @@ async function processInvestmentConditionPdf(
 			financePageId: financePage.id,
 			action: input.dryRun ? "dry-run" : "needs-input",
 			missingField: draft.missingField,
-			message: buildSequentialMissingMessage("投資条件PDF", draft.missingField, draft.nextRequiredFields),
+			message: buildInvestmentConditionProposalMissingMessage(
+				draft.missingField,
+				draft.nextRequiredFields,
+			),
 		};
 	}
 	if (!draft.financeSimulation) {
@@ -23208,6 +23230,18 @@ function buildSequentialMissingMessage(
 ): string {
 	const remaining = nextFields.length > 0 ? `\n次に確認する項目: ${nextFields.join(" / ")}` : "";
 	return `${workLabel}を実行する前に「${missingField}」を入力してください。\n入力場所: このボタンがあるレコード自身のプロパティです（ページ上部の「詳細を表示する」を開くと出てきます）。修正後にもう一度ボタンを押してください。${remaining}`;
+}
+
+function buildInvestmentConditionProposalMissingMessage(
+	missingField: string,
+	nextFields: string[],
+): string {
+	const remaining = nextFields.length > 0 ? `\n次に確認する項目: ${nextFields.join(" / ")}` : "";
+	const location =
+		missingField === "販売価格" || missingField === "仕入れ価格"
+			? "案件ページ（詳細）の該当プロパティです。入力後、この投資条件ページに戻ってPDFを再実行してください。"
+			: "シミュレーションの元ページ、または設備詳細ページの該当プロパティです。入力後、この投資条件ページに戻ってPDFを再実行してください。";
+	return `投資条件PDFを実行する前に「${missingField}」を入力してください。\n入力場所: ${location}${remaining}`;
 }
 
 function hasFieldValue(value: string | number | null): boolean {
