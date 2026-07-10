@@ -32153,6 +32153,7 @@ async function deriveInquiryCaseName(input: {
 				"捻りは実在の材料からだけ作る：数字ダジャレは本物の容量、キャラは活動ログにいる人。案件の事実（容量・売買・所有者・緊急度など）を捏造しない。読めない数値は書かない。日付・売買区分・担当者名・長い件名・『問い合わせ』等の管理語は入れない。短く（全角12文字目安）。",
 				"最優先は『電話で声に出して呼びやすい』こと。語呂よく2〜3拍で、舌を噛む綴りや説明が要る捻りは避ける（例○鳴門ぐるぐる／別府もくもく／熊本くまモン、例×長すぎ・読み方が割れる語）。",
 				"『芯』という単語自体を案件名に入れない（これは説明用の内部用語）。",
+				"地名は材料に書かれた粒度まで：県名しか無ければ県名で作る（例: 徳島2メガ）。市町村名を発明しない（徳島県→鳴門はNG）。",
 				"容量・金額の単位を盛らない：2,000kW=2メガ（ギガ等への誇張は事実誤り）。数字を使う時は実データの桁のまま。",
 				"手掛かりが薄くても必ず付ける（会社名の芯＋種別など）。「作れない」は禁止。",
 				"所在地・規模・相手先は事実だけを正確に書く（ここは遊ばない。読めなければ空文字・でっち上げない）。相手先＝売却案件なら売り主、購入希望なら買い手の実名（個人は『◯◯様』、法人は会社名）。",
@@ -32824,8 +32825,20 @@ async function processBrokerCaseCreation(
 			message: `dry-run: 案件DBへ「[紹介] ${brokerName} 起点案件」を作成できます。Notionへは書き込みません。`,
 		};
 	}
+	// 社外顧問データの案件DB表現（2026-07-10設計）：ヘッダー5点を問い合わせ/土地と同じ水準で埋める。
+	// 命名・抽出は実証済みのAI（deriveInquiryCaseName・売買判定97.9%）を流用。材料は預かりメモ＝営業の一次情報。
+	// ブローカーは会社名を騙る前提＝個人名で扱う。相手先＝実売主がメモに明記されていればその実名、無ければ紹介ブローカー個人名（実売主判明で差替）。
+	const brokerCaseMemoText = options.caseMemo ?? text(brokerPage.properties?.["預かりメモ"]) ?? "";
+	const brokerNaming = await deriveInquiryCaseName({
+		inquiryTitle: `${brokerName} 紹介案件`,
+		summary: brokerCaseMemoText,
+		activityLog: "",
+		assetType: null,
+		caseType: null,
+		dealType: null,
+	});
 	const projectProperties: Record<string, unknown> = {
-		案件名: title(`[紹介] ${brokerName} 起点案件`),
+		案件名: title(brokerNaming.name || `[紹介] ${brokerName} 起点案件`),
 		ステータス: select("🔴 情報収集中"),
 		獲得ソース: select("紹介"),
 		仕入れ元区分: select("ブローカー"),
@@ -32835,7 +32848,17 @@ async function processBrokerCaseCreation(
 		案件詳細: richText(memo),
 		情報ソース: richText("社外顧問DB / Worker紹介案件化"),
 		確認待ち内容: richText("対象物、売買条件、価格、所有者/決裁者、必要資料を確認してください。次の一手は案件詳細に記録しています。"),
+		相手先: richText((brokerNaming.counterparty || `${brokerName}（紹介・実売主未確認）`).slice(0, 40)),
 	};
+	if (brokerNaming.location) {
+		projectProperties["所在地"] = richText(brokerNaming.location);
+	}
+	if (brokerNaming.scale) {
+		projectProperties["規模"] = richText(brokerNaming.scale);
+	}
+	if (brokerNaming.dealType) {
+		projectProperties["売買区分"] = select(brokerNaming.dealType);
+	}
 	if (assignedUserIds.length > 0) {
 		projectProperties["担当営業ユーザー"] = {
 			people: assignedUserIds.map((id) => ({ object: "user", id })),
