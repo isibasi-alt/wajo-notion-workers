@@ -17639,7 +17639,14 @@ function relationIdsFromAliases(
 }
 
 function mergeProjectWithEquipmentDetail(projectPage: Page, equipmentPage: Page | null): Page {
-	return mergePageWithFallback(projectPage, equipmentPage, ["設備詳細名", "関連案件"]);
+	const merged = mergePageWithFallback(projectPage, equipmentPage, ["設備詳細名", "関連案件"]);
+	// 現場写真は設備詳細DBを正本にする。提案シミュレーション側へ同じ写真を二重入力させず、
+	// 設備詳細に実ファイルが登録されればPDF出力時にそちらを優先する。
+	const equipmentPhoto = equipmentPage?.properties?.["現場写真"];
+	if (notionPropertyHasValue(equipmentPhoto)) {
+		merged.properties = { ...(merged.properties ?? {}), 現場写真: equipmentPhoto };
+	}
+	return merged;
 }
 
 function notionPropertyHasValue(property: unknown): boolean {
