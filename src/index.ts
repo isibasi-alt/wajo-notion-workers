@@ -29033,7 +29033,7 @@ function landInvestigationGaps(blockers: string[]): string[] {
 }
 
 function landInputEvidenceGaps(land: LandInfo): string[] {
-	if (land.inputEvidenceState === "原本") return [];
+	if (["原本", "行政正式書面"].includes(land.inputEvidenceState)) return [];
 	const positiveInputs = [
 		[/不要|許可済|可能|確認済/.test(land.farmland), "農地転用可否"],
 		[/確認済|登記済/.test(land.registry), "登記確認状況"],
@@ -34543,6 +34543,12 @@ function caseLegitimacyGateMissing(page: Page): string[] {
 	}
 	if (isBlankOrPlaceholder(text(props["対象物種別"]))) {
 		missing.push("対象物種別（売る/買う“もの”を確定）");
+	}
+	// ★決裁者の把握＝床（2026-07-11大ちゃん確定）：所有者/決裁者が誰か"なんとなくでも"分かっているか。
+	// 人名は不要＝状態でよい（いざとなったら辿り着ける当て）。空＝誰に話すかも不明＝まだ問い合わせ/土地の段階。
+	// 自動で立つ道＝接点ログの「決裁者同席/担当が決裁者」→enrichが決裁者欄に状態を書く。手動で「当てあり」と記してもよい。
+	if (isBlankOrPlaceholder(text(props["決裁者"]))) {
+		missing.push("決裁者の把握（誰が決めるかの当て。接点ログで決裁者同席が付くか、当てありと記す。人名は不要）");
 	}
 	return missing;
 }
