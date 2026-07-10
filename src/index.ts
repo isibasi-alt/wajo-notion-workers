@@ -34222,9 +34222,10 @@ async function enrichProjectFromBrokerSource(
 	const brokerName = brokerAdvisorName(brokerPage);
 	const properties = projectPage.properties ?? {};
 	const projectDealType = text(properties["売買区分"]);
+	const custodyMemo = text(brokerPage.properties?.["預かりメモ"]);
 	const naming = await deriveInquiryCaseName({
 		inquiryTitle: `${brokerName} 紹介案件`,
-		summary: [text(brokerPage.properties?.["預かりメモ"]), text(properties["案件詳細"])]
+		summary: [custodyMemo, text(properties["案件詳細"])]
 			.filter(Boolean)
 			.join("\n"),
 		activityLog: "",
@@ -34259,6 +34260,18 @@ async function enrichProjectFromBrokerSource(
 	}
 	if (!text(properties["獲得ソース"])) {
 		patches["獲得ソース"] = { kind: "select", value: "紹介" };
+	}
+	if (!text(properties["案件詳細"])) {
+		patches["案件詳細"] = { kind: "text", value: buildBrokerCaseMemo(brokerName, custodyMemo) };
+	}
+	if (!text(properties["情報ソース"])) {
+		patches["情報ソース"] = { kind: "text", value: "社外顧問DB / 共通B引き継ぎ" };
+	}
+	if (!text(properties["確認待ち内容"])) {
+		patches["確認待ち内容"] = {
+			kind: "text",
+			value: "対象物、売買条件、価格、所有者/決裁者、必要資料を確認してください。",
+		};
 	}
 	let dealTypeComment = "";
 	if (!projectDealType && naming.dealType) {
@@ -34340,6 +34353,34 @@ async function enrichProjectFromLandSource(
 	}
 	if (!text(properties["獲得ソース"])) {
 		patches["獲得ソース"] = { kind: "select", value: "土地情報" };
+	}
+	if (landCaseType && !text(properties["案件種別"])) {
+		patches["案件種別"] = { kind: "select", value: landCaseType };
+	}
+	if (!text(properties["案件詳細"])) {
+		patches["案件詳細"] = {
+			kind: "text",
+			value: [
+				"土地情報DBから共通Bで引き継ぎ。",
+				`土地名: ${land.name}`,
+				land.address ? `所在地: ${land.address}` : "",
+				landScale ? `面積: ${landScale}` : "",
+				land.powerArea ? `電力エリア: ${land.powerArea}` : "",
+				land.road ? `接道: ${land.road}` : "",
+				land.ownerInfo ? `所有者情報: ${land.ownerInfo}` : "",
+				land.targetUse ? `対象用途: ${land.targetUse}` : "",
+				land.caseReason ? `案件化根拠: ${land.caseReason}` : "",
+			].filter(Boolean).join("\n"),
+		};
+	}
+	if (!text(properties["情報ソース"])) {
+		patches["情報ソース"] = { kind: "text", value: "土地情報DB / 共通B引き継ぎ" };
+	}
+	if (!text(properties["確認待ち内容"])) {
+		patches["確認待ち内容"] = {
+			kind: "text",
+			value: "売り先候補、売却条件、価格、登記、現地確認、対象用途の妥当性を人間が確認してください。",
+		};
 	}
 	await finishProjectEnrichFromSource({
 		notion,
