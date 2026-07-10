@@ -29282,9 +29282,34 @@ async function createInquiryFromEmail(
 		receptionNumber,
 		emailInfo.receivedAt,
 	);
+	// テンプレID渡しはNotion側で適用されない実績があるため（機械起票ページにアイコン・帯が付かない）、
+	// 案件ページと同じ「コードが直接付ける」方式で見た目を揃える。2026-07-10
+	await notion.pages
+		.update({
+			page_id: created.id,
+			icon: { type: "icon", icon: { name: "move", color: "purple" } },
+		})
+		.catch((error) => console.log("inquiry icon set skipped", String(error)));
 	// 営業ブリーフィングはWorkerでは書かない。ページ本文の文面は大ちゃんが手直しできる
 	// Notion整形エージェント（v2）に一本化（二重書き手の解消・2026-07-10）。
 	await appendBlocksIfAny(notion, created.id, [
+		{
+			object: "block",
+			type: "callout",
+			callout: {
+				rich_text: [
+					{
+						type: "text",
+						text: {
+							content:
+								"📨 いまここ＝「お問い合わせ」の画面\n📨 お問い合わせ　▸　📂 案件　▸　🏆 成約　▸　📝 活動ログ\n迷子になったら、一番上のこの帯を見る。ボタンで次に進むと、帯の色と「いまここ」が変わるで。",
+						},
+					},
+				],
+				icon: { emoji: "📨" },
+				color: "blue_background",
+			},
+		},
 		{
 			object: "block",
 			type: "callout",
