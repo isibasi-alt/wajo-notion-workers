@@ -26433,6 +26433,12 @@ function formatMonthDayJP(isoDate: string): string {
 	return `${Number(match[1])}月${Number(match[2])}日`;
 }
 
+// 空 or 未確定プレースホルダ（その他/不明/未設定/未確定）＝事実が判明した時に上書きしてよい値。
+function isBlankOrPlaceholder(value: string): boolean {
+	const trimmed = (value ?? "").trim();
+	return trimmed === "" || ["その他", "不明", "未設定", "未確定"].includes(trimmed);
+}
+
 function taskTitlesSimilar(a: string, b: string): boolean {
 	const left = normalizeTaskTitle(a);
 	const right = normalizeTaskTitle(b);
@@ -34563,10 +34569,12 @@ async function enrichProjectFromLandSource(
 	if (landOwner && !text(properties["相手先"])) {
 		patches["相手先"] = { kind: "text", value: landOwner.slice(0, 40) };
 	}
-	if (!text(properties["売買区分"])) {
+	// 土地入口は定義上100%「対象物種別=土地／売買区分=売却案件」。ネイティブA（かDB既定）が
+	// 先に『その他』『不明』を入れると空欄判定にならないため、プレースホルダ値なら上書きして必ず正す。
+	if (isBlankOrPlaceholder(text(properties["売買区分"]))) {
 		patches["売買区分"] = { kind: "select", value: "売却案件" };
 	}
-	if (!text(properties["対象物種別"])) {
+	if (isBlankOrPlaceholder(text(properties["対象物種別"]))) {
 		patches["対象物種別"] = { kind: "select", value: "土地" };
 	}
 	if (!text(properties["仕入れ元区分"])) {
