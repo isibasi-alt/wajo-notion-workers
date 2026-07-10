@@ -287,6 +287,26 @@ function financeSimulationDataSourceSchema() {
 	};
 }
 
+function caseDocumentDataSourceSchema() {
+	return {
+		properties: {
+			資料名: { type: "title", title: {} },
+			資料種別: {
+				type: "select",
+				select: {
+					options: [
+						{ name: "発電シミュレーション" },
+						{ name: "住民説明会資料" },
+					],
+				},
+			},
+			添付ファイル: { type: "files", files: {} },
+			関連案件: { type: "relation", relation: {} },
+			関連資料作成依頼: { type: "relation", relation: {} },
+		},
+	};
+}
+
 function readyProposalRequestPage() {
 	return {
 		id: "request-ready-1",
@@ -308,6 +328,17 @@ function readyProposalRequestPage() {
 			税引後キャッシュフロー: numberProp(null),
 			DSCR: numberProp(null),
 			購入タイミング判定: selectProp("C"),
+		},
+	};
+}
+
+function completedProposalRequestPage() {
+	const page = readyProposalRequestPage();
+	return {
+		...page,
+		properties: {
+			...page.properties,
+			シミュレーションステータス: selectProp("シミュレーション準備完了"),
 		},
 	};
 }
@@ -399,6 +430,9 @@ function makeNotion(options: {
 			retrieve: async ({ data_source_id }: { data_source_id?: string } = {}) => {
 				if (data_source_id === "7e4d0168-6e54-4071-bd55-f9730202225c") {
 					return financeSimulationDataSourceSchema();
+				}
+				if (data_source_id === "fde6d55f-3127-4716-862c-5fb43b2cc3b4") {
+					return caseDocumentDataSourceSchema();
 				}
 				return requestDataSourceSchema();
 			},
@@ -702,10 +736,10 @@ async function main() {
 		{ projectPageId: "project-1", dryRun: false },
 		financeIncompleteProposalCase.notion as never,
 	);
-	assert.equal(financeIncompleteProposal.action, "created");
-	assert.equal(financeIncompleteProposal.requestPageId, "request-created-1");
-	assert.match(financeIncompleteProposal.message, /投資条件入力ページ/);
-	assert.equal(financeIncompleteProposalCase.creates.length, 2);
+	assert.equal(financeIncompleteProposal.action, "needs-input");
+	assert.equal(financeIncompleteProposal.requestPageId, null);
+	assert.match(financeIncompleteProposal.message, /先に提案シミュレーションを完成/);
+	assert.equal(financeIncompleteProposalCase.creates.length, 0);
 
 	const financeRequestCase = makeNotion({
 		projectPropertyOverrides: {
@@ -722,7 +756,7 @@ async function main() {
 			権利代: numberProp(2000000),
 		},
 		existingByDocumentType: {
-			提案書: [readyProposalRequestPage()],
+		提案書: [completedProposalRequestPage()],
 		},
 		financeCreatedSparseRetrieve: true,
 	});
@@ -811,7 +845,7 @@ async function main() {
 
 	const financeExistingRepairCase = makeNotion({
 		existingByDocumentType: {
-			提案書: [readyProposalRequestPage()],
+			提案書: [completedProposalRequestPage()],
 			ファイナンスシミュレーション: [
 				{
 					...requestPage("request-finance-existing", "ファイナンスシミュレーション"),
@@ -867,7 +901,7 @@ async function main() {
 
 	const simulationCase = makeNotion({
 		existingByDocumentType: {
-			提案書: [readyProposalRequestPage()],
+			提案書: [completedProposalRequestPage()],
 		},
 	});
 	const simulation = await processProposalSimulationForTest(
@@ -892,6 +926,24 @@ async function main() {
 	);
 	assert.deepEqual(
 		(salesProposalProps["関連提案シミュレーション依頼"] as { relation: Array<{ id: string }> }).relation,
+		[{ id: "request-ready-1" }],
+	);
+	const proposalLedgerCreate = simulationCase.creates.find((create) =>
+		(create.parent as { data_source_id?: string })?.data_source_id ===
+		"fde6d55f-3127-4716-862c-5fb43b2cc3b4"
+	);
+	assert.ok(proposalLedgerCreate, "生成した提案PDFを案件資料DBへ台帳登録すること");
+	const proposalLedgerProps = proposalLedgerCreate!.properties as Record<string, unknown>;
+	assert.equal(
+		(proposalLedgerProps.資料種別 as { select: { name: string } }).select.name,
+		"発電シミュレーション",
+	);
+	assert.deepEqual(
+		(proposalLedgerProps.関連案件 as { relation: Array<{ id: string }> }).relation,
+		[{ id: "project-1" }],
+	);
+	assert.deepEqual(
+		(proposalLedgerProps.関連資料作成依頼 as { relation: Array<{ id: string }> }).relation,
 		[{ id: "request-ready-1" }],
 	);
 	const projectGrossUpdate = simulationCase.updates.find((update) => {
@@ -938,7 +990,7 @@ async function main() {
 	};
 	const dedupCase = makeNotion({
 		existingByDocumentType: {
-			提案書: [readyProposalRequestPage()],
+			提案書: [completedProposalRequestPage()],
 		},
 		existingByDataSource: {
 			"7e4d0168-6e54-4071-bd55-f9730202225c": [dedupExistingBox],

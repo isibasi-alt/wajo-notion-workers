@@ -17073,6 +17073,9 @@ async function processProjectDocumentRequest(
 				? "先に提案シミュレーションを完成させてください（提案シミュレーションレコードの「シミュレーションPDFを出力」→ 提案PDFリンクが入ったらファイナンスに進めます）。"
 				: "先に「シミュレーション作成」で提案シミュレーションを作り、完成させてからファイナンスに進んでください。";
 			if (!input.dryRun) {
+				await safeUpdateExistingProperties(notion, projectPage, {
+					資料作成メモ: { kind: "text", value: gateMessage },
+				});
 				await createPageComment(
 					notion,
 					projectPage.id,
