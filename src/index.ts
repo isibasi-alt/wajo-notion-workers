@@ -19457,6 +19457,15 @@ async function buildProposalSimulationPdfBytes(
 			x += font.widthOfTextAtSize(run, options.size);
 		}
 	};
+	const drawHeaderBrand = (page: PDFPage) => {
+		page.drawText("WAJO Sales OS", {
+			x: left,
+			y: pageHeight - 34,
+			size: 15,
+			font: fonts.bold,
+			color: rgb(1, 1, 1),
+		});
+	};
 	const drawHeader = (page: PDFPage, pageNo: number, title: string, subtitle: string, breadcrumb: string) => {
 		page.drawRectangle({
 			x: 0,
@@ -19465,13 +19474,9 @@ async function buildProposalSimulationPdfBytes(
 			height: 88,
 			color: colors.navy,
 		});
-		drawText(page, "WAJO Sales OS", {
-			x: left,
-			y: pageHeight - 34,
-			size: 15,
-			font: fonts.bold,
-			color: rgb(1, 1, 1),
-		});
+		// Use the embedded font for the header brand. Standard Latin font glyphs
+		// were missing in some PDF renderers on even-numbered pages.
+		drawHeaderBrand(page);
 		drawText(page, title, {
 			x: left,
 			y: pageHeight - 57,
@@ -19503,7 +19508,7 @@ async function buildProposalSimulationPdfBytes(
 	};
 
 	const drawFooter = (page: PDFPage, y = 30) => {
-		drawText(page, `Record ID: ${pageId}`, {
+		page.drawText("WAJO Sales OS | Proposal Simulation", {
 			x: left,
 			y,
 			size: 7.5,
@@ -20441,6 +20446,8 @@ async function buildProposalSimulationPdfBytes(
 		y = drawSectionTitle(fourth, y, "現場写真");
 		await drawSitePhotoFrame(fourth, y, draft.sitePhotos, { height: 132 });
 		drawFooter(fourth, 14);
+		// Keep the brand above any late photo/chart drawing on the final page.
+		drawHeaderBrand(fourth);
 	}
 
 	return pdf.save();
