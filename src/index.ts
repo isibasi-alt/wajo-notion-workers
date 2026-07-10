@@ -26426,6 +26426,13 @@ function todayDateJST(): string {
 	return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
+// "2026-07-10" → "7月10日"（中立の日付ラベル用・先頭ゼロを落とす）
+function formatMonthDayJP(isoDate: string): string {
+	const match = /^\d{4}-(\d{2})-(\d{2})/.exec(isoDate);
+	if (!match) return isoDate;
+	return `${Number(match[1])}月${Number(match[2])}日`;
+}
+
 function taskTitlesSimilar(a: string, b: string): boolean {
 	const left = normalizeTaskTitle(a);
 	const right = normalizeTaskTitle(b);
@@ -34066,8 +34073,8 @@ async function deriveInquiryCaseName(input: {
 				"地名は材料に書かれた粒度まで：県名しか無ければ県名で作る（例: 徳島2メガ）。市町村名を発明しない（徳島県→鳴門はNG）。",
 				"容量・金額の単位を盛らない：2,000kW=2メガ（ギガ等への誇張は事実誤り）。数字を使う時は実データの桁のまま。",
 				"手掛かりが薄くても必ず付ける（会社名の芯＋種別など）。「作れない」は禁止。",
-				"★実在の人物名（紹介者・売主・買主など個人名）は、もじらない・語呂合わせしない・キャラ化しない（例×セナちゃん/瀬名レーシング）。人を茶化した名は、営業が本人前で口にすると関係を壊す＝AI自動命名では絶対にやらない。遊び心はモノ・場所・会社にだけ乗せる。",
-				"人物由来（ブローカー紹介など）で対象物・場所が未確定なら、素直に『◯◯（実名）つながり案件』のように真面目に付ける（人名は相手先プロパティにも載る）。対象物や場所が判明したら、そのモノ・場所で遊ぶ（人名でなく）。",
+				"★実在の人物名（紹介者・売主・買主など個人名）は案件名に一切入れない（もじりも真面目もダメ）。人名を案件名に載せること自体がノイズ＝営業が本人前で口にする脆さになる。人物の識別は『相手先』プロパティが担うので、案件名に人名は不要。遊び心はモノ・場所・会社にだけ乗せる。",
+				"人物由来（ブローカー紹介など）で対象物・場所が未確定なら、案件名は中立の日付ラベル（例『紹介案件 7月10日』）にする。対象物や場所が判明したら、そのモノ・場所で遊んだ通称に付け替える（人名は使わない）。",
 				"所在地・規模・相手先は事実だけを正確に書く（ここは遊ばない。読めなければ空文字・でっち上げない）。相手先＝売却案件なら売り主、購入希望なら買い手の実名（個人は『◯◯様』、法人は会社名）。",
 				"売買区分の判定ルール（上から順に・実データ2026-07-10で検証済み）：",
 				"(1) 【売買区分】欄に値が来ていればそれが確定（判定不要・そのまま返す）。",
@@ -34377,6 +34384,7 @@ function projectHasFinalCaseName(projectPage: Page): { final: boolean; current: 
 	const provisional =
 		current.length === 0 ||
 		/^案件[\s　\-\/／｜]/.test(current) ||
+		/^紹介案件/.test(current) ||
 		current.includes("｜");
 	return { final: !provisional, current };
 }
@@ -34441,14 +34449,21 @@ async function enrichProjectFromBrokerSource(
 	});
 	const { final: hasFinalCaseName, current: currentCaseTitle } =
 		projectHasFinalCaseName(projectPage);
-	const finalCaseName = hasFinalCaseName ? currentCaseTitle : naming.name;
 	const today = todayDateJST();
+	// A案（2026-07-10大ちゃん決定）：人物名は案件名に入れない＝識別は相手先プロパティで。
+	// 対象物・場所が判明していればモノ/場所で遊んだ通称、未確定なら中立の日付ラベル『紹介案件 M月D日』。
+	const hasAssetMaterial = Boolean(naming.location || naming.scale);
+	const brokerTitle = hasAssetMaterial && naming.name
+		? naming.name
+		: `紹介案件 ${formatMonthDayJP(today)}`;
+	const finalCaseName = hasFinalCaseName ? currentCaseTitle : brokerTitle;
 	const patches: Record<string, SafePatch> = {
 		最終アクション日: { kind: "date", value: today },
 	};
-	if (!hasFinalCaseName && naming.name) {
-		patches["案件名"] = { kind: "text", value: naming.name };
+	if (!hasFinalCaseName) {
+		patches["案件名"] = { kind: "text", value: brokerTitle };
 	}
+	// 相手先＝紹介者/実売主の実名。人物はここで敬意を持って扱う（案件名には出さない）。
 	if (!text(properties["相手先"])) {
 		patches["相手先"] = {
 			kind: "text",
