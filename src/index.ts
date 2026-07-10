@@ -15025,6 +15025,7 @@ export {
 	resolveWajoOpenAiConfig as resolveWajoOpenAiConfigForTest,
 	resolveWajoAnthropicConfig as resolveWajoAnthropicConfigForTest,
 	callAnthropicChat as callAnthropicChatForTest,
+	deriveInquiryCaseName as deriveInquiryCaseNameForTest,
 	applySalesPerformanceQualitativeGuard as applySalesPerformanceQualitativeGuardForTest,
 	buildSalesPerformanceReviewPrompts as buildSalesPerformanceReviewPromptsForTest,
 	SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT as SALES_PERFORMANCE_QUALITATIVE_MISSING_TEXT_FOR_TEST,
@@ -32049,6 +32050,8 @@ function sanitizeCaseName(raw: string): string {
 	name = name.replace(/^案件名[:：]\s*/, "");
 	name = name.replace(/^[「『“"'（(]+/, "").replace(/[」』”"'）)]+$/, "");
 	name = name.replace(/[｜|]/g, " ").replace(/[\s　]+/g, " ").trim();
+	// プロンプトの内部用語「芯」がAI出力に漏れることがある（実測1/5）ため確定的に削ぐ。
+	name = name.replace(/芯$/, "").trim();
 	return name.slice(0, 24);
 }
 
@@ -32137,6 +32140,8 @@ async function deriveInquiryCaseName(input: {
 				"骨は地域か芯（容量4メガ/500キロ・種別 低圧/野立て/蓄電池/高圧）を最低1つ残し、そこに上の引き出しの捻りを効かせる。一発で覚えられて他と被らない通称にする。『姫路低圧』のような無個性名の量産は禁止。同じ切り口を連発しない。",
 				"捻りは実在の材料からだけ作る：数字ダジャレは本物の容量、キャラは活動ログにいる人。案件の事実（容量・売買・所有者・緊急度など）を捏造しない。読めない数値は書かない。日付・売買区分・担当者名・長い件名・『問い合わせ』等の管理語は入れない。短く（全角12文字目安）。",
 				"最優先は『電話で声に出して呼びやすい』こと。語呂よく2〜3拍で、舌を噛む綴りや説明が要る捻りは避ける（例○鳴門ぐるぐる／別府もくもく／熊本くまモン、例×長すぎ・読み方が割れる語）。",
+				"『芯』という単語自体を案件名に入れない（これは説明用の内部用語）。",
+				"容量・金額の単位を盛らない：2,000kW=2メガ（ギガ等への誇張は事実誤り）。数字を使う時は実データの桁のまま。",
 				"手掛かりが薄くても必ず付ける（会社名の芯＋種別など）。「作れない」は禁止。",
 				"所在地・規模・相手先は事実だけを正確に書く（ここは遊ばない。読めなければ空文字・でっち上げない）。相手先＝売却案件なら売り主、購入希望なら買い手の実名（個人は『◯◯様』、法人は会社名）。",
 				"規模欄は数量だけ（例: 500kW / 4MW / 9000坪 / 売電210万円/年）。高圧・低圧などの区分はお客様の実データから確定できない限り書かない＝分からなければ空。",
