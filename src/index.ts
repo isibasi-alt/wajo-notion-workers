@@ -17573,6 +17573,12 @@ function buildResidentRequestPrefillProperties(
 		"保守管理責任者",
 		"責任者氏名",
 	]);
+	setTextPrefill(prefill, "住民向け問い合わせ窓口", properties, [
+		"住民向け問い合わせ窓口",
+		"問い合わせ窓口",
+		"連絡先・窓口",
+		"住民窓口",
+	]);
 	setTextPrefill(prefill, "旧認定事業者", properties, [
 		"旧認定事業者",
 		"旧事業者",
@@ -21475,6 +21481,12 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 		"保守管理責任者",
 		"責任者氏名",
 	]);
+	const residentContact = readFirstTextByAliases(properties, [
+		"住民向け問い合わせ窓口",
+		"問い合わせ窓口",
+		"連絡先・窓口",
+		"住民窓口",
+	]);
 	const oldOperator = readFirstTextByAliases(properties, [
 		"旧認定事業者",
 		"旧事業者",
@@ -21527,6 +21539,7 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 		{ label: "質問受付期間", value: questionPeriod },
 		{ label: "周知日", value: briefingDate },
 		{ label: "保守管理責任者", value: managerName },
+		{ label: "住民向け問い合わせ窓口", value: residentContact },
 		{ label: "旧認定事業者", value: oldOperator },
 		{ label: "新認定事業者", value: newOperator },
 		{ label: "設備ID", value: facilityId },
@@ -21558,6 +21571,7 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 		`周知方法: ${notifyMethod}`,
 		`質問受付期間: ${questionPeriod}`,
 		`周知日: ${briefingDate}`,
+		`住民向け問い合わせ窓口: ${residentContact}`,
 	];
 	const imageStatusLines = [
 		`発電所所在地画像: ${plantLocationImages.length}件`,
@@ -21665,7 +21679,8 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 				title: "連絡先・責任者",
 				lines: [
 					`保守管理責任者: ${managerName}`,
-					"保守管理、緊急時対応、周辺地域からの問い合わせ対応は責任者が確認します。",
+					`住民向け問い合わせ窓口: ${residentContact}`,
+					"保守管理、緊急時対応、周辺地域からの問い合わせ対応は上記窓口で受け付けます。",
 				],
 			},
 			{
@@ -34153,7 +34168,191 @@ async function enrichProjectFromInquiry(
 	}
 }
 
-// Bボタン（案件ヘッダー）本体：案件の『元問い合わせ』を辿り、顧客接点ログ等のリレーションを案件へ引き継ぐ。
+// 共通B・命名ガード：一度付いた通称は上書きしない。仮名（「案件-…」始まり／「｜」入り）の時だけ命名対象。
+function projectHasFinalCaseName(projectPage: Page): { final: boolean; current: string } {
+	const current = readGenericPageTitle(projectPage) || "";
+	const final =
+		current.length > 0 && !/^案件-/.test(current) && !current.includes("｜");
+	return { final, current };
+}
+
+// 共通Bの仕上げ：ヘッダーpatch適用→売買区分AIフォールバック根拠コメント→子レコード名同期→設備詳細scaffolding→完了コメント。
+async function finishProjectEnrichFromSource(input: {
+	notion: NotionClient;
+	projectPage: Page;
+	patches: Record<string, SafePatch>;
+	finalCaseName: string;
+	dealTypeComment: string;
+	doneComment: string;
+}): Promise<void> {
+	const { notion, projectPage } = input;
+	await safeUpdateExistingProperties(notion, projectPage, input.patches);
+	if (input.dealTypeComment) {
+		await createPageComment(notion, projectPage.id, input.dealTypeComment).catch(() => {});
+	}
+	if (input.finalCaseName) {
+		const syncResult = await syncChildRecordTitlesToCaseName(
+			notion,
+			projectPage,
+			input.finalCaseName,
+		).catch((error) => ({ updated: 0, skipped: 0, failures: [String(error).slice(0, 160)] }));
+		if (syncResult.updated > 0 || syncResult.failures.length > 0) {
+			await createPageComment(
+				notion,
+				projectPage.id,
+				[
+					`🏷 子レコード名の同期: 更新${syncResult.updated}件 / 変更不要${syncResult.skipped}件 / 失敗${syncResult.failures.length}件`,
+					...syncResult.failures.map((failure) => `・${failure}`),
+				].join("\n"),
+			).catch(() => {});
+		}
+	}
+	await initializeProjectScaffolding(notion, projectPage.id, false);
+	await createPageComment(notion, projectPage.id, input.doneComment).catch(() => {});
+}
+
+// 共通B｜紹介ブローカー由来：預かりメモを材料にAI命名・相手先・売買判定で案件ヘッダーを仕上げる。
+// ブローカーは会社名を騙る前提＝相手先は実売主名（メモ明記時）、無ければブローカー個人名（実売主判明で差替）。
+async function enrichProjectFromBrokerSource(
+	projectPage: Page,
+	brokerPageId: string,
+	notion: NotionClient,
+): Promise<void> {
+	const brokerPage = await notion.pages.retrieve({ page_id: brokerPageId });
+	const brokerName = brokerAdvisorName(brokerPage);
+	const properties = projectPage.properties ?? {};
+	const projectDealType = text(properties["売買区分"]);
+	const naming = await deriveInquiryCaseName({
+		inquiryTitle: `${brokerName} 紹介案件`,
+		summary: [text(brokerPage.properties?.["預かりメモ"]), text(properties["案件詳細"])]
+			.filter(Boolean)
+			.join("\n"),
+		activityLog: "",
+		assetType: text(properties["対象物種別"]) || null,
+		caseType: text(properties["案件種別"]) || null,
+		dealType: projectDealType || null,
+	});
+	const { final: hasFinalCaseName, current: currentCaseTitle } =
+		projectHasFinalCaseName(projectPage);
+	const finalCaseName = hasFinalCaseName ? currentCaseTitle : naming.name;
+	const today = todayDateJST();
+	const patches: Record<string, SafePatch> = {
+		最終アクション日: { kind: "date", value: today },
+	};
+	if (!hasFinalCaseName && naming.name) {
+		patches["案件名"] = { kind: "text", value: naming.name };
+	}
+	if (!text(properties["相手先"])) {
+		patches["相手先"] = {
+			kind: "text",
+			value: (naming.counterparty || `${brokerName}（紹介・実売主未確認）`).slice(0, 40),
+		};
+	}
+	if (naming.location && !text(properties["所在地"])) {
+		patches["所在地"] = { kind: "text", value: naming.location };
+	}
+	if (naming.scale && !text(properties["規模"])) {
+		patches["規模"] = { kind: "text", value: naming.scale };
+	}
+	if (!text(properties["仕入れ元区分"])) {
+		patches["仕入れ元区分"] = { kind: "select", value: "ブローカー" };
+	}
+	if (!text(properties["獲得ソース"])) {
+		patches["獲得ソース"] = { kind: "select", value: "紹介" };
+	}
+	let dealTypeComment = "";
+	if (!projectDealType && naming.dealType) {
+		patches["売買区分"] = { kind: "select", value: naming.dealType };
+		dealTypeComment = `🧭 売買区分をAI判定で「${naming.dealType}」にしました。\n根拠: ${naming.dealReason || "（根拠記載なし）"}\n違っていたら売買区分を直してください。`;
+	}
+	await finishProjectEnrichFromSource({
+		notion,
+		projectPage,
+		patches,
+		finalCaseName,
+		dealTypeComment,
+		doneComment: `✅ 紹介引き継ぎ完了：紹介元 ${brokerName} の預かりメモを材料に、案件名・相手先・所在地・規模・売買区分を補完しました。実売主が判明したら相手先を差し替えてください。`,
+	});
+}
+
+// 共通B｜土地情報由来：土地DBの実データ（所在地・面積・所有者）でヘッダーを埋める。AI推測でなく事実優先。
+async function enrichProjectFromLandSource(
+	projectPage: Page,
+	landPageId: string,
+	notion: NotionClient,
+): Promise<void> {
+	const landPage = await notion.pages.retrieve({ page_id: landPageId });
+	const land = readLand(landPage);
+	const properties = projectPage.properties ?? {};
+	const landLocation = (land.address.match(/^(.*?[市区町村])/)?.[1] ?? land.address).slice(0, 20);
+	const landScale = land.areaTsubo
+		? `${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪`
+		: "";
+	const landOwner = readFirstTextByAliases(land.page.properties ?? {}, [
+		"所有者情報",
+		"所有者",
+		"所有者名",
+		"地権者",
+	]);
+	const landCaseType = inferProjectTypeFromLand(land);
+	const naming = await deriveInquiryCaseName({
+		inquiryTitle: land.name,
+		summary: [
+			`所在地:${land.address}`,
+			landScale ? `面積:${landScale}` : "",
+			land.powerArea ? `電力:${land.powerArea}` : "",
+			land.landUse ? `用途:${land.landUse}` : "",
+		]
+			.filter(Boolean)
+			.join(" "),
+		activityLog: "",
+		assetType: "土地",
+		caseType: landCaseType,
+		dealType: "売却案件",
+	});
+	const { final: hasFinalCaseName, current: currentCaseTitle } =
+		projectHasFinalCaseName(projectPage);
+	const finalCaseName = hasFinalCaseName ? currentCaseTitle : naming.name;
+	const today = todayDateJST();
+	const patches: Record<string, SafePatch> = {
+		最終アクション日: { kind: "date", value: today },
+	};
+	if (!hasFinalCaseName && naming.name) {
+		patches["案件名"] = { kind: "text", value: naming.name };
+	}
+	if (landLocation && !text(properties["所在地"])) {
+		patches["所在地"] = { kind: "text", value: landLocation };
+	}
+	if (landScale && !text(properties["規模"])) {
+		patches["規模"] = { kind: "text", value: landScale };
+	}
+	if (landOwner && !text(properties["相手先"])) {
+		patches["相手先"] = { kind: "text", value: landOwner.slice(0, 40) };
+	}
+	if (!text(properties["売買区分"])) {
+		patches["売買区分"] = { kind: "select", value: "売却案件" };
+	}
+	if (!text(properties["対象物種別"])) {
+		patches["対象物種別"] = { kind: "select", value: "土地" };
+	}
+	if (!text(properties["仕入れ元区分"])) {
+		patches["仕入れ元区分"] = { kind: "select", value: "土地情報" };
+	}
+	if (!text(properties["獲得ソース"])) {
+		patches["獲得ソース"] = { kind: "select", value: "土地情報" };
+	}
+	await finishProjectEnrichFromSource({
+		notion,
+		projectPage,
+		patches,
+		finalCaseName,
+		dealTypeComment: "",
+		doneComment: `✅ 土地引き継ぎ完了：土地情報「${land.name}」の実データ（所在地・面積・所有者）で案件ヘッダーを補完しました。売り先候補・売却条件を確認してください。`,
+	});
+}
+
+// Bボタン（案件ヘッダー）本体：案件の出どころ（元問い合わせ／紹介ブローカー／関連土地情報）を辿り、
+// どの入口から来ても1個のボタンで引き継ぐ「共通B」（2026-07-10設計）。
 // 案件はA（ネイティブ）が作成済みで、ここでは新規作成せず enrich のみ行う。
 async function processProjectEnrichFromInquiry(
 	projectPageId: string,
@@ -34166,10 +34365,20 @@ async function processProjectEnrichFromInquiry(
 		relationIdsFromProperty(projectPage.properties?.["元問い合わせ"]),
 	);
 	if (inquiryIds.length === 0) {
+		const brokerIds = relationIdsFromProperty(projectPage.properties?.["紹介ブローカー"]);
+		if (brokerIds.length > 0) {
+			await enrichProjectFromBrokerSource(projectPage, brokerIds[0]!, notion);
+			return;
+		}
+		const landIds = relationIdsFromProperty(projectPage.properties?.["関連土地情報"]);
+		if (landIds.length > 0) {
+			await enrichProjectFromLandSource(projectPage, landIds[0]!, notion);
+			return;
+		}
 		await createPageComment(
 			notion,
 			projectPageId,
-			"⚠ この案件に『元問い合わせ』が紐づいていないため、引き継ぐ元がありません。Aボタン（案件化申請）で作成した案件で押してください。",
+			"⚠ この案件に『元問い合わせ』『紹介ブローカー』『関連土地情報』のどれも紐づいていないため、引き継ぐ元がありません。Aボタンで作成した案件で押してください。",
 		);
 		return;
 	}
