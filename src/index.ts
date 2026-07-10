@@ -18679,6 +18679,7 @@ async function buildInvestmentConditionPdfBytes(
 	const page = pdf.addPage([595.28, 841.89]);
 	const pageWidth = page.getWidth();
 	const pageHeight = page.getHeight();
+	page.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: rgb(1, 1, 1) });
 	const left = 38;
 	const right = 38;
 	const contentWidth = pageWidth - left - right;
@@ -19472,17 +19473,17 @@ async function buildProposalSimulationPdfBytes(
 		});
 	};
 
-	const drawFooter = (page: PDFPage) => {
+	const drawFooter = (page: PDFPage, y = 30) => {
 		drawText(page, `Record ID: ${pageId}`, {
 			x: left,
-			y: 30,
+			y,
 			size: 7.5,
 			font: fonts.regular,
 			color: colors.muted,
 		});
 		drawText(page, generatedDate, {
 			x: pageWidth - right - 62,
-			y: 30,
+			y,
 			size: 7.5,
 			font: fonts.regular,
 			color: colors.muted,
@@ -20137,6 +20138,7 @@ async function buildProposalSimulationPdfBytes(
 	};
 
 	const first = pdf.addPage([pageWidth, pageHeight]);
+	first.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: rgb(1, 1, 1) });
 	drawHeader(
 		first,
 		1,
@@ -20198,6 +20200,7 @@ async function buildProposalSimulationPdfBytes(
 	drawFooter(first);
 
 	const second = pdf.addPage([pageWidth, pageHeight]);
+	second.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: rgb(1, 1, 1) });
 	drawHeader(
 		second,
 		2,
@@ -20227,10 +20230,10 @@ async function buildProposalSimulationPdfBytes(
 			["PCS", details ? `${details.powerConditionerMaker} / ${details.powerConditionerModel} / ${formatDecimalForPdf(details.pcsCapacityKw, 1)}kW` : "未入力"],
 			["FIT/FIP・売電条件", details ? `${details.fitFipType} / ${formatDecimalForPdf(details.unitPrice, 2)}円/kWh / 残存${formatDecimalForPdf(details.remainingSalesYears, 1)}年` : "未入力"],
 			["連系開始日 / 稼働年数", details ? `${details.gridConnectionDate} / ${formatOperationYearsForPdf(details.operationYears)}` : "未入力"],
-			["パネルひとこと", details?.panelPublicComment || "未入力"],
-			["PCSひとこと", details?.powerConditionerPublicComment || "未入力"],
+			...(details?.panelPublicComment ? [["パネルひとこと", details.panelPublicComment] as [string, string]] : []),
+			...(details?.powerConditionerPublicComment ? [["PCSひとこと", details.powerConditionerPublicComment] as [string, string]] : []),
 			["和上確認", buildProposalWajoCompactLine(draft.wajoSupport)],
-			["残リスク", draft.wajoSupport.remainingRisk || "未入力"],
+			...(draft.wajoSupport.remainingRisk ? [["残リスク", draft.wajoSupport.remainingRisk] as [string, string]] : []),
 		]);
 	}
 
@@ -20255,10 +20258,6 @@ async function buildProposalSimulationPdfBytes(
 	const primaryFinanceLabels = new Set([
 		"今回の投資判定",
 		"判定理由",
-		"S/Aに届かない理由",
-		"Cを下回らない理由",
-		"NPV",
-		"IRR",
 	]);
 	y = drawDetailRows(
 		second,
@@ -20288,6 +20287,7 @@ async function buildProposalSimulationPdfBytes(
 
 	if (draft.proposalKind !== "gridBattery") {
 		const third = pdf.addPage([pageWidth, pageHeight]);
+		third.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: rgb(1, 1, 1) });
 		drawHeader(
 			third,
 			3,
@@ -20355,6 +20355,7 @@ async function buildProposalSimulationPdfBytes(
 		drawFooter(third);
 
 		const fourth = pdf.addPage([pageWidth, pageHeight]);
+		fourth.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: rgb(1, 1, 1) });
 		drawHeader(
 			fourth,
 			4,
@@ -20392,6 +20393,8 @@ async function buildProposalSimulationPdfBytes(
 		y -= 64;
 		y = drawSectionTitle(fourth, y, "ファイナンス詳細");
 		const secondaryFinanceLabels = new Set([
+			"NPV",
+			"IRR",
 			"税効果",
 			"税引後キャッシュフロー",
 			"DSCR",
@@ -20407,8 +20410,8 @@ async function buildProposalSimulationPdfBytes(
 		y -= 2;
 
 		y = drawSectionTitle(fourth, y, "現場写真");
-		await drawSitePhotoFrame(fourth, y, draft.sitePhotos, { height: 146 });
-		drawFooter(fourth);
+		await drawSitePhotoFrame(fourth, y, draft.sitePhotos, { height: 132 });
+		drawFooter(fourth, 14);
 	}
 
 	return pdf.save();
@@ -20572,10 +20575,10 @@ function buildProposalCoverSafeRows(draft: ProposalSimulationDraft): Array<[stri
 	const details = draft.solarDetails;
 	return nonEmptyLinesAsRows([
 		["パネル情報", details ? `${details.panelMaker} / ${details.panelModel}` : "未入力"],
-		["パネルの見どころ", details?.panelPublicComment || "未入力"],
+		["パネルの見どころ", details?.panelPublicComment || ""],
 		["パネル枚数 / DC", details ? `総枚数 ${formatFullWidthIntegerForPdf(details.panelCount)}枚 / DC ${formatDecimalForPdf(details.dcCapacityKw, 1)}kW` : "未入力"],
 		["PCS情報", details ? `${details.powerConditionerMaker} / ${details.powerConditionerModel} / ${formatDecimalForPdf(details.pcsCapacityKw, 1)}kW` : "未入力"],
-		["PCSの見どころ", details?.powerConditionerPublicComment || "未入力"],
+		["PCSの見どころ", details?.powerConditionerPublicComment || ""],
 		["売電制度", details ? `${details.fitFipType} / ${formatDecimalForPdf(details.unitPrice, 2)}円/kWh / 残存${formatDecimalForPdf(details.remainingSalesYears, 1)}年` : "未入力"],
 		["稼働状況", details ? `連系開始日 ${details.gridConnectionDate} / 稼働年数 ${formatOperationYearsForPdf(details.operationYears)}` : "未入力"],
 		["出力抑制前提", formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)],
@@ -20747,6 +20750,7 @@ async function buildResidentDocumentPdfBytes(
 			: [{ title: "住民説明会資料", lines: draft.summaryLines }];
 	for (const [index, section] of sections.entries()) {
 		const page = pdf.addPage([pageWidth, pageHeight]);
+		page.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: rgb(1, 1, 1) });
 		page.drawRectangle({
 			x: 0,
 			y: pageHeight - 88,

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
 import { PDFDocument } from "pdf-lib";
 import {
 	buildResidentDocumentPdfBytesForTest,
@@ -117,6 +118,9 @@ async function main() {
 	const pdfBytes = await buildResidentDocumentPdfBytesForTest(ready, "resident-2");
 	const pdf = await PDFDocument.load(pdfBytes);
 	assert.equal(pdf.getPageCount(), 13);
+	if (process.env.RESIDENT_PDF_TEST_OUTPUT) {
+		await writeFile(process.env.RESIDENT_PDF_TEST_OUTPUT, pdfBytes);
+	}
 
 	const updates: Array<Record<string, unknown>> = [];
 	const comments: Array<Record<string, unknown>> = [];

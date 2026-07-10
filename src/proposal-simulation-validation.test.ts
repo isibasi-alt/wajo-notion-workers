@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
 import { PDFDocument } from "pdf-lib";
 import {
 	buildProposalSimulationPdfBytesForTest,
@@ -168,6 +169,9 @@ async function main() {
 	);
 	const solarPdf = await PDFDocument.load(solarPdfBytes);
 	assert.equal(solarPdf.getPageCount(), 4);
+	if (process.env.PROPOSAL_PDF_TEST_OUTPUT) {
+		await writeFile(process.env.PROPOSAL_PDF_TEST_OUTPUT, solarPdfBytes);
+	}
 
 	const missingPanelMaker = evaluateProposalSimulationDraftForTest({
 		id: "proposal-2b",
