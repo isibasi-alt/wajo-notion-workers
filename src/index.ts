@@ -32077,6 +32077,8 @@ type InquiryCaseNaming = {
 	location: string;
 	scale: string;
 	counterparty: string;
+	dealType: string;
+	dealReason: string;
 };
 
 const INQUIRY_CASE_NAME_RESPONSE_FORMAT: WajoJsonSchemaResponseFormat = {
@@ -32102,8 +32104,16 @@ const INQUIRY_CASE_NAME_RESPONSE_FORMAT: WajoJsonSchemaResponseFormat = {
 					type: "string",
 					description: "この案件の相手先の名前＝売却案件なら売り主、購入希望なら買い手（個人なら『山田様』、法人なら会社名）。問い合わせ内容から読み取れた実名だけ。読めなければ空文字。でっち上げない。",
 				},
+				売買区分: {
+					type: "string",
+					description: "売却案件 / 購入希望 / 不明 のいずれか。判定ルールに従い本文の証拠だけで判定する。",
+				},
+				判定根拠: {
+					type: "string",
+					description: "売買区分の判定根拠。本文からの原文引用を1つ含めて短く（例: 「2018年から」と過去の連系実績を自分の物件として記載→売り）。不明なら何が足りないかを書く。",
+				},
 			},
-			required: ["案件名", "所在地", "規模", "相手先"],
+			required: ["案件名", "所在地", "規模", "相手先", "売買区分", "判定根拠"],
 			additionalProperties: false,
 		},
 	},
@@ -32131,6 +32141,8 @@ async function deriveInquiryCaseName(input: {
 		location: "",
 		scale: "",
 		counterparty: "",
+		dealType: "",
+		dealReason: "",
 	};
 	try {
 		const raw = await callAnthropicChat({
@@ -32144,6 +32156,12 @@ async function deriveInquiryCaseName(input: {
 				"容量・金額の単位を盛らない：2,000kW=2メガ（ギガ等への誇張は事実誤り）。数字を使う時は実データの桁のまま。",
 				"手掛かりが薄くても必ず付ける（会社名の芯＋種別など）。「作れない」は禁止。",
 				"所在地・規模・相手先は事実だけを正確に書く（ここは遊ばない。読めなければ空文字・でっち上げない）。相手先＝売却案件なら売り主、購入希望なら買い手の実名（個人は『◯◯様』、法人は会社名）。",
+				"売買区分の判定ルール（上から順に・実データ2026-07-10で検証済み）：",
+				"(1) 【売買区分】欄に値が来ていればそれが確定（判定不要・そのまま返す）。",
+				"(2) 特定物件の過去実績を自分の物として書いている＝売却案件で確定：連系開始年（例「2018年から」）・FIT単価・年間売電実績・検針票等。買い手は年式で物件を語らない。内容が薄くても実績記載があれば売りとして動く（誤っても売り前提で動くコストは低い）。",
+				"(3) 希望条件の文脈＝購入希望：「探しています」「予算」「〜前後を1〜2件」「買取希望」等。法人の買いは『購入』と言わないことがある：完成渡し・権利売買の検討・仕入れ・（屋根や土地に）載せたい も購入希望。",
+				"(4) どちらの証拠も無ければ 不明（推測で埋めない）。",
+				"LP名・件名・『高額買取』等の定型文言は売買判定に使わない（全面禁止）。",
 				"規模欄は数量だけ（例: 500kW / 4MW / 9000坪 / 売電210万円/年）。高圧・低圧などの区分はお客様の実データから確定できない限り書かない＝分からなければ空。",
 				"流入ページ名・サイト名・件名の定型部分（例:【高圧太陽光発電所の高額買取査定】等のLP名）は物件の実態ではない。規模・種別・案件名の判定材料に使わない。お客様が書いた本文の実データ（年間売電収入・容量・所在地等）だけを使う。",
 			].join("\n"),
@@ -32157,13 +32175,19 @@ async function deriveInquiryCaseName(input: {
 			所在地?: unknown;
 			規模?: unknown;
 			相手先?: unknown;
+			売買区分?: unknown;
+			判定根拠?: unknown;
 		};
 		const name = sanitizeCaseName(typeof parsed.案件名 === "string" ? parsed.案件名 : "");
+		const rawDealType = typeof parsed.売買区分 === "string" ? parsed.売買区分.trim() : "";
 		return {
 			name: name || fallback.name,
 			location: typeof parsed.所在地 === "string" ? parsed.所在地.trim().slice(0, 40) : "",
 			scale: typeof parsed.規模 === "string" ? parsed.規模.trim().slice(0, 40) : "",
 			counterparty: typeof parsed.相手先 === "string" ? parsed.相手先.trim().slice(0, 40) : "",
+			// 選択肢に無い値をselectへ流さない（Workerは文字列で読み書きする決定事項）。
+			dealType: rawDealType === "売却案件" || rawDealType === "購入希望" ? rawDealType : "",
+			dealReason: typeof parsed.判定根拠 === "string" ? parsed.判定根拠.trim().slice(0, 200) : "",
 		};
 	} catch (error) {
 		console.log("inquiry case name AI skipped", String(error));
@@ -32368,6 +32392,16 @@ async function enrichProjectFromInquiry(
 	// 相手先（売却→売り主／購入→買い手の名前）をヘッダー一番上の識別情報として持つ。
 	if (caseNaming.counterparty) {
 		patches["相手先"] = { kind: "text", value: caseNaming.counterparty };
+	}
+	// 売買区分のAIフォールバック：機械判定（フォーム明示欄）が空の時だけ採用し、根拠をコメントに残す。
+	// ルール実証（2026-07-10）：連系年等の過去実績記載=売り／希望条件・法人商談語彙=買い／証拠なし=不明のまま。
+	if (!projectDealType && caseNaming.dealType) {
+		patches["売買区分"] = { kind: "select", value: caseNaming.dealType };
+		await createPageComment(
+			notion,
+			projectPage.id,
+			`🧭 売買区分をAI判定で「${caseNaming.dealType}」にしました。\n根拠: ${caseNaming.dealReason || "（根拠記載なし）"}\n違っていたら売買区分を直してください。`,
+		).catch(() => {});
 	}
 	await safeUpdateExistingProperties(notion, projectPage, patches);
 	// 命名同期：確定した呼び名を子レコード（設備詳細・資料作成依頼）のタイトルにも反映する。
