@@ -15447,6 +15447,7 @@ type ResidentDocumentDraft = {
 type ResidentDocumentPdfSection = {
 	title: string;
 	lines: string[];
+	images?: ProposalSitePhoto[];
 };
 
 type ProposalSimulationDraft = {
@@ -20778,7 +20779,7 @@ function buildProposalInsightLines(draft: ProposalSimulationDraft): string[] {
 
 async function buildResidentDocumentPdfBytes(
 	draft: ResidentDocumentDraft,
-	pageId: string,
+	_pageId: string,
 ): Promise<Uint8Array> {
 	const pdf = await PDFDocument.create();
 	pdf.registerFontkit(fontkit);
@@ -20826,7 +20827,7 @@ async function buildResidentDocumentPdfBytes(
 			font: fonts.regular,
 			color: rgb(1, 1, 1),
 		});
-		page.drawText(`Record ID: ${pageId}`, {
+		page.drawText(`作成日: ${todayIsoDateInTokyo()}`, {
 			x: left,
 			y: pageHeight - 69,
 			size: 9,
@@ -20863,6 +20864,57 @@ async function buildResidentDocumentPdfBytes(
 			}
 			y -= 4;
 			if (y < 96) break;
+		}
+		const sectionImages = (section.images ?? []).slice(0, 2);
+		const availableImageHeight = y - 118;
+		if (sectionImages.length > 0 && availableImageHeight >= 110) {
+			const imageGap = 12;
+			const imageBoxHeight = Math.min(260, availableImageHeight);
+			const imageBoxWidth = (maxWidth - imageGap * (sectionImages.length - 1)) / sectionImages.length;
+			const imageTop = y - 10;
+			for (const [imageIndex, sourceImage] of sectionImages.entries()) {
+				const imageX = left + imageIndex * (imageBoxWidth + imageGap);
+				const imageY = imageTop - imageBoxHeight;
+				page.drawRectangle({
+					x: imageX,
+					y: imageY,
+					width: imageBoxWidth,
+					height: imageBoxHeight,
+					color: rgb(0.985, 0.99, 0.99),
+					borderColor: rgb(0.76, 0.82, 0.82),
+					borderWidth: 0.7,
+				});
+				const embeddedImage = await embedPdfImageFromUrl(pdf, sourceImage.url);
+				if (embeddedImage) {
+					const fitted = fitRectWithinBox(
+						embeddedImage.width,
+						embeddedImage.height,
+						imageBoxWidth - 16,
+						imageBoxHeight - 32,
+					);
+					page.drawImage(embeddedImage, {
+						x: imageX + 8 + fitted.x,
+						y: imageY + 20 + fitted.y,
+						width: fitted.width,
+						height: fitted.height,
+					});
+				} else {
+					page.drawText("画像を読み込めません", {
+						x: imageX + 10,
+						y: imageY + imageBoxHeight / 2,
+						size: 9,
+						font: fonts.regular,
+						color: rgb(0.38, 0.42, 0.44),
+					});
+				}
+				page.drawText(sourceImage.name, {
+					x: imageX + 8,
+					y: imageY + 7,
+					size: 7,
+					font: fonts.regular,
+					color: rgb(0.38, 0.42, 0.44),
+				});
+			}
 		}
 		if (index === 0) {
 			page.drawRectangle({
@@ -21533,6 +21585,7 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 					`発電所所在地画像: ${plantLocationImages.length}件添付確認`,
 					"添付された所在地画像をもとに、発電所位置を説明します。",
 				],
+				images: plantLocationImages,
 			},
 			{
 				title: "ハザードマップ",
@@ -21540,6 +21593,7 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 					`ハザードマップ画像: ${hazardMapImages.length}件添付確認`,
 					"添付資料をもとに、周辺地域の災害リスク情報を確認します。",
 				],
+				images: hazardMapImages,
 			},
 			{
 				title: "対象エリア",
@@ -21547,6 +21601,7 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 					`説明会対象エリア画像: ${targetAreaImages.length}件添付確認`,
 					"周知対象となる範囲を添付画像で確認し、必要な配布・説明範囲を明確にします。",
 				],
+				images: targetAreaImages,
 			},
 			{
 				title: "反射光確認",
@@ -21554,6 +21609,7 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 					`反射光画像: ${reflectionImages.length}件添付確認`,
 					"反射光に関する確認資料を添付し、周辺への影響確認に使用します。",
 				],
+				images: reflectionImages,
 			},
 			{
 				title: "現場写真",
@@ -21561,6 +21617,7 @@ function evaluateResidentDocumentDraft(page: Page): ResidentDocumentDraft {
 					`現場写真: ${siteImages.length}件添付確認`,
 					"現地の状況、設備の状態、周辺環境を写真資料で確認します。",
 				],
+				images: siteImages,
 			},
 			{
 				title: "質問受付",

@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PDFDocument } from "pdf-lib";
 import {
 	buildResidentDocumentPdfBytesForTest,
@@ -32,8 +36,9 @@ function filesProp(name = "image.jpg") {
 	};
 }
 
-const onePixelPng =
-	"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+const residentTestImageDataUrl = `data:image/png;base64,${readFileSync(
+	join(process.cwd(), "assets", "project-case-cover-wide.png"),
+).toString("base64")}`;
 
 function imageFilesProp(name = "image.png") {
 	return {
@@ -42,7 +47,7 @@ function imageFilesProp(name = "image.png") {
 			{
 				name,
 				type: "external",
-				external: { url: onePixelPng },
+				external: { url: residentTestImageDataUrl },
 			},
 		],
 	};
@@ -114,10 +119,44 @@ async function main() {
 	assert.equal(ready.documentTitle, "2026S099｜住民説明会資料");
 	assert.match(ready.summaryLines.join("\n"), /質問受付期間: 2026-07-01〜2026-07-14/);
 	assert.match(ready.summaryLines.join("\n"), /認定出力: 250kW/);
+	const imageSectionCounts = Object.fromEntries(
+		ready.sections.map((section) => [
+			section.title,
+			((section as { images?: Array<{ name: string }> }).images ?? []).length,
+		]),
+	);
+	assert.deepEqual(imageSectionCounts, {
+		表紙: 0,
+		事業概要: 0,
+		周知方法: 0,
+		設備認定: 0,
+		事業者変更: 0,
+		所在地図: 1,
+		ハザードマップ: 1,
+		対象エリア: 1,
+		反射光確認: 1,
+		現場写真: 1,
+		質問受付: 0,
+		"連絡先・責任者": 0,
+		最終確認: 0,
+	});
 
 	const pdfBytes = await buildResidentDocumentPdfBytesForTest(ready, "resident-2");
 	const pdf = await PDFDocument.load(pdfBytes);
 	assert.equal(pdf.getPageCount(), 13);
+	const pdfCheckDirectory = await mkdtemp(join(tmpdir(), "wajo-resident-pdf-"));
+	const pdfCheckPath = join(pdfCheckDirectory, "resident.pdf");
+	try {
+		await writeFile(pdfCheckPath, pdfBytes);
+		const extractedPdfText = execFileSync("pdftotext", ["-layout", pdfCheckPath, "-"], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		});
+		assert.doesNotMatch(extractedPdfText, /Record ID:/);
+		assert.match(extractedPdfText, /作成日:/);
+	} finally {
+		await rm(pdfCheckDirectory, { recursive: true, force: true });
+	}
 	if (process.env.RESIDENT_PDF_TEST_OUTPUT) {
 		await writeFile(process.env.RESIDENT_PDF_TEST_OUTPUT, pdfBytes);
 	}
