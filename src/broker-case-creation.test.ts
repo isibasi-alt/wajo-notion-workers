@@ -178,7 +178,11 @@ async function main() {
 	const projectCreate = creates[0]!;
 	assert.equal((projectCreate.parent as { data_source_id: string }).data_source_id, "54e869d7-ba3e-49e1-b760-af46e23499cb");
 	const projectProps = projectCreate.properties as Record<string, unknown>;
-	assert.match(JSON.stringify(projectProps.案件名), /\[紹介\] Codex検証用 ブローカー 起点案件/);
+	// 2026-07-10 命名新仕様（両ch合意・B=名付け親）：[紹介]◯◯起点案件の裸名は廃止し通称/フォールバック名に。
+	// テスト環境（APIキー無し）はフォールバック名「Codex検証用 案件」になる。
+	assert.match(JSON.stringify(projectProps.案件名), /Codex検証用/);
+	assert.doesNotMatch(JSON.stringify(projectProps.案件名), /起点案件/);
+	assert.match(JSON.stringify(projectProps.相手先), /Codex検証用/);
 	assert.match(JSON.stringify(projectProps.紹介ブローカー), /advisor-1/);
 	assert.match(JSON.stringify(projectProps.仕入れ元区分), /ブローカー/);
 	assert.match(JSON.stringify(projectProps.獲得ソース), /紹介/);
