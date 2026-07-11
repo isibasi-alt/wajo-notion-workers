@@ -6,26 +6,31 @@ const requiredGroups = [
 	{
 		label: "Google Maps Platform",
 		purpose: "住所の座標化、Google Roads、Google Places API (New)",
+		inputType: "api-key",
 		anyOf: ["GOOGLE_MAPS_API_KEY", "GOOGLE_API_KEY"],
 	},
 	{
 		label: "WAGRI / eMAFF農地ナビ",
 		purpose: "農地ピン、農地筆ポリゴン候補",
+		inputType: "api-token",
 		anyOf: ["WAGRI_ACCESS_TOKEN", "WAGRI_API_TOKEN", "WAGRI_TOKEN"],
 	},
 	{
 		label: "国土交通省 不動産情報ライブラリ",
 		purpose: "地価、用途地域、都市計画、防災、取引事例候補",
+		inputType: "api-key",
 		anyOf: ["REINFOLIB_API_KEY", "MLIT_REINFOLIB_API_KEY", "LAND_REINFOLIB_API_KEY"],
 	},
 	{
-		label: "法務省 登記所備付地図データ",
-		purpose: "地番候補、筆界候補",
+		label: "法務省 登記所備付地図データ（公開データ配置）",
+		purpose: "G空間情報センター公開データを取得・変換したGeoJSON URL。APIキーではない",
+		inputType: "public-data-url",
 		anyOf: ["MOJ_CHIZU_GEOJSON_URLS", "MOJ_CHIZU_GEOJSON_URL"],
 	},
 	{
-		label: "系統空容量 公表値JSON",
-		purpose: "資源エネルギー庁、OCCTO、各送配電会社の公表値候補",
+		label: "系統空容量 公表値JSON（公開データ配置）",
+		purpose: "資源エネルギー庁、OCCTO、各送配電会社の公開情報を正規化したJSON URLまたはJSON。APIキーではない",
+		inputType: "public-data-json",
 		anyOf: ["GRID_CAPACITY_PUBLIC_JSON_URLS", "GRID_CAPACITY_PUBLIC_JSON_URL", "GRID_CAPACITY_PUBLIC_JSON"],
 	},
 ];
@@ -61,6 +66,7 @@ export function auditLandEvaluationEnvKeys(keys) {
 		return {
 			label: group.label,
 			purpose: group.purpose,
+			inputType: group.inputType,
 			anyOf: group.anyOf,
 			present,
 			ok: present.length > 0,
@@ -110,6 +116,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 			missingGroups: audit.missingGroups.map((group) => ({
 				label: group.label,
 				purpose: group.purpose,
+				inputType: group.inputType,
 				acceptedEnvNames: group.anyOf,
 			})),
 			printedSecretValues: false,

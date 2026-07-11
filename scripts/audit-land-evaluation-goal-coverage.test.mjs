@@ -82,9 +82,17 @@ assert.deepEqual(
 	[
 		"WAGRI / eMAFF農地ナビ",
 		"国土交通省 不動産情報ライブラリ",
-		"法務省 登記所備付地図データ",
-		"系統空容量 公表値JSON",
+		"法務省 登記所備付地図データ（公開データ配置）",
+		"系統空容量 公表値JSON（公開データ配置）",
 	],
+);
+assert.equal(
+	missingRuntime.missingRuntimeGroups.find((group) => group.label.includes("法務省"))?.inputType,
+	"public-data-url",
+);
+assert.equal(
+	missingRuntime.missingRuntimeGroups.find((group) => group.label.includes("系統空容量"))?.inputType,
+	"public-data-json",
 );
 
 const missingLocal = auditLandEvaluationGoalCoverage({

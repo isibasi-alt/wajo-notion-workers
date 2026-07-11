@@ -24,6 +24,7 @@ export type LandScaleDistanceGate = "通過候補" | "面積不足" | "距離超
 export type LandFarmlandProspectRank = "高" | "中" | "低";
 export type LandFarmlandConfidence = "高" | "中" | "低";
 export type LandFarmlandFormalStatus = "未照会" | "照会準備中" | "照会済み" | "回答済み";
+export type LandQuickDecision = "行く" | "行かない";
 
 export type LandTreasureSubstationCandidate = {
 	name: string;
@@ -59,6 +60,10 @@ export type LandTreasureEvaluation = {
 	roadRating: string;
 	subsidyRating: string;
 	demandRating: string;
+	quickDecision: LandQuickDecision;
+	quickDecisionReason: string;
+	salesPathDeadline: string;
+	salesPathRequest: string;
 	scaleDistanceGate: LandScaleDistanceGate;
 	scaleDistanceEvidenceState: "根拠確認済み" | "根拠未確認";
 	scaleDistanceSource: "変電所DB座標再計算" | "土地DB手入力距離" | "距離未確認";
@@ -197,6 +202,27 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 		projectType,
 		blockers,
 	});
+	const quickDecision = chooseLandQuickDecision({
+		area,
+		distanceKm,
+		scaleDistanceGate,
+		blockers,
+		farmlandPreAssessment,
+	});
+	const quickDecisionReason = buildLandQuickDecisionReason({
+		area,
+		distanceKm,
+		scaleDistanceGate,
+		blockers,
+		farmlandPreAssessment,
+		powerArea,
+	});
+	const salesPathDeadline = formatJstSalesPathDeadline(2);
+	const salesPathRequest = buildLandSalesPathRequest(
+		quickDecision,
+		quickDecisionReason,
+		salesPathDeadline,
+	);
 	const blockerLine =
 		blockers.length > 0
 			? `変電所だけではS評価にしない。主な阻害要因: ${blockers.join(" / ")}`
@@ -206,6 +232,7 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 		`2AI統合=${score}点`,
 		`AI-1 物理・系統評価=${physicalAiScore}点`,
 		`AI-2 営業・案件化評価=${salesAiScore}点`,
+		`速報判断=${quickDecision}`,
 		`D規模・距離ゲート=${scaleDistanceGate} / 入力根拠=${scaleDistanceEvidenceState} / 距離出所=${scaleDistanceSource}`,
 		substationLine,
 		substationCandidatesLine,
@@ -229,6 +256,10 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 		roadRating,
 		subsidyRating,
 		demandRating,
+		quickDecision,
+		quickDecisionReason,
+		salesPathDeadline,
+		salesPathRequest,
 		scaleDistanceGate,
 		scaleDistanceEvidenceState,
 		scaleDistanceSource,
@@ -247,6 +278,7 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 		farmlandPreAssessmentText,
 		landEvaluation: [
 		`${input.name}は、${area > 0 ? `${Math.round(area).toLocaleString("ja-JP")}坪` : "面積未確認"}・所在地「${input.address || "未確認"}」を起点にした土地評価です。`,
+		salesPathRequest,
 		`2AI評価として、物理・系統AIは${physicalAiScore}点、営業・案件化AIは${salesAiScore}点。SABC統合では${overallGrade} / ${score}点です。`,
 		`D規模・距離ゲート=${scaleDistanceGate} / 入力根拠=${scaleDistanceEvidenceState} / 距離出所=${scaleDistanceSource}（面積3,000坪以上・最寄り変電所直線距離2km以内を候補条件とする）`,
 		farmlandPreAssessmentText,
@@ -286,14 +318,96 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 					: "推測ですが、低圧集約、売却候補、近隣案件との組み合わせで価値を確認します。",
 		nextAction:
 			scaleDistanceGate !== "通過候補"
-				? `${farmlandPreAssessment.salesInputGuide}\n${buildScaleDistanceGateAction(scaleDistanceGate)}`
+				? `${salesPathRequest}\n\n${farmlandPreAssessment.salesInputGuide}\n${buildScaleDistanceGateAction(scaleDistanceGate)}`
 				: overallGrade === "S"
-				? `${farmlandPreAssessment.salesInputGuide}\n最寄り変電所、接道、農転/登記、近隣住宅距離を人間が確認し、案件化・仕入れ打診へ進めてください。`
+				? `${salesPathRequest}\n\n${farmlandPreAssessment.salesInputGuide}\n最寄り変電所、接道、農転/登記、近隣住宅距離を人間が確認し、案件化・仕入れ打診へ進めてください。`
 				: blockers.length > 0
-					? `${farmlandPreAssessment.salesInputGuide}\n変電所近接だけで進めず、先に ${blockers.join(" / ")} を解消または確認してください。`
-					: `${farmlandPreAssessment.salesInputGuide}\n不足条件を整理し、接道・用途地域・農転/登記・需要地距離を確認してから再評価してください。`,
+					? `${salesPathRequest}\n\n${farmlandPreAssessment.salesInputGuide}\n変電所近接だけで進めず、先に ${blockers.join(" / ")} を解消または確認してください。`
+					: `${salesPathRequest}\n\n${farmlandPreAssessment.salesInputGuide}\n不足条件を整理し、接道・用途地域・農転/登記・需要地距離を確認してから再評価してください。`,
 		reviewMemo: sabcReason,
 	};
+}
+
+function chooseLandQuickDecision(input: {
+	area: number;
+	distanceKm: number | null;
+	scaleDistanceGate: LandScaleDistanceGate;
+	blockers: string[];
+	farmlandPreAssessment: LandFarmlandPreAssessment;
+}): LandQuickDecision {
+	if (input.area > 0 && input.area < 300) return "行かない";
+	if (input.distanceKm !== null && input.distanceKm > 5) return "行かない";
+	if (input.blockers.some((item) => /未接道|進入不可|農地転用に阻害|所有者確認に阻害/.test(item))) {
+		return "行かない";
+	}
+	if (input.scaleDistanceGate === "面積不足" && input.area < 1500) return "行かない";
+	if (input.farmlandPreAssessment.rank === "低" && input.scaleDistanceGate !== "通過候補") return "行かない";
+	return "行く";
+}
+
+function buildLandQuickDecisionReason(input: {
+	area: number;
+	distanceKm: number | null;
+	scaleDistanceGate: LandScaleDistanceGate;
+	blockers: string[];
+	farmlandPreAssessment: LandFarmlandPreAssessment;
+	powerArea: string;
+}): string {
+	const reasons: string[] = [];
+	if (input.area >= 3000) reasons.push("面積はD候補条件に乗る");
+	else if (input.area >= 1500) reasons.push("面積は高圧・蓄電池の比較候補に残る");
+	else if (input.area > 0) reasons.push("面積が弱く、単独の優先順位は下がる");
+	else reasons.push("面積が未確認");
+
+	if (input.distanceKm !== null && input.distanceKm <= 2) reasons.push("変電所距離は近い");
+	else if (input.distanceKm !== null && input.distanceKm <= 5) reasons.push("変電所距離は比較確認の範囲");
+	else if (input.distanceKm !== null) reasons.push("変電所距離が遠い");
+	else reasons.push("変電所距離は未確認");
+
+	if (input.powerArea && input.powerArea !== "未確認") reasons.push(`電力エリアは${input.powerArea}として見られる`);
+	if (input.farmlandPreAssessment.rank === "高") reasons.push("農転見込みは強め");
+	if (input.farmlandPreAssessment.rank === "低") reasons.push("農転見込みは弱い");
+	if (input.blockers.length > 0) reasons.push(`外れたら見るポイントは${input.blockers.slice(0, 3).join(" / ")}`);
+
+	return `${reasons.slice(0, 4).join("。")}。`;
+}
+
+function buildLandSalesPathRequest(
+	quickDecision: LandQuickDecision,
+	reason: string,
+	deadline: string,
+): string {
+	const lead =
+		quickDecision === "行く"
+			? "この土地は速報では「行く」。"
+			: "この土地は速報では「行かない」。";
+	const requestLead =
+		quickDecision === "行く"
+			? `70点判定に上げるため、${deadline}までに以下を埋めてください。`
+			: `例外的に追う場合は、${deadline}までに以下を埋めてください。`;
+	return [
+		lead,
+		"",
+		"理由:",
+		reason,
+		"",
+		requestLead,
+		"",
+		"1. 地番",
+		"2. 登記地目",
+		"3. 登記面積または資料面積",
+		"4. 接道状況",
+		"5. 現地感メモ",
+	].join("\n");
+}
+
+function formatJstSalesPathDeadline(daysFromNow: number): string {
+	const now = new Date();
+	const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000 + daysFromNow * 24 * 60 * 60 * 1000);
+	const yyyy = jst.getUTCFullYear();
+	const mm = String(jst.getUTCMonth() + 1).padStart(2, "0");
+	const dd = String(jst.getUTCDate()).padStart(2, "0");
+	return `${yyyy}-${mm}-${dd} 18:00`;
 }
 
 function evaluateFarmlandPreAssessment(

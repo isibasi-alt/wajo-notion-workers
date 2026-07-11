@@ -2592,6 +2592,10 @@ type LandEvaluation = {
 	roadRating: string;
 	subsidyRating: string;
 	demandRating: string;
+	quickDecision?: string;
+	quickDecisionReason?: string;
+	salesPathDeadline?: string;
+	salesPathRequest?: string;
 	landEvaluation: string;
 	powerEvaluation: string;
 	roadEvaluation: string;
@@ -27937,7 +27941,7 @@ async function fetchParcelCadastreContext(
 	latitude: number | null,
 	longitude: number | null,
 ): Promise<LandParcelCadastreContext> {
-	const source = "法務省 登記所備付地図データ / G空間情報センター配置済みGeoJSON";
+	const source = "法務省 登記所備付地図データ / G空間情報センター公開データ（配置済みGeoJSON）";
 	if (latitude === null || longitude === null) {
 		return {
 			status: "no-coordinate",
@@ -27959,7 +27963,8 @@ async function fetchParcelCadastreContext(
 		return {
 			status: "no-url",
 			source,
-			message: "登記所備付地図データ接続: 未接続（MOJ_CHIZU_GEOJSON_URLS未設定）",
+			message:
+				"登記所備付地図データ接続: 公開データ未配置（MOJ_CHIZU_GEOJSON_URLS未設定）。APIキー不要。G空間情報センターの公開データを取得・変換し、Workerが読めるGeoJSON URLとして配置する。",
 			candidates: [],
 		};
 	}
@@ -28246,7 +28251,7 @@ async function fetchGridCapacityContext(powerArea: string): Promise<LandGridCapa
 		return {
 			status: "no-url",
 			source,
-			message: `系統空き確認: 公表値候補未取得（GRID_CAPACITY_PUBLIC_JSON_URLS未設定）。${gridCapacityLinkLabels(officialLinks)}で確認。接続可否確定ではない。`,
+			message: `系統空き確認: 公開データ未配置（GRID_CAPACITY_PUBLIC_JSON_URLS未設定）。APIキー不要。${gridCapacityLinkLabels(officialLinks)}の公開情報を取得・正規化し、Workerが読めるJSONとして配置する。接続可否確定ではない。`,
 			powerArea: normalizedPowerArea,
 			officialLinks,
 			records: [],
@@ -29299,6 +29304,10 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			roadRating: treasure.roadRating,
 			subsidyRating: "要確認",
 			demandRating: treasure.demandRating,
+			quickDecision: treasure.quickDecision,
+			quickDecisionReason: treasure.quickDecisionReason,
+			salesPathDeadline: treasure.salesPathDeadline,
+			salesPathRequest: treasure.salesPathRequest,
 			scaleDistanceGate: treasure.scaleDistanceGate,
 			scaleDistanceEvidenceState: treasure.scaleDistanceEvidenceState,
 			scaleDistanceSource: treasure.scaleDistanceSource,
@@ -29334,6 +29343,10 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			roadRating: treasure.roadRating,
 			subsidyRating: treasure.subsidyRating,
 			demandRating: treasure.demandRating,
+			quickDecision: treasure.quickDecision,
+			quickDecisionReason: treasure.quickDecisionReason,
+			salesPathDeadline: treasure.salesPathDeadline,
+			salesPathRequest: treasure.salesPathRequest,
 			scaleDistanceGate: treasure.scaleDistanceGate,
 			scaleDistanceEvidenceState: treasure.scaleDistanceEvidenceState,
 			scaleDistanceSource: treasure.scaleDistanceSource,
@@ -29493,6 +29506,7 @@ function buildLandScoutReport(input: {
 	const uncheckedStatus = "農地・登記・接道・系統空きは未確認。";
 	const todayActionSummary =
 		"今日やることは、地番確認、農業委員会確認、道路台帳確認、空き容量マップ確認、所有者への売却意向確認。";
+	const salesPathRequest = treasure.salesPathRequest || "";
 	const farmlandPreAssessmentText = treasure.farmlandPreAssessmentText || "";
 	const farmlandSalesInputGuide = treasure.farmlandPreAssessment?.salesInputGuide || "";
 	const rejectionReasons = [
@@ -29503,6 +29517,8 @@ function buildLandScoutReport(input: {
 		"近隣説明リスクが高く、合意形成の見込みが立たない",
 	];
 	const nextAction = [
+		salesPathRequest,
+		"",
 		todayActionSummary,
 		farmlandSalesInputGuide,
 		"",
@@ -29523,6 +29539,8 @@ function buildLandScoutReport(input: {
 	].join("\n");
 	const confirmationGuide = buildLandOfficialConfirmationGuide(treasure.powerArea);
 	const landEvaluation = [
+		salesPathRequest,
+		"",
 		"土地スカウト一次評価",
 		`結論: ${conclusion}`,
 		substationCandidateStatus,

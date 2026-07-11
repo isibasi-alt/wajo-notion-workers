@@ -59,7 +59,7 @@ export function buildNtnEnvSetArgs(assignments) {
 
 export function landEvaluationEnvTemplate() {
 	return [
-		"# WAJO Sales OS land evaluation API keys",
+		"# WAJO Sales OS land evaluation API keys and public data inputs",
 		"# Fill the values locally. This file is ignored by git via .env.*.",
 		"# Do not paste these values into chat or tracked files.",
 		"",
@@ -72,10 +72,10 @@ export function landEvaluationEnvTemplate() {
 		"# MLIT Real Estate Information Library",
 		"REINFOLIB_API_KEY=",
 		"",
-		"# Pre-hosted MOJ cadastral GeoJSON URLs. Comma-separated if multiple.",
+		"# Pre-hosted MOJ cadastral GeoJSON URLs. Comma-separated if multiple. Public data input, not an API key.",
 		"MOJ_CHIZU_GEOJSON_URLS=",
 		"",
-		"# Pre-hosted grid capacity public JSON URLs. Comma-separated if multiple.",
+		"# Pre-hosted grid capacity public JSON URLs. Comma-separated if multiple. Public data input, not an API key.",
 		"GRID_CAPACITY_PUBLIC_JSON_URLS=",
 		"",
 	].join("\n");

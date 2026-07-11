@@ -240,6 +240,11 @@ async function main() {
 	assert.equal(scaleDistancePass.scaleDistanceGate, "通過候補");
 	assert.equal(scaleDistancePass.scaleDistanceEvidenceState, "根拠未確認");
 	assert.equal(scaleDistancePass.scaleDistanceSource, "変電所DB座標再計算");
+	assert.equal(scaleDistancePass.quickDecision, "行く");
+	assert.match(scaleDistancePass.nextAction, /この土地は速報では「行く」/);
+	assert.match(scaleDistancePass.nextAction, /70点判定に上げるため、\d{4}-\d{2}-\d{2} 18:00まで/);
+	assert.match(scaleDistancePass.nextAction, /1\. 地番/);
+	assert.match(scaleDistancePass.nextAction, /5\. 現地感メモ/);
 	assert.match(scaleDistancePass.reviewMemo, /D規模・距離ゲート=通過候補.*根拠未確認/);
 	assert.equal(
 		evaluateLandTreasure({ ...scaleDistanceGateInput, inputEvidenceState: "原本" }).scaleDistanceEvidenceState,
@@ -250,6 +255,9 @@ async function main() {
 	const scaleDistanceSmall = evaluateLandTreasure({ ...scaleDistanceGateInput, areaTsubo: 2999 });
 	assert.equal(scaleDistanceSmall.scaleDistanceGate, "面積不足");
 	assert.match(scaleDistanceSmall.nextAction, /面積3,000坪/);
+	const scaleDistanceTiny = evaluateLandTreasure({ ...scaleDistanceGateInput, areaTsubo: 200 });
+	assert.equal(scaleDistanceTiny.quickDecision, "行かない");
+	assert.match(scaleDistanceTiny.nextAction, /例外的に追う場合/);
 	const scaleDistanceFar = evaluateLandTreasure({
 			...scaleDistanceGateInput,
 			latitude: null,
@@ -321,7 +329,9 @@ async function main() {
 	assert.match(memo, /見込みランク: 高/);
 	assert.match(memo, /正式確認状態: 回答済み/);
 	assert.match(memo, /営業担当への入力案内/);
+	assert.match(memo, /この土地は速報では「行く」/);
 	assert.match(memo, /D規模・距離ゲート=通過候補/);
+	assert.match(JSON.stringify(finalUpdate.次アクション ?? {}), /70点判定に上げるため/);
 
 	assert.equal(createdPages.length, 1);
 	const learningLog = createdPages[0]!.properties as Record<string, unknown>;

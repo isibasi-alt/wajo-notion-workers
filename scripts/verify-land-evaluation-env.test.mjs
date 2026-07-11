@@ -37,10 +37,18 @@ assert.deepEqual(missingAudit.missingGroups.map((group) => group.label), [
 	"Google Maps Platform",
 	"WAGRI / eMAFF農地ナビ",
 	"国土交通省 不動産情報ライブラリ",
-	"法務省 登記所備付地図データ",
-	"系統空容量 公表値JSON",
+	"法務省 登記所備付地図データ（公開データ配置）",
+	"系統空容量 公表値JSON（公開データ配置）",
 ]);
 assert.equal(missingAudit.printedSecretValues, false);
+assert.equal(
+	missingAudit.missingGroups.find((group) => group.label.includes("法務省"))?.inputType,
+	"public-data-url",
+);
+assert.equal(
+	missingAudit.missingGroups.find((group) => group.label.includes("系統空容量"))?.inputType,
+	"public-data-json",
+);
 
 const localEnvKeys = parseDotEnvKeys([
 	"# values must never be printed",

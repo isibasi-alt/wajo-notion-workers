@@ -51,7 +51,7 @@ const requirements = [
 		label: "地番候補",
 		sourceNeedles: ["登記所備付地図データ接続", "地番候補"],
 		testNeedles: ["登記所備付地図データ接続", "地番候補"],
-		runtimeGroups: ["法務省 登記所備付地図データ"],
+		runtimeGroups: ["法務省 登記所備付地図データ（公開データ配置）"],
 	},
 	{
 		id: "road",
@@ -65,7 +65,7 @@ const requirements = [
 		label: "系統空き確認先・営業アクション",
 		sourceNeedles: ["系統空き確認", "OCCTO", "資源エネルギー庁", "今日やること", "営業トーク", "見送り理由候補"],
 		testNeedles: ["系統空き確認", "OCCTO", "今日やること", "営業トーク"],
-		runtimeGroups: ["系統空容量 公表値JSON"],
+		runtimeGroups: ["系統空容量 公表値JSON（公開データ配置）"],
 	},
 ];
 
@@ -86,6 +86,7 @@ export function auditLandEvaluationGoalCoverage({
 			.map((group) => ({
 				label: group.label,
 				purpose: group.purpose,
+				inputType: group.inputType,
 				acceptedEnvNames: group.anyOf,
 			}));
 		return {
@@ -101,6 +102,7 @@ export function auditLandEvaluationGoalCoverage({
 	const missingRuntimeGroups = envAudit.missingGroups.map((group) => ({
 		label: group.label,
 		purpose: group.purpose,
+		inputType: group.inputType,
 		acceptedEnvNames: group.anyOf,
 	}));
 	const localImplemented = checkedRequirements.every((requirement) => requirement.localImplemented);
