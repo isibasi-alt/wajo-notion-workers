@@ -30,6 +30,36 @@ function relationProp(ids: string[] = []) {
 	return { type: "relation", relation: ids.map((id) => ({ id })) };
 }
 
+function patchText(value: unknown): string {
+	if (!value || typeof value !== "object") return String(value ?? "");
+	const prop = value as Record<string, unknown>;
+	const richText = prop.rich_text;
+	if (Array.isArray(richText)) {
+		return richText
+			.map((item) => {
+				if (!item || typeof item !== "object") return "";
+				const record = item as Record<string, unknown>;
+				const text = record.text;
+				if (text && typeof text === "object") {
+					const content = (text as Record<string, unknown>).content;
+					if (typeof content === "string") return content;
+				}
+				const plainText = record.plain_text;
+				return typeof plainText === "string" ? plainText : "";
+			})
+			.join("");
+	}
+	return JSON.stringify(value);
+}
+
+function patchPropertiesText(value: unknown): string {
+	if (!value || typeof value !== "object") return String(value ?? "");
+	return [
+		...Object.values(value as Record<string, unknown>).map((property) => patchText(property)),
+		JSON.stringify(value),
+	].join("\n");
+}
+
 function highValueLandPage() {
 	return {
 		id: "land-treasure-1",
@@ -247,8 +277,11 @@ async function main() {
 	assert.match(scaleDistancePass.nextAction, /5\. 現地感メモ/);
 	assert.match(scaleDistancePass.missingDataRequest, /【今AIが欲しいデータ】/);
 	assert.match(scaleDistancePass.missingDataRequest, /誰が取るか/);
+	assert.match(scaleDistancePass.missingDataRequest, /大ちゃんに即出すタスク/);
 	assert.match(scaleDistancePass.missingDataRequest, /取れたら何が分かるか/);
 	assert.match(scaleDistancePass.missingDataRequest, /系統公開情報/);
+	assert.match(scaleDistancePass.missingDataRequest, /OCCTO\/送配電会社系統情報/);
+	assert.match(scaleDistancePass.missingDataRequest, /費用発生、申請、電話/);
 	assert.match(scaleDistancePass.missingDataRequest, /WAGRI\/eMAFF農地情報/);
 	assert.match(scaleDistancePass.missingDataRequest, /WAJO過去結果/);
 	assert.match(scaleDistancePass.nextAction, /不足のまま出す速報/);
@@ -319,7 +352,7 @@ async function main() {
 	assert.deepEqual(finalUpdate.総合評価, { select: { name: "S" } });
 	assert.deepEqual(finalUpdate.AI総合スコア, { number: result.score });
 
-	const memo = JSON.stringify(finalUpdate.案件化メモ ?? {});
+	const memo = patchText(finalUpdate.案件化メモ);
 	assert.match(memo, /最寄り変電所/);
 	assert.match(memo, /変電所候補3件/);
 	assert.match(memo, /1\..*変電所.*km/);
@@ -339,8 +372,10 @@ async function main() {
 	assert.match(memo, /この土地は速報では「行く」/);
 	assert.match(memo, /【今AIが欲しいデータ】/);
 	assert.match(memo, /誰が取るか/);
+	assert.match(memo, /大ちゃんに即出すタスク/);
 	assert.match(memo, /取れたら何が分かるか/);
 	assert.match(memo, /系統公開情報/);
+	assert.match(memo, /OCCTO\/送配電会社系統情報/);
 	assert.match(memo, /WAGRI\/eMAFF農地情報/);
 	assert.match(memo, /WAJO過去結果/);
 	assert.match(memo, /D規模・距離ゲート=通過候補/);
@@ -770,7 +805,7 @@ async function main() {
 	assert.notEqual(addressOnlyResult.overallGrade, "S");
 	assert.notEqual(addressOnlyResult.bucket, "即アタック");
 	assert.ok(addressOnlyResult.score < 65);
-	const addressOnlyMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
+	const addressOnlyMemo = patchPropertiesText(updates.at(-1)?.properties);
 	assert.match(addressOnlyMemo, /Google Geocoding API/);
 	assert.match(addressOnlyMemo, /Google Roads/);
 	assert.match(addressOnlyMemo, /Google Maps/);
@@ -861,8 +896,10 @@ async function main() {
 	assert.match(addressOnlyMemo, /土地スカウト|一次評価|本評価不可/);
 	assert.match(addressOnlyMemo, /【今AIが欲しいデータ】/);
 	assert.match(addressOnlyMemo, /誰が取るか/);
+	assert.match(addressOnlyMemo, /大ちゃんに即出すタスク/);
 	assert.match(addressOnlyMemo, /取れたら何が分かるか/);
 	assert.match(addressOnlyMemo, /系統公開情報/);
+	assert.match(addressOnlyMemo, /OCCTO\/送配電会社系統情報|OCCTO系統情報サービス/);
 	assert.match(addressOnlyMemo, /WAGRI\/eMAFF農地情報/);
 	assert.match(addressOnlyMemo, /WAJO過去結果/);
 	assert.match(addressOnlyMemo, /今日やること/);
@@ -1022,7 +1059,7 @@ async function main() {
 	assert.equal(missingOfficialResult.overallGrade, "C");
 	assert.notEqual(missingOfficialResult.bucket, "即アタック");
 	assert.ok(missingOfficialResult.score <= 45);
-	const missingOfficialMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
+	const missingOfficialMemo = patchPropertiesText(updates.at(-1)?.properties);
 	assert.match(missingOfficialMemo, /本評価不可|公的確認|調査指示/);
 	assert.match(missingOfficialMemo, /農地・農転/);
 	assert.match(missingOfficialMemo, /登記/);
@@ -1037,6 +1074,7 @@ async function main() {
 	assert.match(missingOfficialMemo, /営業担当への入力案内/);
 	assert.match(missingOfficialMemo, /【今AIが欲しいデータ】/);
 	assert.match(missingOfficialMemo, /誰が取るか/);
+	assert.match(missingOfficialMemo, /大ちゃんに即出すタスク/);
 	assert.match(missingOfficialMemo, /取れたら何が分かるか/);
 	assert.match(missingOfficialMemo, /担当: 営業担当/);
 	assert.match(missingOfficialMemo, /土地DB「農地種別」/);
