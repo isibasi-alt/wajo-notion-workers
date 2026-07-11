@@ -28059,7 +28059,15 @@ function readParcelCadastreCandidate(
 }
 
 function parcelCadastreEvidence(context: LandParcelCadastreContext): string {
-	if (context.status !== "connected") return context.message;
+	if (context.status !== "connected") {
+		return [
+			context.message,
+			"公開データ案内: https://www.moj.go.jp/MINJI/minji05_00494.html",
+			"取得入口: https://front.geospatial.jp/",
+			"配置手順: 対象市区町村の登記所備付地図データを取得 -> GeoJSONへ変換 -> WAJO管理URLへ配置 -> MOJ_CHIZU_GEOJSON_URLSへ登録",
+			"注意: 公開データは地番候補・筆界候補の補助であり、地図証明書・図面証明書・登記事項証明書の代替ではない。",
+		].join("\n");
+	}
 	const lines = [
 		context.message,
 		`登記所備付地図データ接続元: ${context.source}`,
@@ -28423,6 +28431,7 @@ function gridCapacityEvidence(context: LandGridCapacityContext): string {
 			context.message,
 			`系統空き確認元: ${context.source}`,
 			`公式確認先: ${context.officialLinks.map((link) => `${link.label} ${link.url}`).join(" / ")}`,
+			"配置手順: 公式確認先の公表値を取得 -> 設備名・電圧・空容量・N-1電制・更新日・元URLを正規化 -> WAJO管理JSONへ配置 -> GRID_CAPACITY_PUBLIC_JSON_URLSへ登録。",
 			"注意: 空容量マップの表示は公表値候補であり、接続可否確定ではない。送配電会社の接続検討で受電地点、連系制約、N-1電制、工事費負担金を確認。",
 		].join("\n");
 	}

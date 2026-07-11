@@ -868,6 +868,44 @@ async function main() {
 	assert.deepEqual(addressOnlyFinalUpdate.総合評価, { select: { name: "C" } });
 	assert.doesNotMatch(addressOnlyMemo, /この土地、?1億|判定が全部出た|即アタック|農転不可|危険|接道OK/);
 
+	const mojUrlsForPublicDataGap = process.env.MOJ_CHIZU_GEOJSON_URLS;
+	const mojUrlForPublicDataGap = process.env.MOJ_CHIZU_GEOJSON_URL;
+	const gridUrlsForPublicDataGap = process.env.GRID_CAPACITY_PUBLIC_JSON_URLS;
+	const gridUrlForPublicDataGap = process.env.GRID_CAPACITY_PUBLIC_JSON_URL;
+	const gridJsonForPublicDataGap = process.env.GRID_CAPACITY_PUBLIC_JSON;
+	delete process.env.MOJ_CHIZU_GEOJSON_URLS;
+	delete process.env.MOJ_CHIZU_GEOJSON_URL;
+	delete process.env.GRID_CAPACITY_PUBLIC_JSON_URLS;
+	delete process.env.GRID_CAPACITY_PUBLIC_JSON_URL;
+	delete process.env.GRID_CAPACITY_PUBLIC_JSON;
+	activePage = addressOnlyPage();
+	const publicDataGapResult = await processLandEvaluationForTest(
+		{ pageId: "land-public-data-gap-1", dryRun: false },
+		notion as never,
+	);
+	assert.equal(publicDataGapResult.action, "needs-review");
+	const publicDataGapMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
+	assert.match(publicDataGapMemo, /登記所備付地図データ接続: 公開データ未配置/);
+	assert.match(publicDataGapMemo, /APIキー不要/);
+	assert.match(publicDataGapMemo, /G空間情報センターの公開データを取得・変換/);
+	assert.match(publicDataGapMemo, /MOJ_CHIZU_GEOJSON_URLS/);
+	assert.match(publicDataGapMemo, /https:\/\/front\.geospatial\.jp\//);
+	assert.match(publicDataGapMemo, /地図証明書・図面証明書・登記事項証明書の代替ではない/);
+	assert.match(publicDataGapMemo, /系統空き確認: 公開データ未配置/);
+	assert.match(publicDataGapMemo, /公開情報を取得・正規化/);
+	assert.match(publicDataGapMemo, /GRID_CAPACITY_PUBLIC_JSON_URLS/);
+	assert.match(publicDataGapMemo, /設備名・電圧・空容量・N-1電制・更新日・元URL/);
+	if (mojUrlsForPublicDataGap === undefined) delete process.env.MOJ_CHIZU_GEOJSON_URLS;
+	else process.env.MOJ_CHIZU_GEOJSON_URLS = mojUrlsForPublicDataGap;
+	if (mojUrlForPublicDataGap === undefined) delete process.env.MOJ_CHIZU_GEOJSON_URL;
+	else process.env.MOJ_CHIZU_GEOJSON_URL = mojUrlForPublicDataGap;
+	if (gridUrlsForPublicDataGap === undefined) delete process.env.GRID_CAPACITY_PUBLIC_JSON_URLS;
+	else process.env.GRID_CAPACITY_PUBLIC_JSON_URLS = gridUrlsForPublicDataGap;
+	if (gridUrlForPublicDataGap === undefined) delete process.env.GRID_CAPACITY_PUBLIC_JSON_URL;
+	else process.env.GRID_CAPACITY_PUBLIC_JSON_URL = gridUrlForPublicDataGap;
+	if (gridJsonForPublicDataGap === undefined) delete process.env.GRID_CAPACITY_PUBLIC_JSON;
+	else process.env.GRID_CAPACITY_PUBLIC_JSON = gridJsonForPublicDataGap;
+
 	const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY;
 	const googleApiKey = process.env.GOOGLE_API_KEY;
 	delete process.env.GOOGLE_MAPS_API_KEY;
