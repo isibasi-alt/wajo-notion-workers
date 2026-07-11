@@ -2528,6 +2528,9 @@ type LandResult = {
 	overallGrade: string;
 	score: number;
 	bucket: string;
+	scaleDistanceGate: string;
+	scaleDistanceEvidenceState: string;
+	scaleDistanceSource: string;
 	message: string;
 };
 
@@ -2575,6 +2578,9 @@ type LandEvaluation = {
 	overallGrade: string;
 	score: number;
 	bucket: string;
+	scaleDistanceGate: string;
+	scaleDistanceEvidenceState: string;
+	scaleDistanceSource: string;
 	requiresInvestigation?: boolean;
 	investigationGaps?: string[];
 	actionBucket: string;
@@ -4352,6 +4358,9 @@ worker.tool("processLandEvaluationById", {
 		overallGrade: j.string(),
 		score: j.number(),
 		bucket: j.string(),
+		scaleDistanceGate: j.string(),
+		scaleDistanceEvidenceState: j.string(),
+		scaleDistanceSource: j.string(),
 		message: j.string(),
 	}),
 	execute: async ({ pageId, dryRun }, { notion }) => {
@@ -24711,6 +24720,9 @@ async function processLandEvaluation(
 			overallGrade: evaluation.overallGrade,
 			score: evaluation.score,
 			bucket: evaluation.bucket,
+			scaleDistanceGate: evaluation.scaleDistanceGate,
+			scaleDistanceEvidenceState: evaluation.scaleDistanceEvidenceState,
+			scaleDistanceSource: evaluation.scaleDistanceSource,
 			message: `dry-run: ${evaluation.bucket} / ${evaluation.overallGrade} / ${evaluation.score}点。`,
 		};
 	}
@@ -24723,6 +24735,9 @@ async function processLandEvaluation(
 			overallGrade: evaluation.overallGrade,
 			score: evaluation.score,
 			bucket: evaluation.bucket,
+			scaleDistanceGate: evaluation.scaleDistanceGate,
+			scaleDistanceEvidenceState: evaluation.scaleDistanceEvidenceState,
+			scaleDistanceSource: evaluation.scaleDistanceSource,
 			message: "所在地または面積が不足しているため、詳細評価前の要確認にしました。",
 		};
 	}
@@ -24735,6 +24750,9 @@ async function processLandEvaluation(
 			overallGrade: evaluation.overallGrade,
 			score: evaluation.score,
 			bucket: evaluation.bucket,
+			scaleDistanceGate: evaluation.scaleDistanceGate,
+			scaleDistanceEvidenceState: evaluation.scaleDistanceEvidenceState,
+			scaleDistanceSource: evaluation.scaleDistanceSource,
 			message: `本評価に必要な確認が不足しているため、要確認にしました: ${evaluation.investigationGaps?.join("、") ?? "確認事項あり"}`,
 		};
 	}
@@ -24752,6 +24770,9 @@ async function processLandEvaluation(
 			overallGrade: evaluation.overallGrade,
 			score: evaluation.score,
 			bucket: evaluation.bucket,
+			scaleDistanceGate: evaluation.scaleDistanceGate,
+			scaleDistanceEvidenceState: evaluation.scaleDistanceEvidenceState,
+			scaleDistanceSource: evaluation.scaleDistanceSource,
 			message: "土地詳細評価を返却しました。案件化判断は人間確認前提です。",
 		};
 	} catch (error) {
@@ -29237,6 +29258,7 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			latitude,
 			longitude,
 			substationDistanceKm: land.substationDistanceKm,
+			inputEvidenceState: land.inputEvidenceState,
 		});
 		const mapEvidence = [
 			mapContext.googleMapsUrl ? `Google Maps: ${mapContext.googleMapsUrl}` : "",
@@ -29273,11 +29295,14 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 				projectType: treasure.projectType,
 				powerArea: treasure.powerArea,
 				landRating: "△",
-				powerRating: treasure.powerRating,
-				roadRating: treasure.roadRating,
-				subsidyRating: "要確認",
-				demandRating: treasure.demandRating,
-				landEvaluation: scout.landEvaluation,
+			powerRating: treasure.powerRating,
+			roadRating: treasure.roadRating,
+			subsidyRating: "要確認",
+			demandRating: treasure.demandRating,
+			scaleDistanceGate: treasure.scaleDistanceGate,
+			scaleDistanceEvidenceState: treasure.scaleDistanceEvidenceState,
+			scaleDistanceSource: treasure.scaleDistanceSource,
+			landEvaluation: scout.landEvaluation,
 				powerEvaluation: treasure.powerEvaluation,
 				roadEvaluation: treasure.roadEvaluation,
 				subsidyEvaluation: treasure.subsidyEvaluation,
@@ -29309,6 +29334,9 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			roadRating: treasure.roadRating,
 			subsidyRating: treasure.subsidyRating,
 			demandRating: treasure.demandRating,
+			scaleDistanceGate: treasure.scaleDistanceGate,
+			scaleDistanceEvidenceState: treasure.scaleDistanceEvidenceState,
+			scaleDistanceSource: treasure.scaleDistanceSource,
 			landEvaluation: mapEvidence ? `${treasure.landEvaluation}\n${mapEvidence}` : treasure.landEvaluation,
 			powerEvaluation: mapEvidence ? `${treasure.powerEvaluation}\n${mapEvidence}` : treasure.powerEvaluation,
 			roadEvaluation: mapEvidence ? `${treasure.roadEvaluation}\n${mapEvidence}` : treasure.roadEvaluation,
@@ -29340,6 +29368,16 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 	const roadRating = chooseRoadRating(land.road);
 	const subsidyRating = "要確認";
 	const demandRating = area >= 1500 ? "あり" : area >= 300 ? "不明" : "なし";
+	const scaleDistanceGate = area < 3000 ? "面積不足" : "距離未確認";
+	const scaleDistanceEvidenceState = ["原本", "行政正式書面"].includes(land.inputEvidenceState)
+		? "根拠確認済み"
+		: "根拠未確認";
+	const scaleDistanceSource =
+		land.latitude !== null && land.longitude !== null
+			? "変電所DB座標再計算"
+			: land.substationDistanceKm !== null
+				? "土地DB手入力距離"
+				: "距離未確認";
 	const reviewMemo = `${missing.join("、")}が不足。評価前に入力を確認してください。`;
 
 	return {
@@ -29355,6 +29393,9 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 		roadRating,
 		subsidyRating,
 		demandRating,
+		scaleDistanceGate,
+		scaleDistanceEvidenceState,
+		scaleDistanceSource,
 		landEvaluation: [
 			`${land.name}は、${areaLabel}・所在地「${land.address || "未確認"}」を起点にした土地評価です。`,
 			missing.length > 0
@@ -34933,6 +34974,18 @@ async function applyCaseLegitimacyGate(
 	projectPageId: string,
 ): Promise<string> {
 	const refreshed = await notion.pages.retrieve({ page_id: projectPageId });
+	// 担当の役スロット自動振り分け（2026-07-11大ちゃん確定・A案）：
+	// 売却案件＝仕入れ起点なので、開けた人（担当営業ユーザー）を「仕入れ担当」へ移す。担当営業スロットは空にして、
+	// 買い手がマッチした時に買い手側担当を入れる枠として残す。※既に仕入れ担当が居る／担当営業が空なら触らない。
+	const dealTypeForOwner = text(refreshed.properties?.["売買区分"]);
+	const eigyouIds = personIdsFromProperty(refreshed.properties?.["担当営業ユーザー"]);
+	const shiireIds = personIdsFromProperty(refreshed.properties?.["仕入れ担当"]);
+	if (dealTypeForOwner === "売却案件" && eigyouIds.length > 0 && shiireIds.length === 0) {
+		await safeUpdateExistingProperties(notion, refreshed, {
+			仕入れ担当: { kind: "people", ids: eigyouIds },
+			担当営業ユーザー: { kind: "people", ids: [] },
+		}).catch(() => {});
+	}
 	const missing = caseLegitimacyGateMissing(refreshed);
 	if (missing.length === 0) return "";
 	await safeUpdateExistingProperties(notion, refreshed, {
