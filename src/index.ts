@@ -15507,13 +15507,23 @@ type ProductComposition = {
 	strategyLines: string[];
 };
 
+type BuybackCommitmentStatus = "未設定" | "出口想定" | "和上審査中" | "和上コミット承認" | "契約済み";
+
 type FinanceExitScenario = {
 	exitYears: number;
+	commitmentStatus: BuybackCommitmentStatus;
+	priceSource: "出口想定" | "和上買取コミット" | null;
+	commitmentPrice: number | null;
+	commitmentCondition: string;
 	exitSalePrice: number | null;
 	exitCostRate: number | null;
 	exitCost: number | null;
+	exitTaxEstimate: number | null;
 	loanBalanceAtExit: number | null;
 	netExitProceeds: number | null;
+	cumulativeOperatingCashflow: number | null;
+	totalCashReceived: number | null;
+	netInvestmentGain: number | null;
 	cumulativeAfterTaxCashflow: number | null;
 	equityNpv: number | null;
 	equityIrr: number | null;
@@ -18602,6 +18612,22 @@ function buildFinanceSimulationRecordProperties(
 		出口エクイティIRR: finance.exitScenario.equityIrr !== null
 			? { number: finance.exitScenario.equityIrr }
 			: undefined,
+		"3年累計運用手取り": finance.exitScenario.cumulativeOperatingCashflow !== null
+			? { number: finance.exitScenario.cumulativeOperatingCashflow }
+			: undefined,
+		"3年総受取額": finance.exitScenario.totalCashReceived !== null
+			? { number: finance.exitScenario.totalCashReceived }
+			: undefined,
+		"3年投資差益": finance.exitScenario.netInvestmentGain !== null
+			? { number: finance.exitScenario.netInvestmentGain }
+			: undefined,
+		出口価格根拠: richText(
+			finance.exitScenario.priceSource === "和上買取コミット"
+				? `和上買取コミット（${finance.exitScenario.commitmentStatus}）`
+				: finance.exitScenario.priceSource === "出口想定"
+					? "出口想定売却価格"
+					: "出口価格未設定",
+		),
 		DSCR: finance.dscr !== null ? { number: finance.dscr } : undefined,
 		実質金利: finance.effectiveInterestRate !== null ? { number: finance.effectiveInterestRate } : undefined,
 		アドオン金利: finance.addOnInterestRate !== null ? { number: finance.addOnInterestRate } : undefined,
@@ -19036,7 +19062,7 @@ async function buildInvestmentConditionPdfBytes(
 			});
 			drawText(label, left + 8, y - 13, 7.8, fonts.regular, colors.muted);
 			drawWrapped(value, left + 178, y - 13, contentWidth - 188, 8, fonts.bold, 1);
-			y -= 23;
+			y -= 20;
 		}
 		return y;
 	};
@@ -19080,7 +19106,10 @@ async function buildInvestmentConditionPdfBytes(
 	const metricWidth = (contentWidth - 18) / 4;
 	const metricY = pageHeight - 106;
 	drawMetric(left, metricY, metricWidth, "投資判定", formatInvestmentDecisionMetric(finance.timingRank));
-	drawMetric(left + metricWidth + 6, metricY, metricWidth, `${finance.exitScenario.exitYears}年出口IRR`, finance.exitScenario.equityIrr !== null ? `${trimTrailingZeros(finance.exitScenario.equityIrr)}%` : "要設定");
+	const exitMetricLabel = finance.exitScenario.priceSource === "和上買取コミット"
+		? `${finance.exitScenario.exitYears}年コミットIRR`
+		: `${finance.exitScenario.exitYears}年出口IRR`;
+	drawMetric(left + metricWidth + 6, metricY, metricWidth, exitMetricLabel, finance.exitScenario.equityIrr !== null ? `${trimTrailingZeros(finance.exitScenario.equityIrr)}%` : "要設定");
 	drawMetric(left + (metricWidth + 6) * 2, metricY, metricWidth, `${finance.exitScenario.exitYears}年出口手取り`, finance.exitScenario.netExitProceeds !== null ? formatYen(finance.exitScenario.netExitProceeds) : "要設定");
 	drawMetric(left + (metricWidth + 6) * 3, metricY, metricWidth, "DSCR", finance.dscr !== null ? trimTrailingZeros(finance.dscr) : "借入なし");
 
@@ -19115,6 +19144,9 @@ async function buildInvestmentConditionPdfBytes(
 		["税効果", `${formatYen(finance.taxBenefit)} / 実効税率 ${trimTrailingZeros(finance.effectiveTaxRate)}%`],
 		["税効果後CF", `${formatYen(finance.afterTaxCashflow)} / 経済メリット累計 ${formatYen(finance.totalEconomicalBenefit)}`],
 		["案件NPV / IRR", `${finance.projectNpv !== null ? formatYen(finance.projectNpv) : "未算出"} / ${finance.projectIrr !== null ? `${trimTrailingZeros(finance.projectIrr)}%` : "未算出"}`],
+		["3年顧客メリット", finance.exitScenario.missingItems.length === 0
+			? `運用手取り ${formatYen(finance.exitScenario.cumulativeOperatingCashflow ?? 0)} / 出口手取り ${formatYen(finance.exitScenario.netExitProceeds ?? 0)} / 投資差益 ${formatFinanceSignedYen(finance.exitScenario.netInvestmentGain ?? 0)}`
+			: `出口計算保留: ${finance.exitScenario.missingItems.join("・")}`],
 	], y);
 
 	y = drawSection("投資判定の根拠", y - 6);
@@ -19289,7 +19321,9 @@ async function buildInvestmentConditionPdfBytes(
 	drawText(`${finance.exitScenario.exitYears}年出口の考え方`, left + 12, y - 19, 8.5, fonts.bold, colors.teal);
 	drawWrapped(
 		finance.exitScenario.missingItems.length === 0
-			? `出口想定売却価格 ${formatYen(finance.exitScenario.exitSalePrice ?? 0)}、売却費用率 ${trimTrailingZeros(finance.exitScenario.exitCostRate ?? 0)}%、出口時残債 ${formatYen(finance.exitScenario.loanBalanceAtExit ?? 0)} を差し引き、保有中の税効果後キャッシュフローと合わせて計算しています。`
+			? finance.exitScenario.priceSource === "和上買取コミット"
+				? `和上の条件付き買取コミット価格 ${formatYen(finance.exitScenario.exitSalePrice ?? 0)} を用い、売却費用、出口時税金見込 ${formatYen(finance.exitScenario.exitTaxEstimate ?? 0)}、出口時残債 ${formatYen(finance.exitScenario.loanBalanceAtExit ?? 0)} を差し引いています。コミットの効力は契約記載の条件に従います。`
+				: `出口想定売却価格 ${formatYen(finance.exitScenario.exitSalePrice ?? 0)}、売却費用率 ${trimTrailingZeros(finance.exitScenario.exitCostRate ?? 0)}%、出口時残債 ${formatYen(finance.exitScenario.loanBalanceAtExit ?? 0)} を差し引き、保有中の税効果後キャッシュフローと合わせて計算しています。`
 			: `出口シナリオは ${finance.exitScenario.missingItems.join("・")} が未確認のため、数値を確定していません。入力後に出口時残債・手取り・エクイティIRRを計算します。`,
 		left + 12,
 		y - 35,
@@ -23148,29 +23182,67 @@ function buildFinanceExitScenario(input: {
 	const exitYears = Math.max(1, Math.min(30, Math.floor(
 		readFirstNumberByAliases(input.properties, ["出口想定年数", "想定保有年数", "売却想定年数"]) ?? 3,
 	)));
-	const exitSalePrice = readFirstNumberByAliases(input.properties, [
+	const commitmentStatus = normalizeBuybackCommitmentStatus(readFirstTextByAliases(input.properties, [
+		"和上買取コミット段階",
+		"和上買取コミット状態",
+		"買取コミット段階",
+	]));
+	const commitmentPrice = readFirstNumberByAliases(input.properties, [
+		"和上買取コミット価格",
+		"3年買取コミット価格",
+		"買取コミット価格",
+	]);
+	const commitmentCondition = readFirstTextByAliases(input.properties, [
+		"和上買取コミット条件",
+		"買取コミット条件",
+	]);
+	const assumedExitSalePrice = readFirstNumberByAliases(input.properties, [
 		"出口想定売却価格",
 		"3年後想定売却価格",
 		"想定売却価格",
 	]);
+	const commitmentIsApproved = commitmentStatus === "和上コミット承認" || commitmentStatus === "契約済み";
+	const priceSource = commitmentIsApproved && commitmentPrice !== null
+		? "和上買取コミット"
+		: assumedExitSalePrice !== null
+			? "出口想定"
+			: null;
+	const exitSalePrice = priceSource === "和上買取コミット"
+		? commitmentPrice
+		: assumedExitSalePrice;
 	const exitCostRate = readFirstNumberByAliases(input.properties, [
 		"出口費用率",
 		"売却費用率",
 		"売却諸費用率",
 	]);
+	const exitTaxEstimate = readFirstNumberByAliases(input.properties, [
+		"出口時税金見込",
+		"出口譲渡税見込",
+		"売却時税金見込",
+	]);
 	const missingItems = [
 		...input.composition.unconfirmedItems,
-		exitSalePrice === null ? "出口想定売却価格" : "",
+		commitmentIsApproved && commitmentPrice === null ? "和上買取コミット価格" : "",
+		exitSalePrice === null ? "出口想定売却価格または和上買取コミット価格" : "",
 		exitCostRate === null ? "出口費用率" : "",
+		commitmentIsApproved && exitTaxEstimate === null ? "出口時税金見込" : "",
 	].filter(Boolean);
 	if (missingItems.length > 0 || exitSalePrice === null || exitCostRate === null) {
 		return {
 			exitYears,
+			commitmentStatus,
+			priceSource,
+			commitmentPrice,
+			commitmentCondition,
 			exitSalePrice,
 			exitCostRate,
 			exitCost: null,
+			exitTaxEstimate,
 			loanBalanceAtExit: null,
 			netExitProceeds: null,
+			cumulativeOperatingCashflow: null,
+			totalCashReceived: null,
+			netInvestmentGain: null,
 			cumulativeAfterTaxCashflow: null,
 			equityNpv: null,
 			equityIrr: null,
@@ -23205,28 +23277,50 @@ function buildFinanceExitScenario(input: {
 	}
 	const exitCost = roundTo(exitSalePrice * (exitCostRate / 100), 0);
 	const loanBalanceAtExit = input.debtRepaymentSchedule[exitYears - 1]?.remainingBalance ?? 0;
-	const netExitProceeds = roundTo(exitSalePrice - exitCost - loanBalanceAtExit, 0);
+	const netExitProceeds = roundTo(exitSalePrice - exitCost - loanBalanceAtExit - (exitTaxEstimate ?? 0), 0);
+	const cumulativeOperatingCashflow = roundTo(yearlyCashflows.reduce((sum, value) => sum + value, 0), 0);
+	const totalCashReceived = roundTo(cumulativeOperatingCashflow + netExitProceeds, 0);
+	const netInvestmentGain = roundTo(totalCashReceived - input.equityInvest, 0);
 	const cashflows = [-input.equityInvest, ...yearlyCashflows];
 	cashflows[cashflows.length - 1] = (cashflows[cashflows.length - 1] ?? 0) + netExitProceeds;
 	return {
 		exitYears,
+		commitmentStatus,
+		priceSource,
+		commitmentPrice,
+		commitmentCondition,
 		exitSalePrice,
 		exitCostRate,
 		exitCost,
+		exitTaxEstimate,
 		loanBalanceAtExit,
 		netExitProceeds,
-		cumulativeAfterTaxCashflow: roundTo(yearlyCashflows.reduce((sum, value) => sum + value, 0) + netExitProceeds, 0),
+		cumulativeOperatingCashflow,
+		totalCashReceived,
+		netInvestmentGain,
+		cumulativeAfterTaxCashflow: totalCashReceived,
 		equityNpv: calculateNpvFromCashflows(cashflows, input.discountRate),
 		equityIrr: calculateIrrFromCashflows(cashflows),
 		missingItems: [],
 	};
 }
 
+function normalizeBuybackCommitmentStatus(value: string): BuybackCommitmentStatus {
+	if (value.includes("契約")) return "契約済み";
+	if (value.includes("承認") || value.includes("コミット済")) return "和上コミット承認";
+	if (value.includes("審査")) return "和上審査中";
+	if (value.includes("想定")) return "出口想定";
+	return "未設定";
+}
+
 function formatFinanceExitScenarioLine(scenario: FinanceExitScenario): string {
 	if (scenario.missingItems.length > 0) {
 		return `${scenario.exitYears}年出口は未算出（${scenario.missingItems.join("・")}を確認）`;
 	}
-	return `${scenario.exitYears}年後の手取り ${formatYen(scenario.netExitProceeds ?? 0)} / 残債 ${formatYen(scenario.loanBalanceAtExit ?? 0)} / エクイティIRR ${scenario.equityIrr !== null ? `${trimTrailingZeros(scenario.equityIrr)}%` : "未算出"}`;
+	const priceLabel = scenario.priceSource === "和上買取コミット"
+		? `和上買取コミット（${scenario.commitmentStatus}）`
+		: "出口想定";
+	return `${priceLabel} / ${scenario.exitYears}年後の手取り ${formatYen(scenario.netExitProceeds ?? 0)} / 3年投資差益 ${formatFinanceSignedYen(scenario.netInvestmentGain ?? 0)} / エクイティIRR ${scenario.equityIrr !== null ? `${trimTrailingZeros(scenario.equityIrr)}%` : "未算出"}`;
 }
 
 function calculateNpvFromCashflows(cashflows: number[], discountRatePercent: number): number | null {

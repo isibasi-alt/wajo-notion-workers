@@ -95,6 +95,9 @@ async function main() {
 			出口想定年数: numberProp(3),
 			出口想定売却価格: numberProp(17_000_000),
 			出口費用率: numberProp(5),
+			出口時税金見込: numberProp(400_000),
+			和上買取コミット段階: selectProp("和上コミット承認"),
+			和上買取コミット価格: numberProp(17_500_000),
 		},
 		salePrice: 20_000_000,
 		annualNetIncome: 2_500_000,
@@ -104,8 +107,14 @@ async function main() {
 	assert.equal(financeWithExit.composition.verificationStatus, "確認済み");
 	assert.equal(financeWithExit.exitScenario.missingItems.length, 0);
 	assert.equal(financeWithExit.exitScenario.exitYears, 3);
+	assert.equal(financeWithExit.exitScenario.priceSource, "和上買取コミット");
+	assert.equal(financeWithExit.exitScenario.commitmentStatus, "和上コミット承認");
+	assert.equal(financeWithExit.exitScenario.exitSalePrice, 17_500_000);
 	assert.ok((financeWithExit.exitScenario.loanBalanceAtExit ?? 0) > 0);
 	assert.ok((financeWithExit.exitScenario.netExitProceeds ?? 0) > 0);
+	assert.ok((financeWithExit.exitScenario.cumulativeOperatingCashflow ?? 0) > 0);
+	assert.ok((financeWithExit.exitScenario.totalCashReceived ?? 0) > 0);
+	assert.notEqual(financeWithExit.exitScenario.netInvestmentGain, null);
 	assert.notEqual(financeWithExit.exitScenario.equityIrr, null);
 
 	const financePage = {
@@ -125,6 +134,9 @@ async function main() {
 			出口想定年数: numberProp(3),
 			出口想定売却価格: numberProp(17_000_000),
 			出口費用率: numberProp(5),
+			出口時税金見込: numberProp(400_000),
+			和上買取コミット段階: selectProp("和上コミット承認"),
+			和上買取コミット価格: numberProp(17_500_000),
 			投資条件シミュレーションPDF: { type: "files", files: [] },
 		},
 	};
