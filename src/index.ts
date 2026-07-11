@@ -29634,6 +29634,7 @@ async function markLandNeedsReview(
 	evaluation: LandEvaluation,
 ): Promise<void> {
 	const patches: Record<string, SafePatch> = {
+		...buildLandEvidenceCollectionPatches(land, evaluation),
 		処理ステータス: { kind: "select", value: "要確認" },
 		AIアクションバケット: { kind: "select", value: "継続監視" },
 		総合評価: { kind: "select", value: evaluation.overallGrade },
@@ -29683,12 +29684,54 @@ async function markLandFailure(
 	await safeUpdateExistingProperties(notion, land.page, patches);
 }
 
+function buildLandEvidenceCollectionPatches(
+	land: LandInfo,
+	evaluation: LandEvaluation,
+): Record<string, SafePatch> {
+	const gaps = uniqueStrings([
+		...(evaluation.investigationGaps ?? []),
+		...landInputEvidenceGaps(land),
+	]);
+	if (gaps.length === 0) return {};
+
+	const requiredDocuments = uniqueStrings([
+		...(gaps.some((gap) => /農地|農転/.test(gap))
+			? ["農業委員会の回答、農地転用に関する正式資料"]
+			: []),
+		...(gaps.some((gap) => /登記|所有者/.test(gap))
+			? ["登記事項証明書、地図証明書、地積測量図"]
+			: []),
+		...(gaps.some((gap) => /接道|道路|大型車/.test(gap))
+			? ["道路台帳または道路管理者の回答"]
+			: []),
+		...(gaps.some((gap) => /変電所距離/.test(gap))
+			? ["正式な所在地・地番または測量図"]
+			: []),
+	]);
+	const request = [
+		"【営業資料回収依頼】",
+		`対象土地: ${land.name || "土地名称未入力"}`,
+		`不足根拠: ${gaps.join(" / ")}`,
+		`必要資料: ${requiredDocuments.join(" / ") || "原本または行政正式書面"}`,
+		"提出先: この土地DBの該当レコードへファイル添付、または原本URLを記録。",
+		"戻し方: 根拠区分を「原本」または「行政正式書面」にし、取得日・取得先を記録。",
+		"再判定: 資料を戻した後に「土地評価を開始」を実行。",
+	].join("\n");
+
+	return {
+		資料回収状態: { kind: "select", value: "要回収" },
+		資料回収の状況: { kind: "multi_select", values: ["要回収"] },
+		資料回収依頼: { kind: "text", value: request },
+	};
+}
+
 async function writeLandEvaluation(
 	notion: NotionClient,
 	land: LandInfo,
 	evaluation: LandEvaluation,
 ): Promise<void> {
 	const patches: Record<string, SafePatch> = {
+		...buildLandEvidenceCollectionPatches(land, evaluation),
 		処理ステータス: { kind: "select", value: "完了" },
 		AIアクションバケット: { kind: "select", value: evaluation.actionBucket },
 		総合評価: { kind: "select", value: evaluation.overallGrade },

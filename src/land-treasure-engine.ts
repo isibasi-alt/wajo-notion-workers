@@ -16,9 +16,11 @@ export type LandTreasureInput = {
 	latitude: number | null;
 	longitude: number | null;
 	substationDistanceKm: number | null;
+	inputEvidenceState?: string;
 };
 
 export type LandTreasureGrade = "S" | "A" | "B" | "C";
+export type LandScaleDistanceGate = "通過候補" | "面積不足" | "距離超過" | "距離未確認";
 export type LandFarmlandProspectRank = "高" | "中" | "低";
 export type LandFarmlandConfidence = "高" | "中" | "低";
 export type LandFarmlandFormalStatus = "未照会" | "照会準備中" | "照会済み" | "回答済み";
@@ -57,6 +59,9 @@ export type LandTreasureEvaluation = {
 	roadRating: string;
 	subsidyRating: string;
 	demandRating: string;
+	scaleDistanceGate: LandScaleDistanceGate;
+	scaleDistanceEvidenceState: "根拠確認済み" | "根拠未確認";
+	scaleDistanceSource: "変電所DB座標再計算" | "土地DB手入力距離" | "距離未確認";
 	nearestSubstationName: string;
 	nearestSubstationDistanceKm: number | null;
 	nearestSubstationOperator: string;
@@ -90,6 +95,16 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 	const nearestCandidates = findNearestSubstations(input.latitude, input.longitude, powerArea, 3);
 	const nearest = nearestCandidates[0] ?? null;
 	const distanceKm = nearest?.distanceKm ?? input.substationDistanceKm;
+	const scaleDistanceGate = evaluateScaleDistanceGate(area, distanceKm);
+	const scaleDistanceEvidenceState = ["原本", "行政正式書面"].includes(input.inputEvidenceState ?? "")
+		? "根拠確認済み"
+		: "根拠未確認";
+	const scaleDistanceSource =
+		input.latitude !== null && input.longitude !== null && nearest
+			? "変電所DB座標再計算"
+			: input.substationDistanceKm !== null
+				? "土地DB手入力距離"
+				: "距離未確認";
 	const roadWidthM = roadWidthFromText(input.road);
 	const gridStatus = nearest?.substation.grid || "";
 	const blockers = identifyBirdEyeBlockers(input, roadWidthM, distanceKm);
@@ -111,11 +126,13 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 		farmland: input.farmland,
 		farmlandType: input.farmlandType,
 		registry: input.registry,
-		nearbyResidentialDistanceM: input.nearbyResidentialDistanceM,
 		blockers,
 	});
 	const uncappedScore = clamp(Math.round(physicalAiScore * 0.62 + salesAiScore * 0.38), 0, 100);
-	const score = applyBirdEyeCaps(uncappedScore, blockers);
+	const score = Math.min(
+		applyBirdEyeCaps(uncappedScore, blockers),
+		scaleDistanceGate === "通過候補" ? 100 : 64,
+	);
 	const overallGrade: LandTreasureGrade =
 		score >= 90 ? "S" : score >= 80 ? "A" : score >= 65 ? "B" : "C";
 	const bucket =
@@ -170,6 +187,7 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 	const roadLine = roadWidthM
 		? `接道: ${input.road || "入力なし"}（幅員${roadWidthM}mとして判定）`
 		: `接道: ${input.road || "未確認"}（幅員は未確定）`;
+	const nearbyResidentialAlert = buildNearbyResidentialAlert(input);
 	const customerValue = buildCustomerValueStatement({
 		grade: overallGrade,
 		score,
@@ -188,10 +206,12 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 		`2AI統合=${score}点`,
 		`AI-1 物理・系統評価=${physicalAiScore}点`,
 		`AI-2 営業・案件化評価=${salesAiScore}点`,
+		`D規模・距離ゲート=${scaleDistanceGate} / 入力根拠=${scaleDistanceEvidenceState} / 距離出所=${scaleDistanceSource}`,
 		substationLine,
 		substationCandidatesLine,
 		roadLine,
 		farmlandPreAssessmentText.replace(/\n/g, " / "),
+		nearbyResidentialAlert,
 		blockerLine,
 		customerValue,
 	].join(" / ");
@@ -209,6 +229,9 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 		roadRating,
 		subsidyRating,
 		demandRating,
+		scaleDistanceGate,
+		scaleDistanceEvidenceState,
+		scaleDistanceSource,
 		nearestSubstationName: nearestName,
 		nearestSubstationDistanceKm: distanceKm,
 		nearestSubstationOperator: nearest?.substation.op ?? "",
@@ -223,9 +246,10 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 		farmlandPreAssessment,
 		farmlandPreAssessmentText,
 		landEvaluation: [
-			`${input.name}は、${area > 0 ? `${Math.round(area).toLocaleString("ja-JP")}坪` : "面積未確認"}・所在地「${input.address || "未確認"}」を起点にした土地評価です。`,
-			`2AI評価として、物理・系統AIは${physicalAiScore}点、営業・案件化AIは${salesAiScore}点。SABC統合では${overallGrade} / ${score}点です。`,
-			farmlandPreAssessmentText,
+		`${input.name}は、${area > 0 ? `${Math.round(area).toLocaleString("ja-JP")}坪` : "面積未確認"}・所在地「${input.address || "未確認"}」を起点にした土地評価です。`,
+		`2AI評価として、物理・系統AIは${physicalAiScore}点、営業・案件化AIは${salesAiScore}点。SABC統合では${overallGrade} / ${score}点です。`,
+		`D規模・距離ゲート=${scaleDistanceGate} / 入力根拠=${scaleDistanceEvidenceState} / 距離出所=${scaleDistanceSource}（面積3,000坪以上・最寄り変電所直線距離2km以内を候補条件とする）`,
+		farmlandPreAssessmentText,
 			substationLine,
 			`鳥の目で見ると、${customerValue}`,
 			substationCandidatesLine,
@@ -261,7 +285,9 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 					? "推測ですが、蓄電池・高圧系の需要仮説を置けます。"
 					: "推測ですが、低圧集約、売却候補、近隣案件との組み合わせで価値を確認します。",
 		nextAction:
-			overallGrade === "S"
+			scaleDistanceGate !== "通過候補"
+				? `${farmlandPreAssessment.salesInputGuide}\n${buildScaleDistanceGateAction(scaleDistanceGate)}`
+				: overallGrade === "S"
 				? `${farmlandPreAssessment.salesInputGuide}\n最寄り変電所、接道、農転/登記、近隣住宅距離を人間が確認し、案件化・仕入れ打診へ進めてください。`
 				: blockers.length > 0
 					? `${farmlandPreAssessment.salesInputGuide}\n変電所近接だけで進めず、先に ${blockers.join(" / ")} を解消または確認してください。`
@@ -515,7 +541,6 @@ function scoreSalesAi(input: {
 	farmland: string;
 	farmlandType: string;
 	registry: string;
-	nearbyResidentialDistanceM: number | null;
 	blockers: string[];
 }): number {
 	let score = 0;
@@ -524,7 +549,6 @@ function scoreSalesAi(input: {
 	score += input.distanceKm !== null && input.distanceKm <= 1 ? 24 : input.distanceKm !== null && input.distanceKm <= 3 ? 18 : input.distanceKm !== null && input.distanceKm <= 5 ? 12 : 4;
 	score += input.roadWidthM === null ? 6 : input.roadWidthM >= 6 ? 16 : input.roadWidthM >= 4 ? 12 : -8;
 	score += /不要|済|確認済|可|可能/.test(`${input.farmland} ${input.farmlandType} ${input.registry}`) ? 14 : 6;
-	score += input.nearbyResidentialDistanceM === null ? 4 : input.nearbyResidentialDistanceM >= 30 ? 8 : -10;
 	score -= input.blockers.length * 9;
 	return clamp(score, 0, 100);
 }
@@ -561,16 +585,20 @@ function identifyBirdEyeBlockers(
 	if (/所有者不明/.test(input.registry)) {
 		blockers.push("登記・所有者確認に阻害要因あり");
 	}
-	if (input.nearbyResidentialDistanceM === null && !input.nearbyResidentialCheck) {
-		blockers.push("近隣住宅距離が未確認");
-	}
+	return blockers;
+}
+
+function buildNearbyResidentialAlert(input: LandTreasureInput): string {
 	if (
 		(input.nearbyResidentialDistanceM !== null && input.nearbyResidentialDistanceM < 30) ||
 		/30m未満/.test(input.nearbyResidentialCheck)
 	) {
-		blockers.push("近隣住宅が近い");
+		return "近隣住宅注意: 近隣に住宅らしき建物あり。現地・与信時に注意。";
 	}
-	return blockers;
+	if (input.nearbyResidentialDistanceM === null && !input.nearbyResidentialCheck) {
+		return "近隣住宅注意: 距離未確認。現地・与信時に注意。";
+	}
+	return "";
 }
 
 function applyBirdEyeCaps(score: number, blockers: string[]): number {
@@ -621,6 +649,25 @@ function scoreDistance(distanceKm: number | null): number {
 	if (distanceKm <= 10) return 12;
 	if (distanceKm <= 20) return 3;
 	return -12;
+}
+
+function evaluateScaleDistanceGate(
+	areaTsubo: number,
+	distanceKm: number | null,
+): LandScaleDistanceGate {
+	if (areaTsubo < 3000) return "面積不足";
+	if (distanceKm === null) return "距離未確認";
+	return distanceKm <= 2 ? "通過候補" : "距離超過";
+}
+
+function buildScaleDistanceGateAction(gate: LandScaleDistanceGate): string {
+	if (gate === "面積不足") {
+		return "D規模・距離ゲート: 面積3,000坪以上に満たないため、登記地積・農地筆ポリゴン・複数筆の合計面積を確認してから再評価してください。";
+	}
+	if (gate === "距離超過") {
+		return "D規模・距離ゲート: 最寄り変電所までの直線距離2kmを超えるため、系統公開情報・接続検討で代替系統と事業性を確認してから再評価してください。";
+	}
+	return "D規模・距離ゲート: 変電所距離が未確認です。住所・地番・座標を確認し、変電所DBで直線距離を再計算してください。";
 }
 
 function choosePowerRating(distanceKm: number | null, gridStatus: string): string {

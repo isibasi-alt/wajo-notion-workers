@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { processLandEvaluationForTest } from "./index";
+import { evaluateLandTreasure } from "./land-treasure-engine";
 
 function titleProp(value: string) {
 	return { type: "title", title: [{ plain_text: value }] };
@@ -15,6 +16,10 @@ function numberProp(value: number) {
 
 function selectProp(value: string) {
 	return { type: "select", select: { name: value } };
+}
+
+function multiSelectProp(...values: string[]) {
+	return { type: "multi_select", multi_select: values.map((name) => ({ name })) };
 }
 
 function dateProp() {
@@ -55,10 +60,13 @@ function highValueLandPage() {
 			AI接道評価: selectProp("要確認"),
 			AI補助金評価: selectProp("要確認"),
 			需要評価: selectProp("不明"),
-			案件化メモ: richTextProp(""),
-			一次AI受付メモ: richTextProp(""),
-			次アクション: richTextProp(""),
-			AI更新日時: dateProp(),
+		案件化メモ: richTextProp(""),
+		一次AI受付メモ: richTextProp(""),
+		次アクション: richTextProp(""),
+		資料回収状態: selectProp("未依頼"),
+		資料回収の状況: multiSelectProp(),
+		資料回収依頼: richTextProp(""),
+		AI更新日時: dateProp(),
 			Webhook引き継ぎステータス: selectProp("待機"),
 			Webhook引き継ぎメモ: richTextProp(""),
 			設計上の弱点: richTextProp(""),
@@ -167,6 +175,19 @@ function secondaryEvidenceHighValuePage() {
 	};
 }
 
+function officialEvidenceHighValuePage() {
+	const page = highValueLandPage();
+	return {
+		...page,
+		id: "land-official-evidence-1",
+		properties: {
+			...page.properties,
+			土地名称: titleProp("【TDD】行政正式書面で評価を継続"),
+			入力根拠区分: richTextProp("行政正式書面"),
+		},
+	};
+}
+
 function addressOnlyPage() {
 	return {
 		id: "land-address-only-1",
@@ -198,6 +219,47 @@ function addressOnlyPage() {
 }
 
 async function main() {
+	const scaleDistanceGateInput = {
+		name: "【TDD】D規模距離ゲート",
+		address: "岐阜県土岐市 土岐津町 テスト用地",
+		areaTsubo: 6000,
+		powerArea: "中部電力",
+		landUse: "準工業地域",
+		road: "南側6m公道に接道。大型車進入可。",
+		farmland: "不要",
+		farmlandType: "",
+		registry: "確認済み",
+		nearbyResidentialDistanceM: 10,
+		nearbyResidentialCheck: "30m未満",
+		transmissionLine: "近接あり",
+		latitude: 35.3556,
+		longitude: 137.1801,
+		substationDistanceKm: null,
+	};
+	const scaleDistancePass = evaluateLandTreasure(scaleDistanceGateInput);
+	assert.equal(scaleDistancePass.scaleDistanceGate, "通過候補");
+	assert.equal(scaleDistancePass.scaleDistanceEvidenceState, "根拠未確認");
+	assert.equal(scaleDistancePass.scaleDistanceSource, "変電所DB座標再計算");
+	assert.match(scaleDistancePass.reviewMemo, /D規模・距離ゲート=通過候補.*根拠未確認/);
+	assert.equal(
+		evaluateLandTreasure({ ...scaleDistanceGateInput, inputEvidenceState: "原本" }).scaleDistanceEvidenceState,
+		"根拠確認済み",
+	);
+	assert.match(scaleDistancePass.reviewMemo, /近隣住宅注意/);
+	assert.doesNotMatch(scaleDistancePass.reviewMemo, /主な阻害要因:.*近隣住宅/);
+	const scaleDistanceSmall = evaluateLandTreasure({ ...scaleDistanceGateInput, areaTsubo: 2999 });
+	assert.equal(scaleDistanceSmall.scaleDistanceGate, "面積不足");
+	assert.match(scaleDistanceSmall.nextAction, /面積3,000坪/);
+	const scaleDistanceFar = evaluateLandTreasure({
+			...scaleDistanceGateInput,
+			latitude: null,
+			longitude: null,
+			substationDistanceKm: 2.1,
+		});
+	assert.equal(scaleDistanceFar.scaleDistanceGate, "距離超過");
+	assert.equal(scaleDistanceFar.scaleDistanceSource, "土地DB手入力距離");
+	assert.match(scaleDistanceFar.nextAction, /直線距離2km/);
+
 	const updates: Array<Record<string, unknown>> = [];
 	const createdPages: Array<Record<string, unknown>> = [];
 	let activePage = highValueLandPage();
@@ -234,6 +296,8 @@ async function main() {
 	assert.equal(result.action, "evaluated");
 	assert.equal(result.overallGrade, "S");
 	assert.equal(result.bucket, "即アタック");
+	assert.equal(result.scaleDistanceGate, "通過候補");
+	assert.equal(result.scaleDistanceEvidenceState, "根拠確認済み");
 	assert.ok(result.score >= 90);
 
 	const finalUpdate = updates.at(-1)?.properties as Record<string, unknown>;
@@ -257,6 +321,7 @@ async function main() {
 	assert.match(memo, /見込みランク: 高/);
 	assert.match(memo, /正式確認状態: 回答済み/);
 	assert.match(memo, /営業担当への入力案内/);
+	assert.match(memo, /D規模・距離ゲート=通過候補/);
 
 	assert.equal(createdPages.length, 1);
 	const learningLog = createdPages[0]!.properties as Record<string, unknown>;
@@ -274,6 +339,27 @@ async function main() {
 		JSON.stringify(updates.at(-1)?.properties ?? {}),
 		/二次資料|原本待ち/,
 	);
+	assert.match(
+		JSON.stringify(updates.at(-1)?.properties ?? {}),
+		/営業資料回収依頼/,
+	);
+	assert.match(
+		JSON.stringify(updates.at(-1)?.properties ?? {}),
+		/根拠区分を「原本」または「行政正式書面」/,
+	);
+	assert.deepEqual(
+		(updates.at(-1)?.properties as Record<string, unknown>).資料回収の状況,
+		{ multi_select: [{ name: "要回収" }] },
+	);
+
+	activePage = officialEvidenceHighValuePage();
+	const officialEvidenceResult = await processLandEvaluationForTest(
+		{ pageId: "land-official-evidence-1", dryRun: false },
+		notion as never,
+	);
+	assert.equal(officialEvidenceResult.action, "evaluated");
+	assert.equal(officialEvidenceResult.bucket, "即アタック");
+	assert.doesNotMatch(JSON.stringify(updates.at(-1)?.properties ?? {}), /原本待ち/);
 
 	activePage = linkedCaseLandPage();
 	const linkedCaseUpdateStart = updates.length;
