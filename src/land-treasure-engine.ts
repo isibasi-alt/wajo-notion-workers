@@ -64,6 +64,7 @@ export type LandTreasureEvaluation = {
 	quickDecisionReason: string;
 	salesPathDeadline: string;
 	salesPathRequest: string;
+	missingDataRequest: string;
 	scaleDistanceGate: LandScaleDistanceGate;
 	scaleDistanceEvidenceState: "根拠確認済み" | "根拠未確認";
 	scaleDistanceSource: "変電所DB座標再計算" | "土地DB手入力距離" | "距離未確認";
@@ -223,6 +224,15 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 		quickDecisionReason,
 		salesPathDeadline,
 	);
+	const missingDataRequest = buildLandMissingDataRequest(input, {
+		powerArea,
+		distanceKm,
+		roadWidthM,
+		scaleDistanceGate,
+		scaleDistanceEvidenceState,
+		farmlandPreAssessment,
+		blockers,
+	});
 	const blockerLine =
 		blockers.length > 0
 			? `変電所だけではS評価にしない。主な阻害要因: ${blockers.join(" / ")}`
@@ -242,6 +252,11 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 		blockerLine,
 		customerValue,
 	].join(" / ");
+	const actionPrelude = [
+		salesPathRequest,
+		missingDataRequest,
+		farmlandPreAssessment.salesInputGuide,
+	].join("\n\n");
 
 	return {
 		overallGrade,
@@ -260,6 +275,7 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 		quickDecisionReason,
 		salesPathDeadline,
 		salesPathRequest,
+		missingDataRequest,
 		scaleDistanceGate,
 		scaleDistanceEvidenceState,
 		scaleDistanceSource,
@@ -279,6 +295,7 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 		landEvaluation: [
 		`${input.name}は、${area > 0 ? `${Math.round(area).toLocaleString("ja-JP")}坪` : "面積未確認"}・所在地「${input.address || "未確認"}」を起点にした土地評価です。`,
 		salesPathRequest,
+		missingDataRequest,
 		`2AI評価として、物理・系統AIは${physicalAiScore}点、営業・案件化AIは${salesAiScore}点。SABC統合では${overallGrade} / ${score}点です。`,
 		`D規模・距離ゲート=${scaleDistanceGate} / 入力根拠=${scaleDistanceEvidenceState} / 距離出所=${scaleDistanceSource}（面積3,000坪以上・最寄り変電所直線距離2km以内を候補条件とする）`,
 		farmlandPreAssessmentText,
@@ -318,12 +335,12 @@ export function evaluateLandTreasure(input: LandTreasureInput): LandTreasureEval
 					: "推測ですが、低圧集約、売却候補、近隣案件との組み合わせで価値を確認します。",
 		nextAction:
 			scaleDistanceGate !== "通過候補"
-				? `${salesPathRequest}\n\n${farmlandPreAssessment.salesInputGuide}\n${buildScaleDistanceGateAction(scaleDistanceGate)}`
+				? `${actionPrelude}\n${buildScaleDistanceGateAction(scaleDistanceGate)}`
 				: overallGrade === "S"
-				? `${salesPathRequest}\n\n${farmlandPreAssessment.salesInputGuide}\n最寄り変電所、接道、農転/登記、近隣住宅距離を人間が確認し、案件化・仕入れ打診へ進めてください。`
+				? `${actionPrelude}\n最寄り変電所、接道、農転/登記、近隣住宅距離を人間が確認し、案件化・仕入れ打診へ進めてください。`
 				: blockers.length > 0
-					? `${salesPathRequest}\n\n${farmlandPreAssessment.salesInputGuide}\n変電所近接だけで進めず、先に ${blockers.join(" / ")} を解消または確認してください。`
-					: `${salesPathRequest}\n\n${farmlandPreAssessment.salesInputGuide}\n不足条件を整理し、接道・用途地域・農転/登記・需要地距離を確認してから再評価してください。`,
+					? `${actionPrelude}\n変電所近接だけで進めず、先に ${blockers.join(" / ")} を解消または確認してください。`
+					: `${actionPrelude}\n不足条件を整理し、接道・用途地域・農転/登記・需要地距離を確認してから再評価してください。`,
 		reviewMemo: sabcReason,
 	};
 }
@@ -398,6 +415,57 @@ function buildLandSalesPathRequest(
 		"3. 登記面積または資料面積",
 		"4. 接道状況",
 		"5. 現地感メモ",
+	].join("\n");
+}
+
+function buildLandMissingDataRequest(
+	input: LandTreasureInput,
+	context: {
+		powerArea: string;
+		distanceKm: number | null;
+		roadWidthM: number | null;
+		scaleDistanceGate: LandScaleDistanceGate;
+		scaleDistanceEvidenceState: "根拠確認済み" | "根拠未確認";
+		farmlandPreAssessment: LandFarmlandPreAssessment;
+		blockers: string[];
+	},
+): string {
+	const areaStatus =
+		input.areaTsubo !== null && input.areaTsubo > 0
+			? `${Math.round(input.areaTsubo).toLocaleString("ja-JP")}坪`
+			: "未入力";
+	const distanceStatus =
+		context.distanceKm !== null ? `候補距離=${round1(context.distanceKm)}km` : "未確認";
+	const roadStatus =
+		context.roadWidthM !== null
+			? `幅員候補=${context.roadWidthM}m`
+			: input.road
+				? "入力あり。ただし幅員・道路種別は未確定"
+				: "未入力";
+	const blockerStatus = context.blockers.length > 0 ? context.blockers.join(" / ") : "重大な未入力阻害は未検出";
+	return [
+		"【今AIが欲しいデータ】",
+		"目的: 速報の「行く/行かない」を70点判定へ上げ、外れた理由をAI学習ログへ残す。",
+		`現状: 面積=${areaStatus} / 電力エリア=${context.powerArea || "未確認"} / 変電所=${distanceStatus} / 接道=${roadStatus} / Dゲート=${context.scaleDistanceGate} / 入力根拠=${context.scaleDistanceEvidenceState} / 農転正式確認=${context.farmlandPreAssessment.formalStatus} / 詰まり=${blockerStatus}`,
+		"誰が取るか:",
+		"- 営業: 地番、登記地目、登記面積または資料面積、接道状況、現地感メモ、所有者意向。",
+		"- AI/管理側: 系統公開情報JSON、登記所備付地図GeoJSON、WAGRI/eMAFF認証後の農地ピン、WAJO過去結果。",
+		"- 外部待ち: WAGRI/eMAFF認証、送配電会社回答、農業委員会の正式回答。",
+		"取れたら何が分かるか:",
+		"- 地番/登記: 地目、地積、所有者、権利リスク、筆界候補。農転見込みと面積条件を補正できる。",
+		"- 接道/現地感: 幅員、道路種別、大型車進入、高低差、住宅密集、施工成立、近隣説明リスクを補正できる。",
+		"- 系統公開情報: 設備名、電圧、空容量、N-1電制、更新日、元URLを入れると系統見込みを補正できる。",
+		"- WAGRI/eMAFF農地情報: 農地ピン、農振法区分、都市計画法区分、筆ポリゴンを入れると農転見込みを補正できる。",
+		"- WAJO過去結果: 行った/行かなかった、外れ理由、農業委員会の結果を入れると次回の当たり率を上げられる。",
+		"不足データ:",
+		"1. 地番｜営業｜土地DB「所在地」または案件化メモ｜登記・農地ナビ・筆界確認に進むため。",
+		"2. 登記地目・地積｜営業｜登記情報提供サービス/法務局資料｜農転見込みと面積補正のため。",
+		"3. 接道状況（幅員/道路種別/大型車進入）｜営業｜現地メモまたは道路台帳｜施工成立と搬入可否のため。",
+		"4. 現地感メモ（高低差/荒れ/住宅密集/進入）｜営業｜現地写真/メモ｜需要、施工、近隣リスクの補正のため。",
+		"5. 系統公開情報（設備名/電圧/空容量/N-1/更新日/元URL）｜AI/管理側｜GRID_CAPACITY_PUBLIC_JSON_URLS｜系統見込み補正のため。",
+		"6. WAGRI/eMAFF農地情報（農地ピン/農振法区分/都市計画法区分/筆ポリゴン）｜AI/管理側。ただし認証確認後｜農転見込み補正のため。",
+		"7. WAJO過去結果（成否/外れ理由/農業委員会結果）｜管理側｜AI学習ログDB｜次回の判断補正のため。",
+		"不足のまま出す速報: 予測は出す。ただし原本確認済み、系統空き確認済み、農転確認済みとは言わない。",
 	].join("\n");
 }
 

@@ -245,6 +245,13 @@ async function main() {
 	assert.match(scaleDistancePass.nextAction, /70点判定に上げるため、\d{4}-\d{2}-\d{2} 18:00まで/);
 	assert.match(scaleDistancePass.nextAction, /1\. 地番/);
 	assert.match(scaleDistancePass.nextAction, /5\. 現地感メモ/);
+	assert.match(scaleDistancePass.missingDataRequest, /【今AIが欲しいデータ】/);
+	assert.match(scaleDistancePass.missingDataRequest, /誰が取るか/);
+	assert.match(scaleDistancePass.missingDataRequest, /取れたら何が分かるか/);
+	assert.match(scaleDistancePass.missingDataRequest, /系統公開情報/);
+	assert.match(scaleDistancePass.missingDataRequest, /WAGRI\/eMAFF農地情報/);
+	assert.match(scaleDistancePass.missingDataRequest, /WAJO過去結果/);
+	assert.match(scaleDistancePass.nextAction, /不足のまま出す速報/);
 	assert.match(scaleDistancePass.reviewMemo, /D規模・距離ゲート=通過候補.*根拠未確認/);
 	assert.equal(
 		evaluateLandTreasure({ ...scaleDistanceGateInput, inputEvidenceState: "原本" }).scaleDistanceEvidenceState,
@@ -330,6 +337,12 @@ async function main() {
 	assert.match(memo, /正式確認状態: 回答済み/);
 	assert.match(memo, /営業担当への入力案内/);
 	assert.match(memo, /この土地は速報では「行く」/);
+	assert.match(memo, /【今AIが欲しいデータ】/);
+	assert.match(memo, /誰が取るか/);
+	assert.match(memo, /取れたら何が分かるか/);
+	assert.match(memo, /系統公開情報/);
+	assert.match(memo, /WAGRI\/eMAFF農地情報/);
+	assert.match(memo, /WAJO過去結果/);
 	assert.match(memo, /D規模・距離ゲート=通過候補/);
 	assert.match(JSON.stringify(finalUpdate.次アクション ?? {}), /70点判定に上げるため/);
 
@@ -846,6 +859,12 @@ async function main() {
 	assert.doesNotMatch(addressOnlyMemo, /農転確認が未入力/);
 	assert.match(addressOnlyMemo, /登記確認が未入力/);
 	assert.match(addressOnlyMemo, /土地スカウト|一次評価|本評価不可/);
+	assert.match(addressOnlyMemo, /【今AIが欲しいデータ】/);
+	assert.match(addressOnlyMemo, /誰が取るか/);
+	assert.match(addressOnlyMemo, /取れたら何が分かるか/);
+	assert.match(addressOnlyMemo, /系統公開情報/);
+	assert.match(addressOnlyMemo, /WAGRI\/eMAFF農地情報/);
+	assert.match(addressOnlyMemo, /WAJO過去結果/);
 	assert.match(addressOnlyMemo, /今日やること/);
 	assert.match(addressOnlyMemo, /地番/);
 	assert.match(addressOnlyMemo, /登記情報提供サービス/);
@@ -1016,6 +1035,9 @@ async function main() {
 	assert.match(missingOfficialMemo, /農転事前判定/);
 	assert.match(missingOfficialMemo, /見込みランク: 中|見込みランク: 低/);
 	assert.match(missingOfficialMemo, /営業担当への入力案内/);
+	assert.match(missingOfficialMemo, /【今AIが欲しいデータ】/);
+	assert.match(missingOfficialMemo, /誰が取るか/);
+	assert.match(missingOfficialMemo, /取れたら何が分かるか/);
 	assert.match(missingOfficialMemo, /担当: 営業担当/);
 	assert.match(missingOfficialMemo, /土地DB「農地種別」/);
 	assert.match(missingOfficialMemo, /土地DB「農地転用可否」/);

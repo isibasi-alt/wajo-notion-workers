@@ -2596,6 +2596,7 @@ type LandEvaluation = {
 	quickDecisionReason?: string;
 	salesPathDeadline?: string;
 	salesPathRequest?: string;
+	missingDataRequest?: string;
 	landEvaluation: string;
 	powerEvaluation: string;
 	roadEvaluation: string;
@@ -29317,6 +29318,7 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			quickDecisionReason: treasure.quickDecisionReason,
 			salesPathDeadline: treasure.salesPathDeadline,
 			salesPathRequest: treasure.salesPathRequest,
+			missingDataRequest: treasure.missingDataRequest,
 			scaleDistanceGate: treasure.scaleDistanceGate,
 			scaleDistanceEvidenceState: treasure.scaleDistanceEvidenceState,
 			scaleDistanceSource: treasure.scaleDistanceSource,
@@ -29356,6 +29358,7 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			quickDecisionReason: treasure.quickDecisionReason,
 			salesPathDeadline: treasure.salesPathDeadline,
 			salesPathRequest: treasure.salesPathRequest,
+			missingDataRequest: treasure.missingDataRequest,
 			scaleDistanceGate: treasure.scaleDistanceGate,
 			scaleDistanceEvidenceState: treasure.scaleDistanceEvidenceState,
 			scaleDistanceSource: treasure.scaleDistanceSource,
@@ -29401,6 +29404,7 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 				? "土地DB手入力距離"
 				: "距離未確認";
 	const reviewMemo = `${missing.join("、")}が不足。評価前に入力を確認してください。`;
+	const missingDataRequest = buildLandMissingInputDataRequest(land, missing);
 
 	return {
 		overallGrade,
@@ -29418,11 +29422,13 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 		scaleDistanceGate,
 		scaleDistanceEvidenceState,
 		scaleDistanceSource,
+		missingDataRequest,
 		landEvaluation: [
 			`${land.name}は、${areaLabel}・所在地「${land.address || "未確認"}」を起点にした土地評価です。`,
 			missing.length > 0
 				? `要確認: ${reviewMemo}`
 				: `推測ですが、面積規模からは「${projectType}」として一次確認する価値があります。`,
+			missingDataRequest,
 			`総合評価は${overallGrade}、AI総合スコアは${score}点です。`,
 		].join("\n"),
 		powerEvaluation:
@@ -29440,13 +29446,30 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 				: "推測ですが、低圧集約、売却候補、近隣案件との組み合わせで価値を確認します。単独案件化は追加確認が必要です。",
 		nextAction:
 			missing.length > 0
-				? `まず${missing.join("、")}を入力し、再度「土地評価を開始」してください。`
+				? `まず${missing.join("、")}を入力し、再度「土地評価を開始」してください。\n\n${missingDataRequest}`
 				: score >= 65
-					? "変電所距離、系統空き、接道、農転/登記、近隣住宅距離を確認し、案件化可否を人間が判断してください。"
-					: "不足条件を整理し、接道・用途地域・農転/登記・需要地距離を確認してから再評価してください。",
-		reviewMemo,
+					? `変電所距離、系統空き、接道、農転/登記、近隣住宅距離を確認し、案件化可否を人間が判断してください。\n\n${missingDataRequest}`
+					: `不足条件を整理し、接道・用途地域・農転/登記・需要地距離を確認してから再評価してください。\n\n${missingDataRequest}`,
+		reviewMemo: `${reviewMemo}\n${missingDataRequest}`,
 		farmlandPreAssessmentText: "",
 	};
+}
+
+function buildLandMissingInputDataRequest(land: LandInfo, missing: string[]): string {
+	const firstPriority = missing.length > 0 ? missing.join(" / ") : "所在地 / 面積（坪）";
+	const areaText =
+		land.areaTsubo && land.areaTsubo > 0
+			? `${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪`
+			: "未入力";
+	return [
+		"【今AIが欲しいデータ】",
+		`最優先: ${firstPriority}`,
+		`現状: 所在地=${land.address || "未入力"} / 面積=${areaText} / 電力エリア=${land.powerArea || "未確認"}`,
+		"誰が取るか: 営業が土地DBに入力。AIは入力後に地図、変電所、公開データ、農地情報を再評価。",
+		"取れたら何が分かるか: 所在地で電力エリア・変電所候補・周辺施設、面積でD規模/案件種別、地番で登記・農地・筆界候補を判定できます。",
+		"入れる場所: 土地DBの「所在地」「面積（坪）」、分かる場合は「地番」「接道状況」「登記確認状況」「農地転用可否」。",
+		"不足のまま出す速報: 予測は出せるが、原本確認済み、系統空き確認済み、農転確認済みとは言いません。",
+	].join("\n");
 }
 
 function landInvestigationGaps(blockers: string[]): string[] {
@@ -29516,6 +29539,7 @@ function buildLandScoutReport(input: {
 	const todayActionSummary =
 		"今日やることは、地番確認、農業委員会確認、道路台帳確認、空き容量マップ確認、所有者への売却意向確認。";
 	const salesPathRequest = treasure.salesPathRequest || "";
+	const missingDataRequest = treasure.missingDataRequest || "";
 	const farmlandPreAssessmentText = treasure.farmlandPreAssessmentText || "";
 	const farmlandSalesInputGuide = treasure.farmlandPreAssessment?.salesInputGuide || "";
 	const rejectionReasons = [
@@ -29527,6 +29551,7 @@ function buildLandScoutReport(input: {
 	];
 	const nextAction = [
 		salesPathRequest,
+		missingDataRequest,
 		"",
 		todayActionSummary,
 		farmlandSalesInputGuide,
@@ -29549,6 +29574,7 @@ function buildLandScoutReport(input: {
 	const confirmationGuide = buildLandOfficialConfirmationGuide(treasure.powerArea);
 	const landEvaluation = [
 		salesPathRequest,
+		missingDataRequest,
 		"",
 		"土地スカウト一次評価",
 		`結論: ${conclusion}`,
@@ -29581,6 +29607,7 @@ function buildLandScoutReport(input: {
 		`本評価不可。公的確認または人間確認が必要: ${investigationGaps.join(" / ")}`,
 		`調査指示: 地番、登記、農地・農転、道路台帳、系統空き、所有者意向を確認してから本評価へ進める。`,
 		`見送り理由候補: ${rejectionReasons.join(" / ")}`,
+		missingDataRequest ? `AI不足データ要求: ${missingDataRequest.replace(/\n/g, " / ")}` : "",
 		farmlandPreAssessmentText ? `農転事前判定: ${farmlandPreAssessmentText.replace(/\n/g, " / ")}` : "",
 		confirmationGuide,
 		quickEvidence ? `取得済み要約: ${quickEvidence}` : "",
