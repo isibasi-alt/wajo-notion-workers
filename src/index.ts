@@ -23003,14 +23003,14 @@ function buildProductComposition(
 	]);
 	const landPrice = landPriceInput ?? 0;
 	const rightsPrice = rightsPriceInput ?? 0;
-	const systemPrice = systemPriceInput ?? 0;
+	const systemPrice = systemPriceInput ?? Math.max(0, salePrice - landPrice - rightsPrice);
 	const unconfirmedItems = [
 		landPriceInput === null
 			? "土地代"
 			: landPrice === 0 && !checkboxValue(properties["土地代ゼロ確認"])
 				? "土地代ゼロ確認"
 				: "",
-		systemPriceInput === null || systemPrice <= 0 ? "システム本体価格" : "",
+		systemPriceInput === null && salePrice <= 0 ? "システム本体価格" : "",
 		rightsPriceInput === null
 			? "権利代"
 			: rightsPrice === 0 && !checkboxValue(properties["権利代ゼロ確認"])

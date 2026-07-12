@@ -130,6 +130,11 @@ async function main() {
 	assert.equal(readyWithDerivedIncome.sitePhotos[0]?.name, "site-photo-1.png");
 	assert.equal(readyWithDerivedIncome.expectedYield, 33.5);
 	assert.equal(readyWithDerivedIncome.paybackYears, 2.99);
+	assert.equal(readyWithDerivedIncome.financeSimulation?.composition.mode, "要確認");
+	assert.equal(readyWithDerivedIncome.financeSimulation?.systemPrice, 120000000);
+	assert.equal(readyWithDerivedIncome.financeSimulation?.componentBalanceDifference, 0);
+	assert.ok(readyWithDerivedIncome.financeSimulation?.composition.unconfirmedItems.includes("土地代"));
+	assert.ok(readyWithDerivedIncome.financeSimulation?.composition.unconfirmedItems.includes("権利代"));
 	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /販売価格: ¥120,000,000/);
 	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /仕入れ価格: ¥100,000,000/);
 	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /年間売電収入: ¥43,200,000/);
