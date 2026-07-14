@@ -3619,7 +3619,7 @@ worker.tool("processInquiryProjectCreationById", {
 worker.tool("processProjectDealStartById", {
 	title: "WAJO 案件から商談を作る",
 	description:
-		"案件管理DBのページIDから商談管理DBへ商談を1件だけ作成します。案件・関連企業・担当営業を引き継ぎます。進行中の商談が既にある場合は新規作成せず、二重作成を防ぎます（成約/失注済みは進行中扱いしません）。",
+		"案件管理DBのページIDから商談管理DBへ商談を1件作成します。案件・関連企業・担当営業を引き継ぎます。商談はワンショット（アポ1回＝1レコード）のため、押すたびに毎回新規の商談を作成します。",
 	schema: j.object({
 		projectPageId: j.string().describe("案件管理DBのページID"),
 		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
@@ -4832,7 +4832,7 @@ worker.webhook("processBrokerActionWebhook", {
 worker.webhook("processProjectDealStartWebhook", {
 	title: "WAJO 案件 商談化Webhook",
 	description:
-		"案件管理DBの「商談をする」ボタンから起動。商談管理DBへ商談を1件作成し、案件・関連企業・担当を引き継ぎます。進行中の商談が既にある場合は新規作成せず、二重作成を防ぎます。",
+		"案件管理DBの「商談をする」ボタンから起動。商談管理DBへ商談を1件作成し、案件・関連企業・担当を引き継ぎます。案件は永続コンテナ、商談はワンショット（アポ1回＝1レコード）のため、押すたびに毎回新規の商談を作成します。",
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			const body = event.body as Record<string, unknown>;
@@ -36937,16 +36937,25 @@ async function enrichProjectFromInquiry(
 		caseType: projectCaseType,
 		dealType: projectDealType,
 	});
-	// 押し直しガード：一度付いた通称は上書きしない（AI命名はゆらぐため、押すたび改名される事故を防ぐ）。
-	// 仮名（A採番「案件-…」／入口タイトル「お名前｜受付番号」）の時だけ命名する。
+	// 押し直しガード：一度付いた確定名（会社名・通称）は上書きしない（AI命名はゆらぐため、押すたび改名される事故を防ぐ）。
+	// 暫定名（A採番「案件-…」／受付「問-…」／入口タイトル「お名前｜受付番号」等）の時だけ命名する。
+	// ※「｜を含むか」だけを確定名の判定に使わない（通称が捨てられるバグの修正）。
 	const currentCaseTitle = readGenericPageTitle(projectPage) || "";
-	const hasFinalCaseName =
-		currentCaseTitle.length > 0 &&
-		!/^案件-/.test(currentCaseTitle) &&
-		!currentCaseTitle.includes("｜");
-	const finalCaseName = hasFinalCaseName ? currentCaseTitle : caseNaming.name;
-	if (!hasFinalCaseName && caseNaming.name) {
-		patches["案件名"] = { kind: "text", value: caseNaming.name };
+	const hasFinalCaseName = !isProvisionalProjectName(currentCaseTitle);
+	// 会社名が分かる入口では案件名＝会社名。分からない入口はAI通称（暫定名の整形）で立て、
+	// 会社名（関連企業）が判明した時点で案件名を会社名へ昇格させる。
+	const namingCompanyIds = uniqueStrings([
+		...relationIdsFromProperty(projectPage.properties?.["関連企業"]),
+		...relatedCompanyIds,
+	]);
+	const namingCompanyName = hasFinalCaseName
+		? null
+		: await resolveProjectCompanyName(notion, namingCompanyIds);
+	const finalCaseName = hasFinalCaseName
+		? currentCaseTitle
+		: namingCompanyName || caseNaming.name;
+	if (!hasFinalCaseName && finalCaseName) {
+		patches["案件名"] = { kind: "text", value: finalCaseName };
 	}
 	if (caseNaming.location) {
 		patches["所在地"] = { kind: "text", value: caseNaming.location };
@@ -37853,12 +37862,39 @@ type ProjectDealStartResult = {
 	message: string;
 };
 
-// 既に終わった商談(成約/失注)は重複判定の対象外。これら以外の進行中商談があれば新規作成しない。
-const CLOSED_DEAL_STATUSES = new Set(["成約", "失注"]);
+// 暫定名（管理名）判定：A採番「案件-…」／問い合わせ受付「問-…」／入口タイトル「お名前｜受付番号」等。
+// 会社名・AI通称が付いた確定名はこれに該当しない（「｜を含むか」だけに依存しない）。
+function isProvisionalProjectName(name: string): boolean {
+	const trimmed = name.replace(/\s+/g, " ").trim();
+	if (!trimmed || trimmed === "案件") return true;
+	return /^案件-/.test(trimmed) || /^問-/.test(trimmed) || trimmed.includes("｜");
+}
 
-function buildProjectDealName(projectName: string): string {
+// 案件名昇格用：関連企業リレーションの先頭1件から会社名を取得（取れなければnull）。
+async function resolveProjectCompanyName(
+	notion: NotionClient,
+	companyIds: string[],
+): Promise<string | null> {
+	const companyId = companyIds[0];
+	if (!companyId) return null;
+	try {
+		const companyPage = await notion.pages.retrieve({ page_id: companyId });
+		const name = readGenericPageTitle(companyPage).replace(/\s+/g, " ").trim();
+		return name || null;
+	} catch (error) {
+		console.log("project company name lookup skipped", String(error));
+		return null;
+	}
+}
+
+// 商談名＝「案件名｜YYYY-MM-DD」。相手情報（相手先・決裁者等）が取れれば「案件名｜YYYY-MM-DD 相手名」。
+function buildProjectDealName(projectName: string, counterparty?: string | null): string {
 	const clean = projectName.replace(/\s+/g, " ").trim() || "案件";
-	return `${clean}｜商談`.slice(0, 1800);
+	const partner = (counterparty ?? "").replace(/\s+/g, " ").trim();
+	const suffix = partner && partner !== clean
+		? `${todayDateJST()} ${partner}`
+		: todayDateJST();
+	return `${clean}｜${suffix}`.slice(0, 1800);
 }
 
 // 案件の対象物種別・案件種別・売買区分から商談タグを推定（読み取れるものだけ）。
@@ -37937,34 +37973,27 @@ async function findDealsByProject(
 }
 
 // 案件ページから商談管理DBへ商談を1件作成し、案件・関連企業・担当を引き継ぐ。
-// 進行中の商談が既にあれば新規作成しない（成約/失注済みは進行中扱いしない）。案件ページは更新しない。
+// 商談はワンショット（アポ1回＝1レコード）：押すたびに毎回新規作成する（案件が永続コンテナ）。
+// 案件ページ側は、暫定名→会社名への案件名昇格を除き更新しない。
 async function processProjectDealStart(
 	input: { projectPageId: string; dryRun?: boolean },
 	notion: NotionClient,
 	triggerUserId?: string,
 ): Promise<ProjectDealStartResult> {
 	const projectPage = await notion.pages.retrieve({ page_id: input.projectPageId });
-	const projectName = readGenericPageTitle(projectPage) || "案件";
-	const existingDeals = await findDealsByProject(notion, input.projectPageId);
-	const openDeal = existingDeals.find((deal) => {
-		const status = text((deal as Page).properties?.["商談ステータス"]);
-		return !CLOSED_DEAL_STATUSES.has(status);
-	});
-	if (openDeal) {
-		if (!input.dryRun) {
-			await createPageComment(
-				notion,
-				input.projectPageId,
-				"✅ 進行中の商談を検出しました。重複商談は作成していません。",
-			);
+	let projectName = readGenericPageTitle(projectPage) || "案件";
+	const properties = projectPage.properties ?? {};
+	const relatedCompanyIds = relationIdsFromProperty(properties["関連企業"]);
+	// 案件名昇格：暫定名のまま会社名（関連企業）が判明している案件は、案件名＝会社名へ昇格させる。
+	let resolvedCompanyName: string | null = null;
+	if (isProvisionalProjectName(projectName) && relatedCompanyIds.length > 0 && !input.dryRun) {
+		resolvedCompanyName = await resolveProjectCompanyName(notion, relatedCompanyIds);
+		if (resolvedCompanyName) {
+			await safeUpdateExistingProperties(notion, projectPage, {
+				案件名: { kind: "text", value: resolvedCompanyName },
+			});
+			projectName = resolvedCompanyName;
 		}
-		return {
-			projectPageId: input.projectPageId,
-			dealPageId: openDeal.id,
-			dealUrl: (openDeal as { url?: string }).url ?? null,
-			action: "existing",
-			message: "進行中の商談が既にあるため、新規作成しませんでした。",
-		};
 	}
 
 	if (input.dryRun) {
@@ -37977,8 +38006,6 @@ async function processProjectDealStart(
 		};
 	}
 
-	const properties = projectPage.properties ?? {};
-	const relatedCompanyIds = relationIdsFromProperty(properties["関連企業"]);
 	const existingAssignedUserIds = personIdsFromProperty(properties["担当営業ユーザー"]);
 	const assignedUserIds =
 		existingAssignedUserIds.length > 0
@@ -37987,9 +38014,17 @@ async function processProjectDealStart(
 				? [triggerUserId]
 				: [];
 	// 商談ページは作成後に取得しない方針なので、プロパティは作成時にまとめて設定する。
+	// 相手情報：案件の既存フィールド（相手先・決裁者）を優先し、無ければ関連企業名を1件だけ引く。
+	const counterparty =
+		text(properties["相手先"]) ||
+		text(properties["決裁者"]) ||
+		resolvedCompanyName ||
+		(relatedCompanyIds.length > 0
+			? await resolveProjectCompanyName(notion, relatedCompanyIds)
+			: null);
 	const dealSummary = buildProjectDealSummary(projectName, properties);
 	const dealProperties: Record<string, unknown> = {
-		商談名: title(buildProjectDealName(projectName)),
+		商談名: title(buildProjectDealName(projectName, counterparty)),
 		商談ステータス: select("準備中"),
 		商談日: { date: { start: todayDateJST() } },
 		関連案件: relation(input.projectPageId),
@@ -38184,6 +38219,10 @@ async function processClosingReport(
 		await safeUpdateExistingProperties(notion, projectPage, {
 			ステータス: { kind: "select", value: "🏆 成約" },
 			成約日: { kind: "date", value: todayDateJST() },
+			// 主担当は空の場合のみ押した人をセット。既存の主担当（担当営業ユーザー）は上書きしない。
+			...(dealSalesPersonIds.length === 0 && triggerUserId
+				? { 担当営業ユーザー: { kind: "people" as const, ids: [triggerUserId] } }
+				: {}),
 			...(closingSummary
 				? { "🎉 クラッカー画面": { kind: "text" as const, value: buildClosingCelebrationUrl(projectName, closingSummary.grossProfit) } }
 				: {}),
@@ -38267,9 +38306,13 @@ async function processClosingReport(
 	const commissionAmount = Math.round(grossProfit * commissionRate);
 
 	// 4. 案件ステータスは即時成約へ。後追いでマネージャーが差し戻し/取り消しを行う。
+	// 主担当は空の場合のみ押した人をセット。既存の主担当（担当営業ユーザー）は上書きしない。
 	await safeUpdateExistingProperties(notion, projectPage, {
 		ステータス: { kind: "select", value: "🏆 成約" },
 		成約日: { kind: "date", value: todayDateJST() },
+		...(dealSalesPersonIds.length === 0 && triggerUserId
+			? { 担当営業ユーザー: { kind: "people" as const, ids: [triggerUserId] } }
+			: {}),
 		"🎉 クラッカー画面": { kind: "text", value: buildClosingCelebrationUrl(projectName, grossProfit) },
 	});
 	const syncedDeals = await syncRelatedDealsToClosed(projectPageId, notion);

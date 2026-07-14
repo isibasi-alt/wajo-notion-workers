@@ -59,6 +59,12 @@ function makeNotion(existingDeals: Array<Record<string, unknown>> = []) {
 		},
 		pages: {
 			retrieve: async ({ page_id }: { page_id: string }) => {
+				if (page_id === "company-1") {
+					return {
+						id: "company-1",
+						properties: { 企業名: titleProp("株式会社テスト商事") },
+					};
+				}
 				assert.equal(page_id, "project-1");
 				return projectPage();
 			},
@@ -94,9 +100,17 @@ async function main() {
 
 	assert.equal(created.action, "created");
 	assert.equal(created.dealPageId, "deal-created");
-	assert.equal(createCase.queries.length, 1);
+	assert.equal(createCase.queries.length, 0);
 	assert.equal(createCase.creates.length, 1);
 	const createdProps = createCase.creates[0]!.properties as Record<string, unknown>;
+	// 商談名＝「案件名｜YYYY-MM-DD 相手名」（相手情報は関連企業名フォールバック）
+	const createdDealName = (
+		(createdProps.商談名 as { title: Array<{ text: { content: string } }> }).title[0]!
+	).text.content;
+	assert.match(
+		createdDealName,
+		/^湖南市250kW 太陽光案件｜\d{4}-\d{2}-\d{2} 株式会社テスト商事$/,
+	);
 	assert.deepEqual(
 		(createdProps.関連案件 as { relation: Array<{ id: string }> }).relation,
 		[{ id: "project-1" }],
@@ -115,6 +129,7 @@ async function main() {
 	);
 	assert.equal(createCase.comments.length, 1);
 
+	// ワンショット仕様：進行中の商談があっても、押すたびに毎回新規の商談を作成する。
 	const existingCase = makeNotion([dealPage("deal-existing", "フォロー中")]);
 
 	const existing = await processProjectDealStartForTest(
@@ -122,9 +137,9 @@ async function main() {
 		existingCase.notion as never,
 	);
 
-	assert.equal(existing.action, "existing");
-	assert.equal(existing.dealPageId, "deal-existing");
-	assert.equal(existingCase.creates.length, 0);
+	assert.equal(existing.action, "created");
+	assert.equal(existing.dealPageId, "deal-created");
+	assert.equal(existingCase.creates.length, 1);
 	assert.equal(existingCase.comments.length, 1);
 
 	const completedOnlyCase = makeNotion([dealPage("deal-closed", "成約")]);
@@ -137,6 +152,48 @@ async function main() {
 	assert.equal(createdAfterClosed.action, "created");
 	assert.equal(createdAfterClosed.dealPageId, "deal-created");
 	assert.equal(completedOnlyCase.creates.length, 1);
+
+	// 案件名昇格：暫定名（問-…）の案件は、商談ボタン実行時に案件名＝会社名へ昇格する。
+	const promoUpdates: Array<Record<string, unknown>> = [];
+	const promoCreates: Array<Record<string, unknown>> = [];
+	const promoNotion = {
+		dataSources: { query: async () => ({ results: [] }) },
+		pages: {
+			retrieve: async ({ page_id }: { page_id: string }) => {
+				if (page_id === "company-1") {
+					return {
+						id: "company-1",
+						properties: { 企業名: titleProp("株式会社テスト商事") },
+					};
+				}
+				const page = projectPage();
+				(page.properties as Record<string, unknown>).案件名 = titleProp("問-260514-001");
+				return page;
+			},
+			create: async (args: Record<string, unknown>) => {
+				promoCreates.push(args);
+				return { id: "deal-created", url: "https://www.notion.so/deal-created", properties: {} };
+			},
+			update: async (args: Record<string, unknown>) => {
+				promoUpdates.push(args);
+				return {};
+			},
+		},
+		comments: { create: async () => ({}) },
+	};
+	const promoted = await processProjectDealStartForTest(
+		{ projectPageId: "project-1", dryRun: false },
+		promoNotion as never,
+	);
+	assert.equal(promoted.action, "created");
+	assert.equal(promoUpdates.length, 1);
+	assert.ok(JSON.stringify(promoUpdates[0]).includes("株式会社テスト商事"));
+	const promoDealName = (
+		((promoCreates[0]!.properties as Record<string, unknown>).商談名 as {
+			title: Array<{ text: { content: string } }>;
+		}).title[0]!
+	).text.content;
+	assert.match(promoDealName, /^株式会社テスト商事｜\d{4}-\d{2}-\d{2}$/);
 
 	const dryRunCase = makeNotion();
 
