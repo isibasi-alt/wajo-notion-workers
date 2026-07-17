@@ -72,10 +72,10 @@ function highValueLandPage() {
 			電力会社エリア: selectProp("中部電力"),
 			用途地域: richTextProp("準工業地域"),
 			接道状況: richTextProp("南側6m公道に接道。大型車進入可。"),
-		農地転用可否: selectProp("不要"),
-		登記確認状況: selectProp("確認済み"),
-		入力根拠区分: richTextProp("原本"),
-		"変電所距離（km）": numberProp(0.1),
+			農地転用可否: selectProp("不要"),
+			登記確認状況: selectProp("確認済み"),
+			入力根拠区分: richTextProp("原本"),
+			"変電所距離（km）": numberProp(0.1),
 			"近隣住宅距離（m）": numberProp(120),
 			近隣住宅確認: selectProp("30m以上"),
 			送電線の有無: selectProp("近接あり"),
@@ -100,8 +100,14 @@ function highValueLandPage() {
 			Webhook引き継ぎステータス: selectProp("待機"),
 			Webhook引き継ぎメモ: richTextProp(""),
 			設計上の弱点: richTextProp(""),
-			AI学習ログ: relationProp(),
-		},
+			Aゾーン配点バージョン: richTextProp(""),
+			Aゾーン内部スコア100: numberProp(0),
+			Aゾーン内部スコア60: numberProp(0),
+			Aゾーン内部採点内訳: richTextProp(""),
+			Aゾーン取得元サマリー: richTextProp(""),
+			Aゾーン人間回収項目: richTextProp(""),
+				AI学習ログ: relationProp(),
+			},
 	};
 }
 
@@ -187,8 +193,14 @@ function nearSubstationButBlockedPage() {
 			Webhook引き継ぎステータス: selectProp("待機"),
 			Webhook引き継ぎメモ: richTextProp(""),
 			設計上の弱点: richTextProp(""),
+			Aゾーン配点バージョン: richTextProp(""),
+			Aゾーン内部スコア100: numberProp(0),
+			Aゾーン内部スコア60: numberProp(0),
+			Aゾーン内部採点内訳: richTextProp(""),
+			Aゾーン取得元サマリー: richTextProp(""),
+			Aゾーン人間回収項目: richTextProp(""),
 			AI学習ログ: relationProp(),
-		},
+			},
 	};
 }
 
@@ -243,6 +255,12 @@ function addressOnlyPage() {
 			Webhook引き継ぎステータス: selectProp("待機"),
 			Webhook引き継ぎメモ: richTextProp(""),
 			設計上の弱点: richTextProp(""),
+			Aゾーン配点バージョン: richTextProp(""),
+			Aゾーン内部スコア100: numberProp(0),
+			Aゾーン内部スコア60: numberProp(0),
+			Aゾーン内部採点内訳: richTextProp(""),
+			Aゾーン取得元サマリー: richTextProp(""),
+			Aゾーン人間回収項目: richTextProp(""),
 			AI学習ログ: relationProp(),
 		},
 	};
@@ -353,6 +371,16 @@ async function main() {
 	assert.deepEqual(finalUpdate.AI総合スコア, { number: result.score });
 
 	const memo = patchText(finalUpdate.案件化メモ);
+	const finalAZoneScore100 = (finalUpdate.Aゾーン内部スコア100 as { number?: number } | undefined)?.number ?? 0;
+	const finalAZoneScore60 = (finalUpdate.Aゾーン内部スコア60 as { number?: number } | undefined)?.number ?? 0;
+	assert.ok(finalAZoneScore100 > 0);
+	assert.ok(finalAZoneScore60 > 0);
+	assert.notEqual(finalAZoneScore100, result.score);
+	assert.match(JSON.stringify(finalUpdate.Aゾーン配点バージョン ?? {}), /v0/);
+	assert.match(JSON.stringify(finalUpdate.Aゾーン内部採点内訳 ?? {}), /配点バージョン=v0/);
+	assert.match(JSON.stringify(finalUpdate.Aゾーン内部採点内訳 ?? {}), /100点換算=/);
+	assert.match(JSON.stringify(finalUpdate.Aゾーン内部採点内訳 ?? {}), /60点換算=/);
+	assert.match(JSON.stringify(finalUpdate.一次AI受付メモ ?? {}), /配点バージョン=v0/);
 	assert.match(memo, /最寄り変電所/);
 	assert.match(memo, /変電所候補3件/);
 	assert.match(memo, /1\..*変電所.*km/);
@@ -385,6 +413,9 @@ async function main() {
 	const learningLog = createdPages[0]!.properties as Record<string, unknown>;
 	assert.match(JSON.stringify(learningLog.判定根拠), /2AI/);
 	assert.match(JSON.stringify(learningLog.判定根拠), /SABC/);
+	assert.match(JSON.stringify(learningLog.判定根拠), /Aゾーン内部採点/);
+	assert.match(JSON.stringify(learningLog.判定根拠), /配点バージョン=v0/);
+	assert.match(JSON.stringify(learningLog.判定バージョン), /a-zone-score-v0/);
 
 	activePage = secondaryEvidenceHighValuePage();
 	const secondaryEvidenceResult = await processLandEvaluationForTest(
@@ -393,6 +424,47 @@ async function main() {
 	);
 	assert.equal(secondaryEvidenceResult.action, "needs-review");
 	assert.equal(secondaryEvidenceResult.bucket, "要確認");
+	const secondaryEvidenceUpdate = updates.at(-1)?.properties as Record<string, unknown>;
+	const secondaryAZoneScore100 = (secondaryEvidenceUpdate.Aゾーン内部スコア100 as { number?: number } | undefined)?.number ?? 0;
+	assert.ok(secondaryAZoneScore100 > 0);
+	assert.ok(secondaryAZoneScore100 < finalAZoneScore100);
+	assert.match(
+		JSON.stringify(secondaryEvidenceUpdate ?? {}),
+		/二次資料|原本待ち/,
+	);
+	assert.deepEqual(secondaryEvidenceUpdate.総合評価, { select: null });
+	assert.deepEqual(secondaryEvidenceUpdate.AI総合スコア, { number: null });
+	assert.match(JSON.stringify(secondaryEvidenceUpdate.案件化メモ ?? {}), /Aゾーン判断: 行く/);
+
+	activePage = linkedCaseLandPage();
+	const linkedCaseUpdateStart = updates.length;
+	const linkedCaseResult = await processLandEvaluationForTest(
+		{ pageId: "land-linked-case-1", dryRun: false },
+		notion as never,
+	);
+	assert.equal(linkedCaseResult.action, "evaluated");
+	const linkedCaseUpdates = updates.slice(linkedCaseUpdateStart);
+	assert.ok(linkedCaseUpdates.length >= 2);
+	for (const update of linkedCaseUpdates) {
+		const properties = update.properties as Record<string, unknown>;
+		assert.equal(
+			"案件化状態" in properties,
+			false,
+			"関連案件ありの土地は詳細評価で旧案件化列を書き戻さない",
+		);
+	}
+	assert.deepEqual(
+		(linkedCaseUpdates.at(-1)?.properties as Record<string, unknown>).処理ステータス,
+		{ select: { name: "完了" } },
+	);
+
+	activePage = secondaryEvidenceHighValuePage();
+	const secondaryEvidenceResult2 = await processLandEvaluationForTest(
+		{ pageId: "land-secondary-evidence-1", dryRun: false },
+		notion as never,
+	);
+	assert.equal(secondaryEvidenceResult2.action, "needs-review");
+	assert.equal(secondaryEvidenceResult2.bucket, "要確認");
 	assert.match(
 		JSON.stringify(updates.at(-1)?.properties ?? {}),
 		/二次資料|原本待ち/,
@@ -418,28 +490,6 @@ async function main() {
 	assert.equal(officialEvidenceResult.action, "evaluated");
 	assert.equal(officialEvidenceResult.bucket, "即アタック");
 	assert.doesNotMatch(JSON.stringify(updates.at(-1)?.properties ?? {}), /原本待ち/);
-
-	activePage = linkedCaseLandPage();
-	const linkedCaseUpdateStart = updates.length;
-	const linkedCaseResult = await processLandEvaluationForTest(
-		{ pageId: "land-linked-case-1", dryRun: false },
-		notion as never,
-	);
-	assert.equal(linkedCaseResult.action, "evaluated");
-	const linkedCaseUpdates = updates.slice(linkedCaseUpdateStart);
-	assert.ok(linkedCaseUpdates.length >= 2);
-	for (const update of linkedCaseUpdates) {
-		const properties = update.properties as Record<string, unknown>;
-		assert.equal(
-			"案件化状態" in properties,
-			false,
-			"関連案件ありの土地は詳細評価で旧案件化列を書き戻さない",
-		);
-	}
-	assert.deepEqual(
-		(linkedCaseUpdates.at(-1)?.properties as Record<string, unknown>).処理ステータス,
-		{ select: { name: "完了" } },
-	);
 
 	activePage = nearSubstationButBlockedPage();
 	const blockedResult = await processLandEvaluationForTest(
@@ -921,8 +971,21 @@ async function main() {
 	const addressOnlyFinalUpdate = updates.at(-1)?.properties as Record<string, unknown>;
 	assert.deepEqual(addressOnlyFinalUpdate.処理ステータス, { select: { name: "要確認" } });
 	assert.equal("案件化状態" in addressOnlyFinalUpdate, false);
-	assert.deepEqual(addressOnlyFinalUpdate.総合評価, { select: { name: "C" } });
-	assert.doesNotMatch(addressOnlyMemo, /この土地、?1億|判定が全部出た|即アタック|農転不可|危険|接道OK/);
+	assert.deepEqual(addressOnlyFinalUpdate.総合評価, { select: null });
+	assert.deepEqual(addressOnlyFinalUpdate.AI総合スコア, { number: null });
+	assert.match(JSON.stringify(addressOnlyFinalUpdate.Aゾーン内部採点内訳 ?? {}), /配点バージョン=v0/);
+	const sourceSummary = JSON.stringify(addressOnlyFinalUpdate.Aゾーン取得元サマリー ?? {});
+	assert.match(sourceSummary, /Aゾーン取得元サマリー/);
+	assert.match(sourceSummary, /Notion反映先/);
+	assert.match(sourceSummary, /不動産情報ライブラリ/);
+	assert.match(sourceSummary, /WAGRI農地API|eMAFF/);
+	assert.match(sourceSummary, /資源エネルギー庁|OCCTO/);
+	assert.match(sourceSummary, /人間に渡す確認/);
+	const humanCollectionItems = JSON.stringify(addressOnlyFinalUpdate.Aゾーン人間回収項目 ?? {});
+	assert.match(humanCollectionItems, /Bゾーンで人間回収|作業指示/);
+	assert.match(humanCollectionItems, /登記|農地|接道|系統/);
+	assert.ok(((addressOnlyFinalUpdate.Aゾーン内部スコア100 as { number?: number } | undefined)?.number ?? 0) > 0);
+	assert.doesNotMatch(addressOnlyMemo, /この土地、?1億|判定が全部出た|即アタック|農転不可|危険|接道OK(?!確定にはしない)/);
 
 	const mojUrlsForPublicDataGap = process.env.MOJ_CHIZU_GEOJSON_URLS;
 	const mojUrlForPublicDataGap = process.env.MOJ_CHIZU_GEOJSON_URL;

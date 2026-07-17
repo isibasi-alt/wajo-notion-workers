@@ -2595,6 +2595,23 @@ type ProjectInfo = {
 	name: string;
 };
 
+type LandAZoneScoreCategory = {
+	key: string;
+	label: string;
+	points100: number;
+	max100: number;
+	points60: number;
+	max60: number;
+	note: string;
+};
+
+type LandAZoneScore = {
+	version: "v0";
+	total100: number;
+	total60: number;
+	categories: LandAZoneScoreCategory[];
+};
+
 type LandEvaluation = {
 	overallGrade: string;
 	score: number;
@@ -2602,6 +2619,11 @@ type LandEvaluation = {
 	scaleDistanceGate: string;
 	scaleDistanceEvidenceState: string;
 	scaleDistanceSource: string;
+	aZoneDecision: "行く" | "行かない";
+	aZoneReason: string;
+	aZoneScore: LandAZoneScore;
+	sourceSummary: string;
+	humanCollectionItems: string;
 	requiresInvestigation?: boolean;
 	investigationGaps?: string[];
 	actionBucket: string;
@@ -30764,6 +30786,126 @@ function buildLandQuickEvidence(mapContext: LandMapContext, address = ""): strin
 	return parts.join(" / ");
 }
 
+function buildLandAZoneSourceSummary(input: {
+	land: LandInfo;
+	mapContext: LandMapContext;
+	treasure: LandTreasureEvaluation;
+	investigationGaps?: string[];
+}): string {
+	const { land, mapContext, treasure } = input;
+	const notWritten = "個別確定列へは自動昇格しない";
+	const rows = [
+		[
+			"入力起点",
+			"Notion土地DB",
+			`所在地=${land.address || "未入力"} / 面積=${land.areaTsubo ? `${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪` : "未入力"} / 根拠区分=${land.inputEvidenceState || "未区分"}`,
+			"Aゾーン判断 / Aゾーン判断理由 / Aゾーン内部採点内訳",
+			"所在地・面積・原本区分が空ならBゾーンへ渡さない",
+		],
+		[
+			"座標化",
+			mapContext.geocodeSource || "未実行",
+			`所在地→緯度経度 / Google Maps確認リンク=${mapContext.googleMapsUrl || "未取得"}`,
+			"案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー / 以後のAPI照会起点",
+			"地番・筆界は登記所備付地図/登記で確認",
+		],
+		[
+			"道路候補",
+			"Google Roads API / 国土地理院道路中心線",
+			`${mapContext.roadAccess || mapContext.gsiRoad.message}`,
+			"AI接道評価 / 案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー",
+			"土地DB「接道状況」は道路台帳・指定道路図で人間が確定",
+		],
+		[
+			"不動産情報",
+			mapContext.reinfolib.source,
+			mapContext.reinfolib.status === "connected"
+				? [
+					mapContext.reinfolib.landPrice?.priceYenPerSqm ? `地価=${mapContext.reinfolib.landPrice.priceYenPerSqm.toLocaleString("ja-JP")}円/㎡` : "",
+					mapContext.reinfolib.referencePriceRange ? `参考価格レンジ=${mapContext.reinfolib.referencePriceRange}` : "",
+					mapContext.reinfolib.zoning?.useArea ? `用途地域=${mapContext.reinfolib.zoning.useArea}` : "",
+					mapContext.reinfolib.hazards.length > 0 ? `防災=${mapContext.reinfolib.hazards.map((risk) => risk.label).join("/")}` : "",
+				].filter(Boolean).join(" / ") || mapContext.reinfolib.message
+				: mapContext.reinfolib.message,
+			"土地評価 / 需要評価 / 案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー",
+			"販売予定価格・売買価格確定・建築可否確定には使わない",
+		],
+		[
+			"農地・農振",
+			mapContext.farmlandNavi.source,
+			mapContext.farmlandNavi.status === "connected"
+				? [
+					mapContext.farmlandNavi.nearest?.landCategory ? `地目=${mapContext.farmlandNavi.nearest.landCategory}` : "",
+					mapContext.farmlandNavi.nearest?.agriculturalClassification ? `農振法区分=${mapContext.farmlandNavi.nearest.agriculturalClassification}` : "",
+					mapContext.farmlandNavi.nearest?.cityPlanningClassification ? `都市計画法区分=${mapContext.farmlandNavi.nearest.cityPlanningClassification}` : "",
+					mapContext.farmlandNavi.nearest?.jurisdictionAgricultureCommitteeName ? `農業委員会=${mapContext.farmlandNavi.nearest.jurisdictionAgricultureCommitteeName}` : "",
+				].filter(Boolean).join(" / ") || mapContext.farmlandNavi.message
+				: mapContext.farmlandNavi.message,
+			"農転事前見込み / 案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー",
+			`${notWritten}。土地DB「農地種別」「農地転用可否」は原本・行政確認後に人間入力`,
+		],
+		[
+			"地番・筆界候補",
+			mapContext.parcelCadastre.source,
+			mapContext.parcelCadastre.status === "connected"
+				? mapContext.parcelCadastre.candidates
+					.slice(0, 2)
+					.map((candidate) =>
+						`${[candidate.municipality, candidate.oaza, candidate.koaza].filter(Boolean).join("")}${candidate.lotNumber ? ` ${candidate.lotNumber}` : ""}`.trim(),
+					)
+					.join(" / ")
+				: mapContext.parcelCadastre.message,
+			"案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー",
+			"所有者・地目・地積・権利部は登記情報提供サービス/法務局で人間確認",
+		],
+		[
+			"系統・変電所",
+			`${mapContext.gridCapacity.source} / 変電所候補エンジン`,
+			[
+				treasure.nearestSubstationName ? `最寄り変電所=${treasure.nearestSubstationName}` : "最寄り変電所=未特定",
+				treasure.nearestSubstationDistanceKm !== null ? `距離=${Math.round(treasure.nearestSubstationDistanceKm * 100) / 100}km` : "",
+				mapContext.gridCapacity.records[0]?.facilityName ? `空容量公表値候補=${mapContext.gridCapacity.records[0].facilityName}` : mapContext.gridCapacity.message,
+			].filter(Boolean).join(" / "),
+			"電力評価 / 変電所距離（km） / 最寄り変電所 / 最寄り変電所名 / Aゾーン取得元サマリー",
+			"接続可否は送配電会社の接続検討・回答で人間確認",
+		],
+		[
+			"周辺条件",
+			mapContext.surroundingPlaces.source,
+			mapContext.surroundingPlaces.status === "connected"
+				? `周辺施設候補=${mapContext.surroundingPlaces.places.slice(0, 5).map((place) => place.categoryLabel).join(" / ")}`
+				: mapContext.surroundingPlaces.message,
+			"需要評価 / 案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー",
+			"近隣住宅距離・説明会リスクは航空写真/現地確認/人間判断",
+		],
+	];
+	const gapText = input.investigationGaps?.length
+		? `\n人間回収に渡す不足: ${input.investigationGaps.join(" / ")}`
+		: "\n人間回収に渡す不足: AI側一次取得は完了扱い。ただし原本確認は別。";
+	return [
+		"Aゾーン取得元サマリー（サイト/取得内容/Notion反映先/人間回収）",
+		...rows.map(([stage, source, gets, notionTargets, human]) =>
+			`- ${stage}｜取得元=${source}｜見ている値=${gets}｜Notion反映先=${notionTargets}｜人間に渡す確認=${human}`,
+		),
+		gapText,
+	].join("\n");
+}
+
+function buildLandHumanCollectionItems(input: {
+	missing?: string[];
+	investigationGaps?: string[];
+	nextAction?: string;
+}): string {
+	const missing = input.missing ?? [];
+	const gaps = input.investigationGaps ?? [];
+	const lines = [
+		missing.length > 0 ? `Aゾーン未入力: ${missing.join(" / ")}` : "",
+		gaps.length > 0 ? `Bゾーンで人間回収: ${gaps.join(" / ")}` : "",
+		input.nextAction ? `作業指示: ${input.nextAction}` : "",
+	].filter(Boolean);
+	return lines.length > 0 ? lines.join("\n") : "人間回収項目: 現時点では追加なし。原本確認は別途必要。";
+}
+
 async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 	const missing: string[] = [];
 	if (!land.address) missing.push("所在地");
@@ -30827,18 +30969,36 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			...landInvestigationGaps(treasure.blockers),
 			...landInputEvidenceGaps(land),
 		]);
+		const sourceSummary = buildLandAZoneSourceSummary({
+			land,
+			mapContext,
+			treasure,
+			investigationGaps,
+		});
+		const aZoneScore = scoreLandAZoneV0(land, treasure.blockers);
 		if (investigationGaps.length > 0) {
+			const aZone = decideLandAZone({ land, score: aZoneScore, blockers: treasure.blockers, investigationGaps });
 			const scout = buildLandScoutReport({
 				land,
 				treasure,
 				mapEvidence,
 				quickEvidence,
 				investigationGaps,
+				aZoneDecision: aZone.decision,
+				aZoneReason: aZone.reason,
 			});
 			return {
 				overallGrade: "C",
 				score: Math.min(treasure.score, 45),
 				bucket: "要確認",
+				aZoneDecision: aZone.decision,
+				aZoneReason: aZone.reason,
+				aZoneScore,
+				sourceSummary,
+				humanCollectionItems: buildLandHumanCollectionItems({
+					investigationGaps,
+					nextAction: scout.nextAction,
+				}),
 				requiresInvestigation: true,
 				investigationGaps,
 				actionBucket: "継続監視",
@@ -30877,10 +31037,18 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 				farmlandPreAssessmentText: treasure.farmlandPreAssessmentText,
 			};
 		}
+		const aZone = decideLandAZone({ land, score: aZoneScore, blockers: treasure.blockers });
 		return {
 			overallGrade: treasure.overallGrade,
 			score: treasure.score,
 			bucket: treasure.bucket,
+			aZoneDecision: aZone.decision,
+			aZoneReason: aZone.reason,
+			aZoneScore,
+			sourceSummary,
+			humanCollectionItems: buildLandHumanCollectionItems({
+				nextAction: treasure.nextAction,
+			}),
 			actionBucket: treasure.actionBucket,
 			caseStatus: treasure.caseStatus,
 			projectType: treasure.projectType,
@@ -30921,6 +31089,8 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 	const score = Math.min(45, Math.max(0, 28 + (land.address ? 8 : 0) + (area > 0 ? 8 : 0)));
 	const overallGrade = "C";
 	const bucket = "要確認";
+	const aZoneScore = scoreLandAZoneV0(land);
+	const aZone = decideLandAZone({ land, score: aZoneScore, missing });
 	const actionBucket = chooseLandActionBucket(land, score, true);
 	const caseStatus = "未案件化";
 	const projectType = area >= 1500 ? "高圧系統用" : area >= 300 ? "低圧バルク" : "未判定";
@@ -30941,11 +31111,28 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 				: "距離未確認";
 	const reviewMemo = `${missing.join("、")}が不足。評価前に入力を確認してください。`;
 	const missingDataRequest = buildLandMissingInputDataRequest(land, missing);
+	const sourceSummary = [
+		"Aゾーン取得元サマリー（サイト/取得内容/Notion反映先/人間回収）",
+		`- 入力起点｜取得元=Notion土地DB｜見ている値=所在地=${land.address || "未入力"} / 面積=${land.areaTsubo ? `${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪` : "未入力"}｜Notion反映先=Aゾーン判断 / Aゾーン判断理由 / Aゾーン取得元サマリー｜人間に渡す確認=${missing.join(" / ")}を入力`,
+		"- 外部サイト/API｜取得元=未実行｜見ている値=所在地・面積が揃ってから実行｜Notion反映先=なし｜人間に渡す確認=まず必須入力を埋める",
+		`人間回収に渡す不足: ${missing.join(" / ")}`,
+	].join("\n");
 
 	return {
 		overallGrade,
 		score,
 		bucket,
+		aZoneDecision: aZone.decision,
+		aZoneReason: aZone.reason,
+		aZoneScore,
+		sourceSummary,
+		humanCollectionItems: buildLandHumanCollectionItems({
+			missing,
+			nextAction:
+				missing.length > 0
+					? `まず${missing.join("、")}を入力し、再度「土地評価を開始」してください。`
+					: undefined,
+		}),
 		actionBucket,
 		caseStatus,
 		projectType,
@@ -31032,14 +31219,205 @@ function landInputEvidenceGaps(land: LandInfo): string[] {
 	return [`${positiveInputs.join("・")}は入力済みだが根拠区分=${land.inputEvidenceState}のため原本待ち`];
 }
 
+function scoreLandAZoneV0(land: LandInfo, blockers: string[] = []): LandAZoneScore {
+	const evidence = land.inputEvidenceState || "未区分";
+	const officialEvidence = /原本|行政正式書面/.test(evidence);
+	const secondaryOrWeaker = /二次資料|口頭メモ|未確認|未区分/.test(evidence);
+	const blockerText = blockers.join(" / ");
+	const roadText = land.road || "";
+	const farmlandText = `${land.farmland} ${land.farmlandType}`;
+	const registryText = land.registry || "";
+	const area = land.areaTsubo ?? 0;
+	const distanceKm = land.substationDistanceKm;
+
+	const categories: Omit<LandAZoneScoreCategory, "points60">[] = [];
+	const add = (key: string, label: string, points100: number, max100: number, max60: number, note: string) => {
+		const safe100 = Math.max(0, Math.min(max100, Math.round(Number.isFinite(points100) ? points100 : 0)));
+		categories.push({ key, label, points100: safe100, max100, max60, note });
+	};
+
+	add(
+		"basic",
+		"基本入力",
+		(land.address ? 4 : 0) + (area > 0 ? 4 : 0) + (land.latitude !== null && land.longitude !== null ? 2 : 0),
+		10,
+		6,
+		"住所・面積・座標の初期入力。座標なしは減点だが、住所と面積があれば人間回収へ進める余地あり。",
+	);
+	add(
+		"registry",
+		"登記・権利関係",
+		/確認済|取得済|登記済|権利リスクなし/.test(registryText)
+			? officialEvidence ? 15 : 7
+			: /要取得|所有者不明|未確認/.test(registryText)
+				? 2
+				: registryText ? 5 : 0,
+		15,
+		9,
+		officialEvidence ? "登記系の原本または行政正式書面あり。" : "登記・権利は原本未確認。二次資料だけでは満点にしない。",
+	);
+	add(
+		"farmland",
+		"農地・農振・農転ステータス",
+		/不要|許可済|可能|確認済/.test(farmlandText)
+			? officialEvidence ? 15 : 6
+			: /条件付き|要確認|申請中|確認中/.test(farmlandText)
+				? 7
+				: /不可|取下げ|不許可/.test(farmlandText)
+					? 0
+					: 2,
+		15,
+		9,
+		officialEvidence ? "農地・農転系の原本または行政正式書面あり。" : "原本なしの許可済・不可は確定扱いしない。",
+	);
+	add(
+		"road",
+		"接道・搬入",
+		/未接道|大型車進入不可|搬入不可/.test(`${roadText} ${blockerText}`)
+			? 0
+			: /6m|６m|4m|４m|公道|大型車進入可|搬入可/.test(roadText)
+				? officialEvidence ? 12 : 7
+				: roadText ? 5 : 0,
+		12,
+		7,
+		officialEvidence ? "接道根拠あり。" : "地図・メモ段階なら接道OK確定にはしない。",
+	);
+	add(
+		"grid",
+		"系統・変電所",
+		Math.min(
+			6,
+			(land.powerArea && land.powerArea !== "未確認" ? 2 : 0) +
+				(distanceKm !== null ? (distanceKm <= 2 ? 3 : distanceKm <= 5 ? 2 : 1) : 0) +
+				(/近接あり|近くにあり/.test(land.transmissionLine) ? 1 : 0),
+		),
+		12,
+		7,
+		"変電所マップ単体は最大6/100・4/60まで。系統空きの証明ではない。",
+	);
+	add(
+		"zoning",
+		"用途地域・ハザード・周辺リスク",
+		(/市街化調整区域/.test(land.landUse) ? 3 : land.landUse ? 5 : 0) +
+			(land.nearbyResidentialDistanceM !== null
+				? land.nearbyResidentialDistanceM >= 100
+					? 5
+					: land.nearbyResidentialDistanceM >= 30
+						? 3
+						: 0
+				: /30m以上|同意取得/.test(land.nearbyResidentialCheck)
+					? 4
+					: 0),
+		10,
+		6,
+		"調整区域・近隣住宅は減点/要確認。ここだけで農転可否は断定しない。",
+	);
+	add(
+		"business",
+		"価格・事業性",
+		area >= 3000 ? 6 : area >= 1000 ? 5 : area >= 300 ? 4 : 0,
+		10,
+		6,
+		"現時点は面積規模による事業性仮説のみ。販売予定価格や出口価格が入るまでは満点にしない。",
+	);
+	add(
+		"history",
+		"過去実績・失敗例ナレッジ",
+		0,
+		8,
+		5,
+		"この土地単体の入力からは未取得。件数が増えても最大8/100・5/60。",
+	);
+	add(
+		"ledger",
+		"根拠台帳・再現性",
+		officialEvidence ? 8 : secondaryOrWeaker ? 2 : 0,
+		8,
+		5,
+		officialEvidence ? "原本・正式書面として再確認可能。" : "原本取得日・確認者・証拠リンクが不足。",
+	);
+
+	const with60 = categories.map((category) => ({
+		...category,
+		points60: Math.round((category.points100 / category.max100) * category.max60),
+	}));
+	return {
+		version: "v0",
+		total100: with60.reduce((sum, category) => sum + category.points100, 0),
+		total60: with60.reduce((sum, category) => sum + category.points60, 0),
+		categories: with60,
+	};
+}
+
+function formatLandAZoneScore(score: LandAZoneScore): string {
+	const details = score.categories
+		.map((category) => `${category.label}=${category.points100}/${category.max100}（${category.note}）`)
+		.join(" / ");
+	return `配点バージョン=${score.version} / 100点換算=${score.total100}/100 / 60点換算=${score.total60}/60 / 内訳: ${details}`;
+}
+
+function decideLandAZone(input: {
+	land: LandInfo;
+	score: LandAZoneScore;
+	missing?: string[];
+	blockers?: string[];
+	investigationGaps?: string[];
+}): { decision: "行く" | "行かない"; reason: string } {
+	const { land } = input;
+	const missing = input.missing ?? [];
+	if (missing.length > 0) {
+		return {
+			decision: "行かない",
+			reason: `行かない理由: ${missing.join("、")}が未入力のため、Bゾーンへ渡しても人間が何を確認するか確定できない。`,
+		};
+	}
+
+	const blockers = input.blockers ?? [];
+	const blockerText = blockers.join(" / ");
+	const hardStops: string[] = [];
+	const area = land.areaTsubo ?? 0;
+	if (area > 0 && area < 300) hardStops.push("面積が低圧の最小検討ライン未満");
+	if (/未接道|大型車進入不可/.test(blockerText)) hardStops.push("接道・大型車搬入が成立しない可能性");
+	if (/農地転用に阻害/.test(blockerText)) hardStops.push("農転に強い阻害要因");
+	if (/所有者/.test(blockerText)) hardStops.push("所有者・権利の阻害要因");
+	if (/近隣住宅が近い/.test(blockerText)) hardStops.push("近隣住宅リスクが強い");
+	if (hardStops.length > 0) {
+		return {
+			decision: "行かない",
+			reason: `行かない理由: ${uniqueStrings(hardStops).join(" / ")}。例外で進める場合だけ責任者判断へ回す。`,
+		};
+	}
+	if (input.score.total100 < 12) {
+		return {
+			decision: "行かない",
+			reason: "行かない理由: 内部配点v0で初期材料が薄く、人間へ回収依頼を出す前に所在地・面積・電力エリアなどAI側で取れる材料を補う必要がある。",
+		};
+	}
+
+	const goReasons = [
+		land.address ? "所在地あり" : "",
+		area > 0 ? `面積${Math.round(area).toLocaleString("ja-JP")}坪あり` : "",
+		land.powerArea ? `電力会社エリア=${land.powerArea}` : "",
+		input.investigationGaps && input.investigationGaps.length > 0
+			? `Bゾーンで${input.investigationGaps.join(" / ")}を人間回収する前提`
+			: "AI側の一次評価材料は揃っている",
+	].filter(Boolean);
+	return {
+		decision: "行く",
+		reason: `行く理由: ${goReasons.join(" / ")}。農転可・案件化OKの断定ではなく、人間回収へ渡す判断。`,
+	};
+}
+
 function buildLandScoutReport(input: {
 	land: LandInfo;
 	treasure: LandTreasureEvaluation;
 	mapEvidence: string;
 	quickEvidence: string;
 	investigationGaps: string[];
+	aZoneDecision: "行く" | "行かない";
+	aZoneReason: string;
 }): { landEvaluation: string; nextAction: string; reviewMemo: string } {
-	const { land, treasure, mapEvidence, quickEvidence, investigationGaps } = input;
+	const { land, treasure, mapEvidence, quickEvidence, investigationGaps, aZoneDecision, aZoneReason } = input;
 	const areaText =
 		land.areaTsubo && land.areaTsubo > 0
 			? `${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪`
@@ -31090,6 +31468,8 @@ function buildLandScoutReport(input: {
 	const nextAction = [
 		salesPathRequest,
 		missingDataRequest,
+		`Aゾーン判断: ${aZoneDecision}`,
+		aZoneReason,
 		"",
 		todayActionSummary,
 		farmlandSalesInputGuide,
@@ -31115,6 +31495,8 @@ function buildLandScoutReport(input: {
 		missingDataRequest,
 		"",
 		"土地スカウト一次評価",
+		`Aゾーン判断: ${aZoneDecision}`,
+		aZoneReason,
 		`結論: ${conclusion}`,
 		substationCandidateStatus,
 		uncheckedStatus,
@@ -31142,6 +31524,8 @@ function buildLandScoutReport(input: {
 		nextAction,
 	].filter(Boolean).join("\n");
 	const reviewMemo = [
+		`Aゾーン判断: ${aZoneDecision}`,
+		aZoneReason,
 		`本評価不可。公的確認または人間確認が必要: ${investigationGaps.join(" / ")}`,
 		`調査指示: 地番、登記、農地・農転、道路台帳、系統空き、所有者意向を確認してから本評価へ進める。`,
 		`見送り理由候補: ${rejectionReasons.join(" / ")}`,
@@ -31200,6 +31584,60 @@ function shouldPreserveLandCaseStatus(land: LandInfo): boolean {
 	return land.relatedProjectIds.length > 0;
 }
 
+function extractLandAZoneSourceRow(sourceSummary: string, label: string): string {
+	const row = sourceSummary
+		.split(/\n/)
+		.find((line) => line.startsWith(`- ${label}｜`));
+	return row ? row.replace(/^- /, "") : "";
+}
+
+function buildLandAddressAreaCoordinateConsistency(land: LandInfo): string {
+	const areaText =
+		land.areaTsubo && land.areaTsubo > 0
+			? `${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪`
+			: "未入力";
+	const coordinateText =
+		land.latitude !== null && land.longitude !== null
+			? `${land.latitude},${land.longitude}`
+			: "未取得";
+	const status =
+		land.address && land.areaTsubo && land.areaTsubo > 0
+			? "Aゾーン入力あり"
+			: "Aゾーン入力不足";
+	return [
+		`状態=${status}`,
+		`所在地=${land.address || "未入力"}`,
+		`面積=${areaText}`,
+		`座標=${coordinateText}`,
+		`根拠区分=${land.inputEvidenceState || "未区分"}`,
+		"注記=住所・面積・座標の一次照合であり、地番・筆界・登記確定ではない",
+	].join(" / ");
+}
+
+function buildLandAZoneVisiblePatches(
+	land: LandInfo,
+	evaluation: LandEvaluation,
+): Record<string, SafePatch> {
+	const parcelRow =
+		extractLandAZoneSourceRow(evaluation.sourceSummary, "地番・筆界候補") ||
+		"地番・筆界候補=未取得。登記所備付地図/登記情報提供サービスで人間確認";
+	const reinfolibRow =
+		extractLandAZoneSourceRow(evaluation.sourceSummary, "不動産情報") ||
+		"不動産情報=未取得。国交省 不動産情報ライブラリAPIの取得結果なし";
+	return {
+		最寄り変電所名: {
+			kind: "text",
+			value: evaluation.nearestSubstationName || "未特定",
+		},
+		地番候補: { kind: "text", value: parcelRow },
+		住所面積座標整合性: {
+			kind: "text",
+			value: buildLandAddressAreaCoordinateConsistency(land),
+		},
+		不動産情報ライブラリ取得結果: { kind: "text", value: reinfolibRow },
+	};
+}
+
 async function markLandProcessing(
 	notion: NotionClient,
 	land: LandInfo,
@@ -31225,12 +31663,22 @@ async function markLandNeedsReview(
 	land: LandInfo,
 	evaluation: LandEvaluation,
 ): Promise<void> {
+	const aZoneScoreText = formatLandAZoneScore(evaluation.aZoneScore);
 	const patches: Record<string, SafePatch> = {
 		...buildLandEvidenceCollectionPatches(land, evaluation),
 		処理ステータス: { kind: "select", value: "要確認" },
 		AIアクションバケット: { kind: "select", value: "継続監視" },
-		総合評価: { kind: "select", value: evaluation.overallGrade },
-		AI総合スコア: { kind: "number", value: evaluation.score },
+		// Aゾーンの人間回収待ちは点数・SABCで渡さない。旧値が残像になるため明示クリアする。
+		総合評価: { kind: "clear" },
+		AI総合スコア: { kind: "clear" },
+		Aゾーン判断: { kind: "select", value: evaluation.aZoneDecision },
+		Aゾーン判断理由: { kind: "text", value: evaluation.aZoneReason },
+		Aゾーン配点バージョン: { kind: "text", value: evaluation.aZoneScore.version },
+		Aゾーン内部スコア100: { kind: "number", value: evaluation.aZoneScore.total100 },
+		Aゾーン内部スコア60: { kind: "number", value: evaluation.aZoneScore.total60 },
+		Aゾーン内部採点内訳: { kind: "text", value: aZoneScoreText },
+		Aゾーン取得元サマリー: { kind: "text", value: evaluation.sourceSummary },
+		Aゾーン人間回収項目: { kind: "text", value: evaluation.humanCollectionItems },
 		土地評価: { kind: "select", value: evaluation.landRating },
 		"電力評価（仮説）": { kind: "select", value: evaluation.powerRating },
 		電力評価: { kind: "select", value: evaluation.powerRating },
@@ -31240,11 +31688,12 @@ async function markLandNeedsReview(
 		需要評価: { kind: "select", value: evaluation.demandRating },
 		案件化メモ: { kind: "text", value: evaluation.landEvaluation },
 		次アクション: { kind: "text", value: evaluation.nextAction },
-		一次AI受付メモ: { kind: "text", value: evaluation.reviewMemo },
+		一次AI受付メモ: { kind: "text", value: `${evaluation.reviewMemo}\n${aZoneScoreText}` },
 		AI更新日時: { kind: "date", value: new Date().toISOString() },
-		設計上の弱点: { kind: "text", value: evaluation.reviewMemo },
+		設計上の弱点: { kind: "text", value: `${evaluation.reviewMemo}\n${aZoneScoreText}` },
 		Webhook引き継ぎステータス: { kind: "select", value: "要確認で停止" },
-		Webhook引き継ぎメモ: { kind: "text", value: evaluation.reviewMemo },
+		Webhook引き継ぎメモ: { kind: "text", value: `${evaluation.reviewMemo}\n${aZoneScoreText}` },
+		...buildLandAZoneVisiblePatches(land, evaluation),
 	};
 	if (
 		evaluation.shouldPatchSubstationDistance !== false &&
@@ -31322,12 +31771,21 @@ async function writeLandEvaluation(
 	land: LandInfo,
 	evaluation: LandEvaluation,
 ): Promise<void> {
+	const aZoneScoreText = formatLandAZoneScore(evaluation.aZoneScore);
 	const patches: Record<string, SafePatch> = {
 		...buildLandEvidenceCollectionPatches(land, evaluation),
 		処理ステータス: { kind: "select", value: "完了" },
 		AIアクションバケット: { kind: "select", value: evaluation.actionBucket },
 		総合評価: { kind: "select", value: evaluation.overallGrade },
 		AI総合スコア: { kind: "number", value: evaluation.score },
+		Aゾーン判断: { kind: "select", value: evaluation.aZoneDecision },
+		Aゾーン判断理由: { kind: "text", value: evaluation.aZoneReason },
+		Aゾーン配点バージョン: { kind: "text", value: evaluation.aZoneScore.version },
+		Aゾーン内部スコア100: { kind: "number", value: evaluation.aZoneScore.total100 },
+		Aゾーン内部スコア60: { kind: "number", value: evaluation.aZoneScore.total60 },
+		Aゾーン内部採点内訳: { kind: "text", value: aZoneScoreText },
+		Aゾーン取得元サマリー: { kind: "text", value: evaluation.sourceSummary },
+		Aゾーン人間回収項目: { kind: "text", value: evaluation.humanCollectionItems },
 		電力会社エリア: { kind: "select", value: evaluation.powerArea },
 		AI案件種別: { kind: "select", value: evaluation.projectType },
 		土地評価: { kind: "select", value: evaluation.landRating },
@@ -31346,7 +31804,7 @@ async function writeLandEvaluation(
 				`需要: ${evaluation.demandEvaluation}`,
 			].join("\n"),
 		},
-		一次AI受付メモ: { kind: "text", value: evaluation.reviewMemo },
+		一次AI受付メモ: { kind: "text", value: `${evaluation.reviewMemo}\n${aZoneScoreText}` },
 		次アクション: { kind: "text", value: evaluation.nextAction },
 		AI更新日時: { kind: "date", value: new Date().toISOString() },
 		Webhook引き継ぎステータス: { kind: "select", value: "引き継ぎ済" },
@@ -31354,7 +31812,8 @@ async function writeLandEvaluation(
 			kind: "text",
 			value: "Notion Workerが土地詳細評価を返却。案件化判断は人間確認前提。",
 		},
-		設計上の弱点: { kind: "text", value: evaluation.reviewMemo },
+		設計上の弱点: { kind: "text", value: `${evaluation.reviewMemo}\n${aZoneScoreText}` },
+		...buildLandAZoneVisiblePatches(land, evaluation),
 	};
 	const farmlandStatus = land.farmland.trim();
 	if (farmlandStatus) {
@@ -31382,7 +31841,6 @@ async function writeLandEvaluation(
 	}
 	if (evaluation.nearestSubstationName) {
 		patches["最寄り変電所"] = { kind: "text", value: evaluation.nearestSubstationName };
-		patches["最寄り変電所名"] = { kind: "text", value: evaluation.nearestSubstationName };
 	}
 	await safeUpdateExistingProperties(notion, land.page, patches);
 }
@@ -31412,6 +31870,7 @@ async function createLandEvaluationLearningLog(
 		evaluation.farmlandPreAssessmentText
 			? `農転事前判定: ${evaluation.farmlandPreAssessmentText}`
 			: "",
+		`Aゾーン内部採点: ${formatLandAZoneScore(evaluation.aZoneScore)}`,
 		`AIアクション: ${evaluation.actionBucket}`,
 		`案件化見立て: ${evaluation.caseStatus}`,
 		evaluation.landEvaluation,
@@ -31424,7 +31883,7 @@ async function createLandEvaluationLearningLog(
 		対象領域: select("土地"),
 		判定日時: { date: { start: new Date().toISOString() } },
 		"AI/Worker名": richText("processLandEvaluation"),
-		判定バージョン: richText("land-evaluation-v2-sabc-2ai"),
+		判定バージョン: richText("land-evaluation-v2-sabc-2ai+a-zone-score-v0"),
 		判定スコア: { number: evaluation.score },
 		判定ラベル: richText(`${evaluation.overallGrade} / ${evaluation.bucket}`),
 		判定根拠: richText(reason),
