@@ -31,6 +31,7 @@
 		"test:inquiry-title-cleanup": "tsx src/inquiry-title-cleanup.test.ts",
 		"test:inquiry-assign-owner": "tsx src/inquiry-assign-owner.test.ts",
 		"test:inquiry-project-creation": "tsx src/inquiry-project-creation.test.ts",
+		"test:inquiry-project-creation-with-inputs": "tsx src/inquiry-project-creation-with-inputs.test.ts",
 		"test:land-ai-learning-log": "tsx src/land-ai-learning-log.test.ts",
 		"test:land-evaluation-calibration-cases": "node scripts/audit-land-evaluation-calibration-cases.test.mjs",
 		"test:land-evaluation-v2": "tsx src/land-treasure-engine.test.ts",

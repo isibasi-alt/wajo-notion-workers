@@ -355,7 +355,7 @@ function kansaiAddressOnlyPage() {
 		properties: {
 			...page.properties,
 			土地名称: titleProp("【TDD】関西エリア公式リンク表示"),
-			所在地: richTextProp("和歌山県東牟婁郡串本町二色"),
+			所在地: richTextProp("和歌山県東牟婁郡串本町二色626"),
 			電力会社エリア: selectProp("関西電力"),
 		},
 	};
@@ -687,7 +687,7 @@ async function main() {
 	process.env.REINFOLIB_API_KEY = "test-reinfolib-key";
 	process.env.REINFOLIB_LAND_PRICE_YEAR = "2025";
 	process.env.REINFOLIB_TRANSACTION_YEAR = "2025";
-	process.env.MOJ_CHIZU_GEOJSON_URLS = "https://mock.local/moj-chizu-toki.geojson";
+	process.env.MOJ_CHIZU_GEOJSON_URLS = "https://mock.local/moj-chizu-toki.geojson,https://mock.local/moj-chizu-kushimoto-626.geojson";
 	process.env.GSI_ROAD_TILE_ENABLED = "1";
 	process.env.GRID_CAPACITY_PUBLIC_JSON_URLS = "https://mock.local/grid-capacity-chubu.json";
 	const fetchedUrls: string[] = [];
@@ -695,6 +695,20 @@ async function main() {
 		const url = String(input);
 		fetchedUrls.push(url);
 		if (url.includes("/geocode/")) {
+			if (decodeURIComponent(url).includes("串本町")) {
+				return new Response(
+					JSON.stringify({
+						results: [
+							{
+								geometry: {
+									location: { lat: 33.4723, lng: 135.7812 },
+								},
+							},
+						],
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				);
+			}
 			return new Response(
 				JSON.stringify({
 					results: [
@@ -709,6 +723,22 @@ async function main() {
 			);
 		}
 		if (url.includes("msearch.gsi.go.jp/address-search/AddressSearch")) {
+			if (decodeURIComponent(url).includes("串本町")) {
+				return new Response(
+					JSON.stringify([
+						{
+							geometry: {
+								type: "Point",
+								coordinates: [135.7812, 33.4723],
+							},
+							properties: {
+								title: "和歌山県東牟婁郡串本町二色626",
+							},
+						},
+					]),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				);
+			}
 			return new Response(
 				JSON.stringify([
 					{
@@ -1006,6 +1036,62 @@ async function main() {
 				{ status: 200, headers: { "content-type": "application/json" } },
 			);
 		}
+		if (url.includes("moj-chizu-kushimoto-626.geojson")) {
+			return new Response(
+				JSON.stringify({
+					type: "FeatureCollection",
+					features: [
+						{
+							type: "Feature",
+							geometry: {
+								type: "Polygon",
+								coordinates: [
+									[
+										[-75.363, -2057.817],
+										[-61.951, -2046.284],
+										[-64.369, -2043.749],
+										[-75.363, -2057.817],
+									],
+								],
+							},
+							properties: {
+								市区町村名: "東牟婁郡串本町",
+								大字名: "二色",
+								地番: "626-1",
+								lotNumber: "626-1",
+								地図種類: "登記所備付地図",
+								座標値種別: "図上測量",
+								座標系: "任意座標系",
+							},
+						},
+						{
+							type: "Feature",
+							geometry: {
+								type: "Polygon",
+								coordinates: [
+									[
+										[-61.951, -2046.284],
+										[-58.0, -2044.0],
+										[-64.369, -2043.749],
+										[-61.951, -2046.284],
+									],
+								],
+							},
+							properties: {
+								市区町村名: "東牟婁郡串本町",
+								大字名: "二色",
+								地番: "626-2",
+								lotNumber: "626-2",
+								地図種類: "登記所備付地図",
+								座標値種別: "図上測量",
+								座標系: "任意座標系",
+							},
+						},
+					],
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		}
 		if (url.includes("grid-capacity-chubu.json")) {
 			return new Response(
 				JSON.stringify({
@@ -1257,6 +1343,8 @@ async function main() {
 	assert.match(kansaiMemo, /関西電力送配電 事前相談・高圧系統連系申込/);
 	assert.match(kansaiMemo, /kansai-td\.co\.jp\/consignment\/disclosure\/distribution-equipment/);
 	assert.match(kansaiMemo, /kansai-td\.co\.jp\/application\/preliminary-consultation/);
+	assert.match(kansaiMemo, /東牟婁郡串本町二色 626-1|東牟婁郡串本町二色626-1/);
+	assert.match(kansaiMemo, /座標系=任意座標系/);
 
 	const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY;
 	const googleApiKey = process.env.GOOGLE_API_KEY;

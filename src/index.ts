@@ -3643,6 +3643,38 @@ worker.tool("processInquiryProjectCreationById", {
 	},
 });
 
+worker.tool("processInquiryProjectCreationWithInputs", {
+	title: "WAJO 問い合わせの案件化（確認値付き）",
+	description:
+		"問い合わせページIDと案件化に必要な確認値を受け取ります。dryRun=trueでは入力検証と実行予定だけを返し、Notionを更新しません。",
+	schema: j.object({
+		inquiryPageId: j.string().describe("お問い合わせDBのページID"),
+		plannedGrossProfit: j.number().describe("予定粗利額"),
+		plannedGrossBasis: j.string().describe("予定粗利の根拠"),
+		dryRun: j.boolean().describe("trueならNotionへ書き込みません"),
+	}),
+	outputSchema: j.object({
+		inquiryPageId: j.string(),
+		action: j.string(),
+		projectId: j.string().nullable(),
+		created: j.integer(),
+		message: j.string(),
+		writesExecuted: j.boolean(),
+		payload: j.object({
+			inquiryPageId: j.string(),
+			plannedGrossProfit: j.number(),
+			plannedGrossBasis: j.string(),
+			dryRun: j.boolean(),
+		}),
+	}),
+	execute: async (input, { notion }) => {
+		return processInquiryProjectCreationWithInputs(
+			input,
+			notion as unknown as NotionClient,
+		);
+	},
+});
+
 worker.tool("processProjectDealStartById", {
 	title: "WAJO 案件から商談を作る",
 	description:
@@ -29213,6 +29245,7 @@ type LandParcelCadastreCandidate = {
 	lotNumber: string;
 	mapType: string;
 	accuracy: string;
+	coordinateSystem: string;
 	sourceUrl: string;
 	confirmationUrl: string;
 };
@@ -29345,7 +29378,7 @@ async function resolveLandMapContext(land: LandInfo): Promise<LandMapContext> {
 	const farmlandNavi = await fetchFarmlandNaviContext(latitude, longitude);
 	const surroundingPlaces = await fetchGoogleSurroundingPlacesContext(latitude, longitude, key);
 	const reinfolib = await fetchReinfolibContext(latitude, longitude, land.areaTsubo);
-	const parcelCadastre = await fetchParcelCadastreContext(latitude, longitude);
+	const parcelCadastre = await fetchParcelCadastreContext(latitude, longitude, land.address);
 	const gsiRoad = await fetchGsiRoadContext(latitude, longitude);
 	const powerArea = land.powerArea || inferPowerAreaFromAddress(land.address) || "未確認";
 	const gridCapacity = await fetchGridCapacityContext(powerArea);
@@ -29731,17 +29764,9 @@ function surroundingPlacesEvidence(context: LandSurroundingPlacesContext): strin
 async function fetchParcelCadastreContext(
 	latitude: number | null,
 	longitude: number | null,
+	address = "",
 ): Promise<LandParcelCadastreContext> {
 	const source = "法務省 登記所備付地図データ / G空間情報センター公開データ（配置済みGeoJSON）";
-	if (latitude === null || longitude === null) {
-		return {
-			status: "no-coordinate",
-			source,
-			message: "登記所備付地図データ接続: 未実行（緯度経度なし）",
-			candidates: [],
-		};
-	}
-
 	const urlTexts = uniqueStrings(
 		[
 			...(process.env.MOJ_CHIZU_GEOJSON_URLS || "").split(/[\n,]/),
@@ -29759,6 +29784,14 @@ async function fetchParcelCadastreContext(
 			candidates: [],
 		};
 	}
+	if ((latitude === null || longitude === null) && !address) {
+		return {
+			status: "no-coordinate",
+			source,
+			message: "登記所備付地図データ接続: 未実行（緯度経度・住所なし）",
+			candidates: [],
+		};
+	}
 
 	let readableSourceCount = 0;
 	const candidates: LandParcelCadastreCandidate[] = [];
@@ -29773,12 +29806,19 @@ async function fetchParcelCadastreContext(
 		if (!body) continue;
 		readableSourceCount += 1;
 		for (const feature of geoJsonFeatures(body)) {
-			if (!pointInGeoJsonGeometry(feature.geometry, longitude, latitude)) continue;
 			const candidate = readParcelCadastreCandidate(feature.properties, url.toString());
+			if (!candidate) continue;
+			const addressMatched = parcelCadastreCandidateMatchesAddress(candidate, address);
+			const canUseGeometry =
+				latitude !== null &&
+				longitude !== null &&
+				!/任意/.test(candidate.coordinateSystem) &&
+				pointInGeoJsonGeometry(feature.geometry, longitude, latitude);
+			if (!addressMatched && !canUseGeometry) continue;
 			if (candidate) candidates.push(candidate);
-			if (candidates.length >= 5) break;
+			if (candidates.length >= 20) break;
 		}
-		if (candidates.length >= 5) break;
+		if (candidates.length >= 20) break;
 	}
 
 	if (candidates.length > 0) {
@@ -29799,6 +29839,41 @@ async function fetchParcelCadastreContext(
 				: "登記所備付地図データ接続: 取得失敗（配置済みGeoJSONを読み取れません）",
 		candidates: [],
 	};
+}
+
+function normalizeParcelText(value: string): string {
+	return value
+		.normalize("NFKC")
+		.replace(/[‐‑‒–—―ー－]/g, "-")
+		.replace(/\s+/g, "")
+		.toLowerCase();
+}
+
+function parcelLotBase(lotNumber: string): string {
+	const normalized = normalizeParcelText(lotNumber);
+	const match = normalized.match(/\d+/);
+	return match?.[0] ?? "";
+}
+
+function parcelCadastreCandidateMatchesAddress(
+	candidate: LandParcelCadastreCandidate,
+	address: string,
+): boolean {
+	const normalizedAddress = normalizeParcelText(address);
+	if (!normalizedAddress) return false;
+	const municipality = normalizeParcelText(candidate.municipality || "");
+	const oaza = normalizeParcelText(candidate.oaza || "");
+	const koaza = normalizeParcelText(candidate.koaza || "");
+	const lotNumber = normalizeParcelText(candidate.lotNumber || "");
+	const lotBase = parcelLotBase(candidate.lotNumber || "");
+	const locationMatched =
+		(Boolean(oaza) && normalizedAddress.includes(oaza)) ||
+		(Boolean(koaza) && normalizedAddress.includes(koaza)) ||
+		(Boolean(municipality) && normalizedAddress.includes(municipality));
+	const lotMatched =
+		(Boolean(lotNumber) && normalizedAddress.includes(lotNumber)) ||
+		(Boolean(lotBase) && normalizedAddress.includes(lotBase));
+	return locationMatched && lotMatched;
 }
 
 function readParcelCadastreCandidate(
@@ -29843,7 +29918,8 @@ function readParcelCadastreCandidate(
 		koaza,
 		lotNumber,
 		mapType: firstNonBlank(props.地図種類, props.図郭種別, props.map_type, props.type),
-		accuracy: firstNonBlank(props.精度区分, props.座標系, props.accuracy),
+		accuracy: firstNonBlank(props.精度区分, props.座標値種別, props.accuracy),
+		coordinateSystem: firstNonBlank(props.座標系, props.coordinateSystem, props.srsName),
 		sourceUrl,
 		confirmationUrl: "https://www.moj.go.jp/MINJI/minji05_00494.html",
 	};
@@ -29870,6 +29946,7 @@ function parcelCadastreEvidence(context: LandParcelCadastreContext): string {
 				"筆界候補",
 				`地図種類=${candidate.mapType || "未記載"}`,
 				`精度=${candidate.accuracy || "未記載"}`,
+				`座標系=${candidate.coordinateSystem || "未記載"}`,
 				`確認リンク=${candidate.confirmationUrl}`,
 			].join(" / ");
 		}),
@@ -37208,6 +37285,60 @@ async function processInquiryProjectCreation(
 	}
 }
 
+type InquiryProjectCreationWithInputs = {
+	inquiryPageId: string;
+	plannedGrossProfit: number;
+	plannedGrossBasis: string;
+	dryRun: boolean;
+};
+
+function validateInquiryProjectCreationWithInputs(
+	input: InquiryProjectCreationWithInputs,
+): void {
+	if (!input.inquiryPageId.trim()) throw new Error("inquiryPageId is required");
+	if (!Number.isFinite(input.plannedGrossProfit) || input.plannedGrossProfit <= 0) {
+		throw new Error("plannedGrossProfit must be greater than 0");
+	}
+	if (!input.plannedGrossBasis.trim()) throw new Error("plannedGrossBasis is required");
+}
+
+async function processInquiryProjectCreationWithInputs(
+	input: InquiryProjectCreationWithInputs,
+	notion: NotionClient,
+): Promise<InquiryProjectCreationResult & {
+	writesExecuted: boolean;
+	payload: InquiryProjectCreationWithInputs;
+}> {
+	validateInquiryProjectCreationWithInputs(input);
+	if (input.dryRun) {
+		return {
+			inquiryPageId: input.inquiryPageId,
+			action: "dry-run",
+			projectId: null,
+			created: 0,
+			message: "入力検証済み。案件化Worker実行予定ですが、Notionは更新していません。",
+			writesExecuted: false,
+			payload: input,
+		};
+	}
+
+	const inquiryPage = await notion.pages.retrieve({ page_id: input.inquiryPageId });
+	await safeUpdateExistingProperties(notion, inquiryPage, {
+		予定粗利額: { kind: "number", value: input.plannedGrossProfit },
+		予定粗利の根拠: {
+			kind: "select",
+			value: projectGrossBasisFromInquiry(input.plannedGrossBasis),
+		},
+	});
+	const result = await processInquiryProjectCreation(
+		input.inquiryPageId,
+		notion,
+		undefined,
+		false,
+	);
+	return { ...result, writesExecuted: true, payload: input };
+}
+
 async function findProjectsByInquiry(
 	notion: NotionClient,
 	inquiryPageId: string,
@@ -38874,6 +39005,9 @@ async function markInquiryProjectLinked(
 export { processInquiryAssignOwner as processInquiryAssignOwnerForTest };
 export { processInquiryEmailIntake as processInquiryEmailIntakeForTest };
 export { processInquiryProjectCreation as processInquiryProjectCreationForTest };
+export {
+	processInquiryProjectCreationWithInputs as processInquiryProjectCreationWithInputsForTest,
+};
 export { processProjectDealStart as processProjectDealStartForTest };
 export { processBrokerCaseCreation as processBrokerCaseCreationForTest };
 export { processBrokerCustodyRegister as processBrokerCustodyRegisterForTest };
