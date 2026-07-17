@@ -5301,6 +5301,72 @@ worker.webhook("attachMonthlyEvalPdfWebhook", {
 	},
 });
 
+worker.webhook("processMultiAgentCommanderRunWebhook", {
+	title: "マルチエージェント基盤 Commander発火Webhook",
+	description:
+		"マルチエージェント基盤 Mission DBの「Commander Run」ボタンから起動。Anthropic Claude（既定 claude-opus-4-7）でCommander応答を生成し、Final Answer列に書き戻す。F1最小通電フェーズ・自己ブートストラップ用。設計図正本: 20_Project/マルチエージェント基盤/_F1_最小通電設計.md",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const missionPageId = extractWebhookPageId(body);
+			if (!missionPageId) {
+				throw new Error(
+					"pageId / entity.id のいずれからもMissionページIDを特定できませんでした。",
+				);
+			}
+			await processMultiAgentCommanderRun(
+				missionPageId,
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processMultiAgentAgentARunWebhook", {
+	title: "マルチエージェント基盤 AgentA発火Webhook",
+	description:
+		"マルチエージェント基盤 Tasks DBの「AgentA Run」ボタンから起動。AgentA（実行担当）がTaskを実行し、Result列に書き戻す。F2最小通電フェーズ。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const taskPageId = extractWebhookPageId(body);
+			if (!taskPageId) {
+				throw new Error(
+					"pageId / entity.id のいずれからもTaskページIDを特定できませんでした。",
+				);
+			}
+			await processMultiAgentAgentARun(
+				taskPageId,
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
+worker.webhook("processMultiAgentAgentBRunWebhook", {
+	title: "マルチエージェント基盤 AgentB(Skeptic)発火Webhook",
+	description:
+		"マルチエージェント基盤 Tasks DBの「AgentB Run」ボタンから起動。AgentB（Skeptic役）がAgentA応答を疑い役として検証し、AgentB Review列に書き戻す。F3。",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			verifyWebhookSecret(event.headers, event.body);
+			const body = event.body as Record<string, unknown>;
+			const taskPageId = extractWebhookPageId(body);
+			if (!taskPageId) {
+				throw new Error(
+					"pageId / entity.id のいずれからもTaskページIDを特定できませんでした。",
+				);
+			}
+			await processMultiAgentAgentBRun(
+				taskPageId,
+				notion as unknown as NotionClient,
+			);
+		}
+	},
+});
+
 // ── 人見さん月次評価：データ層（A の前段。元ソースDBから「人×月」の材料を収集しページへ追記）──
 // 2026-06-25。データ点検君（A）はページ本文を読むので、ここで実データを入れておけば
 // 「A が空ページを読むだけ」を解消できる。
