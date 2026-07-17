@@ -1192,7 +1192,17 @@ async function main() {
 	assert.match(humanCollectionItems, /取得先=/);
 	assert.match(humanCollectionItems, /Notion戻し先=/);
 	assert.match(humanCollectionItems, /証拠区分=/);
+	assert.match(humanCollectionItems, /期限=/);
 	assert.match(humanCollectionItems, /完了条件=/);
+	assert.match(humanCollectionItems, /Bゾーンメール導線=会社の全体メールへ送る/);
+	assert.match(humanCollectionItems, /送信前表示=Codexチャットへ件名・本文全文・送信目的を表示/);
+	assert.match(humanCollectionItems, /件名=【Bゾーン回収依頼】/);
+	assert.match(humanCollectionItems, /本文全文:/);
+	assert.match(humanCollectionItems, /対象土地:/);
+	assert.match(humanCollectionItems, /A判断: (行く|行かない)/);
+	assert.match(humanCollectionItems, /理由:/);
+	assert.match(humanCollectionItems, /送信済み条件=送信ツールの成功結果/);
+	assert.doesNotMatch(humanCollectionItems, /個人宛|個人アドレス|個人の宛先|CC候補|宛先探索/);
 	assert.ok(((addressOnlyFinalUpdate.Aゾーン内部スコア100 as { number?: number } | undefined)?.number ?? 0) > 0);
 	assert.doesNotMatch(JSON.stringify(addressOnlyFinalUpdate.Aゾーン内部採点内訳 ?? {}), /採点保留/);
 	assert.doesNotMatch(addressOnlyMemo, /この土地、?1億|判定が全部出た|即アタック|農転不可|危険|接道OK(?!確定にはしない)/);

@@ -31,7 +31,18 @@ function parseJsonOutput(output) {
 
 const results = [];
 const failures = [];
-const requiredHandoffLabels = ["担当=", "回収物=", "取得先=", "Notion戻し先=", "証拠区分=", "完了条件="];
+const requiredHandoffLabels = ["担当=", "回収物=", "取得先=", "期限=", "Notion戻し先=", "証拠区分=", "完了条件="];
+const requiredMailHandoffLabels = [
+	"Bゾーンメール導線=会社の全体メールへ送る",
+	"送信前表示=Codexチャットへ件名・本文全文・送信目的を表示",
+	"件名=【Bゾーン回収依頼】",
+	"本文全文:",
+	"対象土地:",
+	"A判断:",
+	"理由:",
+	"送信済み条件=送信ツールの成功結果",
+];
+const personalRecipientRoutingPattern = /個人宛|個人アドレス|個人の宛先|CC候補|宛先探索/;
 
 for (const testCase of cases) {
 	const payload = JSON.stringify({ pageId: testCase.pageId, dryRun: true });
@@ -93,14 +104,25 @@ for (const testCase of cases) {
 	if (!result.humanCollectionItems) {
 		failures.push(`${testCase.name}: expected humanCollectionItems in dry-run result`);
 	}
-		if (!result.bZoneHandoff) {
-			failures.push(`${testCase.name}: expected bZoneHandoff in dry-run result`);
+	if (!result.bZoneHandoff) {
+		failures.push(`${testCase.name}: expected bZoneHandoff in dry-run result`);
+	}
+	for (const label of requiredHandoffLabels) {
+		if (!String(result.bZoneHandoff || "").includes(label)) {
+			failures.push(`${testCase.name}: expected bZoneHandoff to include ${label}`);
 		}
-		for (const label of requiredHandoffLabels) {
-			if (!String(result.bZoneHandoff || "").includes(label)) {
-				failures.push(`${testCase.name}: expected bZoneHandoff to include ${label}`);
-			}
+	}
+	for (const label of requiredMailHandoffLabels) {
+		if (!String(result.bZoneHandoff || "").includes(label) && !String(result.humanCollectionItems || "").includes(label)) {
+			failures.push(`${testCase.name}: expected B-zone mail handoff to include ${label}`);
 		}
+	}
+	if (
+		personalRecipientRoutingPattern.test(String(result.bZoneHandoff || "")) ||
+		personalRecipientRoutingPattern.test(String(result.humanCollectionItems || ""))
+	) {
+		failures.push(`${testCase.name}: B-zone mail handoff must not include personal-recipient routing`);
+	}
 	if (!result.cZoneReadiness) {
 		failures.push(`${testCase.name}: expected cZoneReadiness in dry-run result`);
 	}

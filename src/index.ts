@@ -31300,10 +31300,32 @@ function buildLandAZoneSourceSummary(input: {
 	].join("\n");
 }
 
+function landBZoneTargetLabel(land: LandInfo): string {
+	return [
+		land.name || "土地名未入力",
+		land.address || "所在地未入力",
+		land.areaTsubo ? `${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪` : "面積未入力",
+	].join(" / ");
+}
+
+function landBZoneStandardDeadline(now = new Date()): string {
+	const target = new Date(now.getTime());
+	target.setUTCDate(target.getUTCDate() + 2);
+	const jst = new Date(target.getTime() + 9 * 60 * 60 * 1000);
+	const yyyy = jst.getUTCFullYear();
+	const mm = String(jst.getUTCMonth() + 1).padStart(2, "0");
+	const dd = String(jst.getUTCDate()).padStart(2, "0");
+	return `${yyyy}-${mm}-${dd} 18:00`;
+}
+
 function buildLandHumanCollectionItems(input: {
 	missing?: string[];
 	investigationGaps?: string[];
 	nextAction?: string;
+	targetLabel?: string;
+	aZoneDecision?: "行く" | "行かない";
+	aZoneReason?: string;
+	deadline?: string;
 }): string {
 	const missing = input.missing ?? [];
 	const gaps = input.investigationGaps ?? [];
@@ -31404,6 +31426,9 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			const bZoneHandoff = buildLandBZoneHandoff({
 				investigationGaps,
 				nextAction: scout.nextAction,
+				targetLabel: landBZoneTargetLabel(land),
+				aZoneDecision: aZone.decision,
+				aZoneReason: aZone.reason,
 			});
 			const cZone = buildLandCZoneReadiness({ land, investigationGaps });
 			return {
@@ -31417,6 +31442,9 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 				humanCollectionItems: buildLandHumanCollectionItems({
 					investigationGaps,
 					nextAction: scout.nextAction,
+					targetLabel: landBZoneTargetLabel(land),
+					aZoneDecision: aZone.decision,
+					aZoneReason: aZone.reason,
 				}),
 				bZoneHandoff,
 				cZoneReadiness: cZone.text,
@@ -31462,6 +31490,9 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 		const aZone = decideLandAZone({ land, score: aZoneScore, blockers: treasure.blockers });
 		const bZoneHandoff = buildLandBZoneHandoff({
 			nextAction: treasure.nextAction,
+			targetLabel: landBZoneTargetLabel(land),
+			aZoneDecision: aZone.decision,
+			aZoneReason: aZone.reason,
 		});
 		const cZone = buildLandCZoneReadiness({ land });
 		return {
@@ -31474,6 +31505,9 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			sourceSummary,
 			humanCollectionItems: buildLandHumanCollectionItems({
 				nextAction: treasure.nextAction,
+				targetLabel: landBZoneTargetLabel(land),
+				aZoneDecision: aZone.decision,
+				aZoneReason: aZone.reason,
 			}),
 			bZoneHandoff,
 			cZoneReadiness: cZone.text,
@@ -31554,6 +31588,9 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			missing.length > 0
 				? `まず${missing.join("、")}を入力し、再度「土地評価を開始」してください。`
 				: undefined,
+		targetLabel: landBZoneTargetLabel(land),
+		aZoneDecision: aZone.decision,
+		aZoneReason: aZone.reason,
 	});
 	const cZone = buildLandCZoneReadiness({
 		land,
@@ -31576,6 +31613,9 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 				missing.length > 0
 					? `まず${missing.join("、")}を入力し、再度「土地評価を開始」してください。`
 					: undefined,
+			targetLabel: landBZoneTargetLabel(land),
+			aZoneDecision: aZone.decision,
+			aZoneReason: aZone.reason,
 		}),
 		bZoneHandoff,
 		cZoneReadiness: cZone.text,
@@ -31792,29 +31832,82 @@ function buildLandBZoneHandoff(input: {
 	missing?: string[];
 	investigationGaps?: string[];
 	nextAction?: string;
+	targetLabel?: string;
+	aZoneDecision?: "行く" | "行かない";
+	aZoneReason?: string;
+	deadline?: string;
 }): string {
 	const items = uniqueStrings([...(input.missing ?? []), ...(input.investigationGaps ?? [])]);
+	const targetLabel = input.targetLabel || "対象土地未特定";
+	const aZoneDecision = input.aZoneDecision || "行く";
+	const aZoneReason = input.aZoneReason || input.nextAction || "Aゾーン速報判断の理由は案件化メモを参照";
+	const deadline = input.deadline || landBZoneStandardDeadline();
+	const tasks = items.map(buildLandBZoneTaskForGap);
+	const taskLines =
+		tasks.length > 0
+			? tasks.map((task, index) =>
+				[
+					`${index + 1}. 担当=${task.owner}`,
+					`回収物=${task.item}`,
+					`取得先=${task.source}`,
+					`期限=${deadline}`,
+					`Notion戻し先=${task.returnTo}`,
+					`証拠区分=${task.evidenceState}`,
+					`完了条件=${task.completion}`,
+				].join("｜"),
+			)
+			: [
+				[
+					"1. 担当=営業担当",
+					"回収物=追加回収なし。Cゾーン再評価へ戻す",
+					"取得先=土地DBの現入力とAゾーン取得元サマリー",
+					`期限=${deadline}`,
+					"Notion戻し先=土地DB「Webhook引き継ぎメモ」「Aゾーン人間回収項目」",
+					"証拠区分=入力済み証拠区分を維持",
+					"完了条件=Cゾーン再評価へ進める状態を確認",
+				].join("｜"),
+			];
+	const subject = `【Bゾーン回収依頼】${targetLabel}｜A判断=${aZoneDecision}`;
+	const body = [
+		"以下、Aゾーン速報判断に基づくBゾーン回収依頼です。",
+		`対象土地: ${targetLabel}`,
+		`A判断: ${aZoneDecision}`,
+		`理由: ${aZoneReason}`,
+		`期限: ${deadline}`,
+		"",
+		"回収指示:",
+		...taskLines,
+		"",
+		"戻し方:",
+		"回収した資料・URL・添付・確認メモは、各行のNotion戻し先へ入力してください。",
+		"原本、行政正式書面、二次資料、未確認を混ぜず、証拠区分を明記してください。",
+		"",
+		"完了条件:",
+		tasks.length > 0
+			? "上記の完了条件を満たしたうえで、同じ土地レコードをCゾーン再評価へ戻してください。"
+			: "追加回収なしとして、同じ土地レコードをCゾーン再評価へ戻してください。",
+	].join("\n");
+	const mailGuide = [
+		"Bゾーンメール導線=会社の全体メールへ送る。",
+		"送信前表示=Codexチャットへ件名・本文全文・送信目的を表示し、大ちゃん確認後に送信。",
+		`件名=${subject}`,
+		"本文全文:",
+		body,
+		"送信済み条件=送信ツールの成功結果がある場合のみ送信済みとする。",
+	].join("\n");
 	if (items.length === 0) {
 		return [
 			"Bゾーン引き渡し: 追加の人間回収なし。",
 			"戻し先: Cゾーン再評価。",
 			"注意: ISSUED/案件化はCゾーンで対象一意性と原本採用可否を再確認してから。",
+			mailGuide,
 		].join("\n");
 	}
-	const tasks = items.map(buildLandBZoneTaskForGap);
 	return [
 		"Bゾーン引き渡し（人間回収伝票）",
-		...tasks.map((task, index) =>
-			[
-				`${index + 1}. 担当=${task.owner}`,
-				`回収物=${task.item}`,
-				`取得先=${task.source}`,
-				`Notion戻し先=${task.returnTo}`,
-				`証拠区分=${task.evidenceState}`,
-				`完了条件=${task.completion}`,
-			].join("｜"),
-		),
+		...taskLines,
 		input.nextAction ? `作業指示原文: ${input.nextAction}` : "",
+		mailGuide,
 	].filter(Boolean).join("\n");
 }
 
