@@ -29316,6 +29316,11 @@ type LandParcelCadastreCandidate = {
 	accuracy: string;
 	coordinateSystem: string;
 	sourceUrl: string;
+	sourceZip: string;
+	sourceZipSha256: string;
+	sourceXml: string;
+	sourceXmlSha256: string;
+	convertedAt: string;
 	confirmationUrl: string;
 };
 
@@ -30035,8 +30040,24 @@ function readParcelCadastreCandidate(
 		accuracy: firstNonBlank(props.精度区分, props.座標値種別, props.accuracy),
 		coordinateSystem: firstNonBlank(props.座標系, props.coordinateSystem, props.srsName),
 		sourceUrl,
+		sourceZip: firstNonBlank(props.sourceZip, props.source_zip, props.変換元ZIP),
+		sourceZipSha256: firstNonBlank(props.sourceZipSha256, props.source_zip_sha256, props.ZIP_SHA256),
+		sourceXml: firstNonBlank(props.sourceXml, props.source_xml, props.変換元XML),
+		sourceXmlSha256: firstNonBlank(props.sourceXmlSha256, props.source_xml_sha256, props.XML_SHA256),
+		convertedAt: firstNonBlank(props.convertedAt, props.converted_at, props.変換日時),
 		confirmationUrl: "https://www.moj.go.jp/MINJI/minji05_00494.html",
 	};
+}
+
+function parcelCadastreSourceProof(candidate: LandParcelCadastreCandidate): string[] {
+	return [
+		candidate.sourceZip ? `変換元ZIP=${candidate.sourceZip}` : "",
+		candidate.sourceXml ? `内包XML=${candidate.sourceXml}` : "",
+		candidate.sourceZipSha256 ? `ZIP_SHA256=${candidate.sourceZipSha256}` : "",
+		candidate.sourceXmlSha256 ? `XML_SHA256=${candidate.sourceXmlSha256}` : "",
+		candidate.convertedAt ? `変換日時=${candidate.convertedAt}` : "",
+		candidate.sourceUrl ? `Worker読込元=${candidate.sourceUrl}` : "",
+	].filter(Boolean);
 }
 
 function parcelCadastreEvidence(context: LandParcelCadastreContext): string {
@@ -30061,6 +30082,7 @@ function parcelCadastreEvidence(context: LandParcelCadastreContext): string {
 				`地図種類=${candidate.mapType || "未記載"}`,
 				`精度=${candidate.accuracy || "未記載"}`,
 				`座標系=${candidate.coordinateSystem || "未記載"}`,
+				...parcelCadastreSourceProof(candidate),
 				`確認リンク=${candidate.confirmationUrl}`,
 			].join(" / ");
 		}),
@@ -31318,7 +31340,7 @@ function buildLandAZoneSourceSummary(input: {
 		],
 		[
 			"住所正規化・座標",
-			mapContext.geocodeSource || "未実行",
+			mapContext.geocodeSource || (mapContext.latitude !== null && mapContext.longitude !== null ? "土地DB入力座標" : "未実行"),
 			connectedEvidenceState(Boolean(mapContext.geocodeSource || mapContext.googleMapsUrl), "AI注記"),
 			`所在地→緯度経度 / Google Maps確認リンク=${mapContext.googleMapsUrl || "未取得"}`,
 			"案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー / 以後のAPI照会起点",
@@ -31331,9 +31353,10 @@ function buildLandAZoneSourceSummary(input: {
 			parcel.status === "connected"
 				? parcel.candidates
 					.slice(0, 2)
-					.map((candidate) =>
-						`${[candidate.municipality, candidate.oaza, candidate.koaza].filter(Boolean).join("")}${candidate.lotNumber ? ` ${candidate.lotNumber}` : ""}`.trim(),
-					)
+					.map((candidate) => {
+						const location = `${[candidate.municipality, candidate.oaza, candidate.koaza].filter(Boolean).join("")}${candidate.lotNumber ? ` ${candidate.lotNumber}` : ""}`.trim();
+						return [location, ...parcelCadastreSourceProof(candidate)].filter(Boolean).join(" / ");
+					})
 					.join(" / ")
 				: parcel.message,
 			"地番候補 / 案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー",
@@ -32329,9 +32352,11 @@ function buildLandAZoneAcquiredEvidenceReasons(input: {
 		mapContext.parcelCadastre.status === "connected"
 			? mapContext.parcelCadastre.candidates
 				.slice(0, 3)
-				.map((candidate) =>
-					`${[candidate.municipality, candidate.oaza, candidate.koaza].filter(Boolean).join("")}${candidate.lotNumber ? ` ${candidate.lotNumber}` : ""}`.trim(),
-				)
+				.map((candidate) => {
+					const location = `${[candidate.municipality, candidate.oaza, candidate.koaza].filter(Boolean).join("")}${candidate.lotNumber ? ` ${candidate.lotNumber}` : ""}`.trim();
+					const proof = parcelCadastreSourceProof(candidate);
+					return [location, ...proof].filter(Boolean).join(" / ");
+				})
 				.filter(Boolean)
 			: [];
 	const reasons = [
@@ -32339,7 +32364,7 @@ function buildLandAZoneAcquiredEvidenceReasons(input: {
 			? `住所正規化・座標｜取得元=${mapContext.geocodeSource || "土地DB入力座標"}｜Worker取得日時=${acquiredAt}｜証拠区分=AI注記｜結果=緯度${mapContext.latitude} / 経度${mapContext.longitude}${mapContext.geocodeCandidateRequiresReview ? " / 住所候補のため地番確認要" : ""}`
 			: "",
 		parcelLots.length > 0
-			? `法務省地図｜取得元=登記所備付地図GeoJSON｜Worker取得日時=${acquiredAt}｜証拠区分=二次資料｜結果=地番・筆界候補 ${parcelLots.join(" / ")}（登記権利確認ではない）`
+			? `法務省地図｜取得元=登記所備付地図GeoJSON｜Worker取得日時=${acquiredAt}｜証拠区分=二次資料｜結果=実データ由来の地番・筆界候補 ${parcelLots.join(" || ")}（登記権利確認ではない）`
 			: "",
 		mapContext.reinfolib.status === "connected" && mapContext.reinfolib.zoning
 			? `都市計画｜取得元=不動産情報ライブラリAPI｜Worker取得日時=${acquiredAt}｜証拠区分=原本｜結果=${[

@@ -10,6 +10,8 @@ properties as lot-number candidates.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
+import hashlib
 import json
 import zipfile
 from pathlib import Path
@@ -37,11 +39,19 @@ def first_xml_name(zip_path: Path) -> str:
     return names[0]
 
 
-def read_xml_root(zip_path: Path) -> ET.Element:
+def sha256_file(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def read_xml_root_with_metadata(zip_path: Path) -> tuple[ET.Element, str, str]:
     with zipfile.ZipFile(zip_path) as archive:
         xml_name = first_xml_name(zip_path)
-        with archive.open(xml_name) as handle:
-            return ET.parse(handle).getroot()
+        xml_bytes = archive.read(xml_name)
+    return ET.fromstring(xml_bytes), xml_name, hashlib.sha256(xml_bytes).hexdigest()
 
 
 def direct_position(column: ET.Element, point_lookup: dict[str, list[float]]) -> list[float] | None:
@@ -127,7 +137,9 @@ def parcel_shape_id(parcel: ET.Element) -> str:
 
 
 def convert(zip_path: Path, output_path: Path, lot_prefix: str | None) -> dict[str, object]:
-    root = read_xml_root(zip_path)
+    source_zip_sha256 = sha256_file(zip_path)
+    root, source_xml, source_xml_sha256 = read_xml_root_with_metadata(zip_path)
+    converted_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     map_name = root.findtext(f"{TIZU}地図名") or ""
     city_code = root.findtext(f"{TIZU}市区町村コード") or ""
     city_name = root.findtext(f"{TIZU}市区町村名") or ""
@@ -176,7 +188,10 @@ def convert(zip_path: Path, output_path: Path, lot_prefix: str | None) -> dict[s
                     "座標値種別": child_text(parcel, "座標値種別"),
                     "shapeId": shape_id,
                     "sourceZip": str(zip_path),
-                    "sourceXml": first_xml_name(zip_path),
+                    "sourceZipSha256": source_zip_sha256,
+                    "sourceXml": source_xml,
+                    "sourceXmlSha256": source_xml_sha256,
+                    "convertedAt": converted_at,
                     "warning": "座標系が任意座標系の場合、geometryはWGS84ではなく地番候補・筆界候補の補助参照。",
                 },
             }
@@ -188,6 +203,11 @@ def convert(zip_path: Path, output_path: Path, lot_prefix: str | None) -> dict[s
         "features": features,
         "metadata": {
             "sourceZip": str(zip_path),
+            "sourceZipSha256": source_zip_sha256,
+            "sourceXml": source_xml,
+            "sourceXmlSha256": source_xml_sha256,
+            "convertedAt": converted_at,
+            "converter": Path(__file__).name,
             "cityCode": city_code,
             "cityName": city_name,
             "mapName": map_name,
