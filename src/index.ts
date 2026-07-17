@@ -20720,7 +20720,7 @@ function buildResidentDocumentHtml(draft: ResidentDocumentDraft): string {
 </head>
 <body>
 <main>
-	<header><p>WAJO Sales OS | Resident Briefing</p><h1>${escapeHtml(draft.documentTitle || "住民説明会資料")}</h1><p>作成日: ${escapeHtml(todayIsoDateInTokyo())}</p></header>
+	<header><p>和上ホールディングス</p><h1>${escapeHtml(draft.documentTitle || "住民説明会資料")}</h1><p>作成日: ${escapeHtml(todayIsoDateInTokyo())}</p></header>
 	${sectionHtml}
 	<div class="notice"><strong>配布前チェック</strong><br>社名・連絡先・配布先・添付画像の表示状態は、配布前に最終確認してください。</div>
 	<footer>入力された案件情報・画像をもとに生成した正式資料です。</footer>
@@ -38360,6 +38360,8 @@ export {
 	buildProposalSimulationHtml as buildProposalSimulationHtmlForTest,
 	buildProposalSimulationPdfBytes as buildProposalSimulationPdfBytesForTest,
 	buildResidentDocumentHtml as buildResidentDocumentHtmlForTest,
+	buildInvestmentConditionHtml as buildInvestmentConditionHtmlForTest,
+	buildSalesProposalRecordPatches as buildSalesProposalRecordPatchesForTest,
 	buildResidentDocumentPdfBytes as buildResidentDocumentPdfBytesForTest,
 	createDealFeedbackLearningLog as createDealFeedbackLearningLogForTest,
 	createMeetingFeedbackLearningLog as createMeetingFeedbackLearningLogForTest,

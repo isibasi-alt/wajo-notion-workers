@@ -4,6 +4,8 @@ import {
 	processProposalSimulationForTest,
 	processProjectProposalRequestForTest,
 	processProjectResidentDocumentRequestForTest,
+	processResidentDocumentForTest,
+	processInvestmentConditionPdfForTest,
 } from "./index";
 
 function titleProp(value: string) {
@@ -1009,8 +1011,149 @@ async function main() {
 	assert.match(JSON.stringify(projectHtmlAppend), /HTML提案書リンク/);
 	assert.match(JSON.stringify(projectHtmlAppend), /\.html/);
 	assert.equal(
-		simulationCase.fileUploads.some((upload) => upload.action === "complete"),
+	simulationCase.fileUploads.some((upload) => upload.action === "complete"),
 		false,
+	);
+
+	// One source fixture must drive all customer-facing outputs. This guards
+	// against proposal, resident, finance, and sales records drifting apart.
+	const fullOutputCase = makeNotion({
+		projectPropertyOverrides: {
+			実効税率: numberProp(30),
+			今期利益見込: numberProp(8000000),
+			借入額: numberProp(15000000),
+			金利: numberProp(1.2),
+			返済期間: numberProp(15),
+			流動比率: numberProp(180),
+			利益剰余金: numberProp(70000000),
+			自己資本比率: numberProp(42),
+			土地代: numberProp(3000000),
+			システム本体価格: numberProp(17000000),
+			権利代: numberProp(2000000),
+		},
+		existingByDocumentType: {
+			提案書: [completedProposalRequestPage()],
+		},
+		existingByDataSource: {
+			"7e4d0168-6e54-4071-bd55-f9730202225c": [
+				{
+					...financeSimulationPage("finance-1"),
+					properties: {
+						...financeSimulationPage("finance-1").properties,
+						関連案件: relationProp(["project-1"]),
+						関連提案シミュレーション: relationProp(["request-ready-1"]),
+						元提案シミュレーション: relationProp(["request-ready-1"]),
+						借入額: numberProp(15000000),
+						金利: numberProp(1.2),
+						返済期間: numberProp(15),
+						実効税率: numberProp(30),
+						今期利益見込: numberProp(8000000),
+						流動比率: numberProp(180),
+						利益剰余金: numberProp(70000000),
+						自己資本比率: numberProp(42),
+						土地代: numberProp(3000000),
+						システム本体価格: numberProp(17000000),
+						権利代: numberProp(2000000),
+					},
+				},
+			],
+			resident: [
+				{
+					id: "resident-1",
+					url: "https://www.notion.so/resident-1",
+					properties: {
+						...validProjectProperties(),
+						関連案件: relationProp(["project-1"]),
+						住民向け問い合わせ窓口: richTextProp("和上ホールディングス 06-0000-0000"),
+						認定出力kW: numberProp(250.8),
+					},
+				},
+			],
+		},
+	});
+	const fullProposal = await processProposalSimulationForTest(
+		{ pageId: "request-ready-1", dryRun: false },
+		fullOutputCase.notion as never,
+	);
+	assert.equal(fullProposal.status, "シミュレーション準備完了");
+	const fullSalesCreate = fullOutputCase.creates.find((create) =>
+		(create.parent as { data_source_id?: string })?.data_source_id ===
+		"4c3a7df6-3ca1-458a-b595-d98cdeac2802",
+	);
+	assert.ok(fullSalesCreate, "同一fixtureから営業提案レコードを生成すること");
+	const fullSalesProps = fullSalesCreate!.properties as Record<string, unknown>;
+	assert.deepEqual(
+		(fullSalesProps.関連案件 as { relation: Array<{ id: string }> }).relation,
+		[{ id: "project-1" }],
+	);
+	assert.match(JSON.stringify(fullSalesProps), /湖南市250kW/);
+	assert.ok(fullSalesProps["S/A/B/C判定"], "営業カンペ側に判定を保存すること");
+	const proposalHtmlAppend = fullOutputCase.appends.find((append) => append.block_id === "request-ready-1");
+	assert.ok(proposalHtmlAppend, "提案HTMLを提案依頼レコード本文へ保存すること");
+	assert.match(JSON.stringify(proposalHtmlAppend), /\.html/);
+
+	const fullResident = await processResidentDocumentForTest(
+		{ pageId: "resident-1", dryRun: false },
+		fullOutputCase.notion as never,
+	);
+	assert.equal(fullResident.action, "prepared");
+	assert.match(fullResident.message, /HTML出力/);
+	const residentLedger = fullOutputCase.creates.find((create) =>
+		(create.parent as { data_source_id?: string })?.data_source_id ===
+			"fde6d55f-3127-4716-862c-5fb43b2cc3b4" &&
+		JSON.stringify(create.properties).includes("住民説明会資料"),
+	);
+	assert.ok(residentLedger, "住民説明会HTMLを案件資料DBへ台帳登録すること");
+	const residentLedgerProps = residentLedger!.properties as Record<string, unknown>;
+	assert.match(JSON.stringify(residentLedgerProps), /住民説明会資料/);
+	assert.deepEqual(
+		(residentLedgerProps.関連案件 as { relation: Array<{ id: string }> }).relation,
+		[{ id: "project-1" }],
+	);
+	const residentAppend = fullOutputCase.appends.find((append) => append.block_id === "resident-1");
+	assert.ok(residentAppend, "住民説明会HTMLを同じレコード本文へ保存すること");
+	assert.match(JSON.stringify(residentAppend), /住民説明会資料_.*\.html/);
+
+	const fullFinanceRecord = fullOutputCase.notion;
+	assert.ok(fullFinanceRecord, "同一fixtureのFinanceレコードを使用すること");
+	const fullFinancePageId = "finance-1";
+	const fullFinance = await processInvestmentConditionPdfForTest(
+		{ financePageId: fullFinancePageId, dryRun: false },
+		fullOutputCase.notion as never,
+	);
+	assert.equal(fullFinance.action, "prepared");
+	const fullFinanceUpdate = fullOutputCase.updates.find((update) => update.page_id === fullFinancePageId);
+	assert.ok(fullFinanceUpdate, "Finance HTMLの同期先が入力Financeページと一致すること");
+	const fullFinanceProps = fullFinanceUpdate!.properties as Record<string, unknown>;
+	assert.deepEqual(
+		(fullFinanceProps.関連案件 as { relation: Array<{ id: string }> }).relation,
+		[{ id: "project-1" }],
+	);
+	assert.equal((fullFinanceProps.借入額 as { number: number }).number, 15000000);
+	assert.equal((fullFinanceProps.金利 as { number: number }).number, 1.2);
+	assert.equal((fullFinanceProps.ファイナンス状態 as { select: { name: string } }).select.name, "準備完了");
+	const financeAppend = fullOutputCase.appends.find((append) => append.block_id === fullFinancePageId);
+	assert.ok(financeAppend, "Finance HTMLを同じFinanceレコード本文へ保存すること");
+	assert.match(JSON.stringify(financeAppend), /投資条件_.*\.html/);
+	assert.ok(
+		fullOutputCase.fileUploads.some(
+			(upload) =>
+				upload.action === "send" &&
+				String((upload.file as { filename?: string } | undefined)?.filename ?? "").endsWith(".html"),
+		),
+		"住民説明会HTMLまたはFinance HTMLをtext/htmlで送信すること",
+	);
+
+	const outputProjectIds = [
+		fullSalesProps.関連案件,
+		residentLedgerProps.関連案件,
+		fullFinanceProps.関連案件,
+	].map((property) => (property as { relation: Array<{ id: string }> }).relation[0]?.id);
+	assert.deepEqual(outputProjectIds, ["project-1", "project-1", "project-1"]);
+	assert.equal(
+		fullOutputCase.fileUploads.filter((upload) => upload.action === "complete").length,
+		0,
+		"同一レコード本文fallbackでは期限付きfile uploadを完了保存しないこと",
 	);
 
 	const taxPendingSalesCase = makeNotion({

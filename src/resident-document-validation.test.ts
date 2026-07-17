@@ -154,6 +154,8 @@ async function main() {
 	});
 	const residentHtml = buildResidentDocumentHtmlForTest(ready);
 	assert.doesNotMatch(residentHtml, /住民説明会HTML/);
+	assert.doesNotMatch(residentHtml, /WAJO Sales OS/);
+	assert.doesNotMatch(residentHtml, /Resident Briefing/);
 	assert.match(residentHtml, /北摂発電所/);
 	assert.match(residentHtml, /発電所所在地画像/);
 	assert.match(residentHtml, /hazard\.png/);
