@@ -1260,18 +1260,15 @@ async function main() {
 			"7e4d0168-6e54-4071-bd55-f9730202225c": [dedupExistingBox],
 		},
 	});
-	await assert.rejects(
-		() => processProposalSimulationForTest({ pageId: "request-ready-1", dryRun: false }, dedupCase.notion as never),
-		/一致していません/,
-		"同一案件でも関連Proposalが別物のFinance箱は再利用せず停止すること",
-	);
+	await processProposalSimulationForTest({ pageId: "request-ready-1", dryRun: false }, dedupCase.notion as never);
 	assert.equal(
 		dedupCase.creates.some(
 			(create) =>
 				(create.parent as { data_source_id?: string })?.data_source_id ===
 				"7e4d0168-6e54-4071-bd55-f9730202225c",
 		),
-		false,
+		true,
+		"別Proposalの既存Finance箱を再利用せず、対象Proposalに紐づく新規Financeを作成すること",
 	);
 	assert.equal(dedupCase.updates.some((update) => update.page_id === "finance-existing-1"), false);
 
@@ -1303,18 +1300,15 @@ async function main() {
 			"7e4d0168-6e54-4071-bd55-f9730202225c": [noProjectExistingBox],
 		},
 	});
-	await assert.rejects(
-		() => processProposalSimulationForTest({ pageId: "request-ready-noproject", dryRun: false }, noProjectCase.notion as never),
-		/一致していません/,
-		"設備詳細経由で案件を解決しても、別ProposalのFinance箱は再利用せず停止すること",
-	);
+	await processProposalSimulationForTest({ pageId: "request-ready-noproject", dryRun: false }, noProjectCase.notion as never);
 	assert.equal(
 		noProjectCase.creates.some(
 			(create) =>
 				(create.parent as { data_source_id?: string })?.data_source_id ===
 				"7e4d0168-6e54-4071-bd55-f9730202225c",
 		),
-		false,
+		true,
+		"設備詳細経由の案件だけで別ProposalのFinance箱を再利用せず、対象ProposalのFinanceを作成すること",
 	);
 	assert.equal(noProjectCase.updates.some((update) => update.page_id === "finance-box-noproject"), false);
 

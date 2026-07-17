@@ -18462,23 +18462,6 @@ async function syncFinanceSimulationRecord(
 				throw new Error("提案シミュレーションに紐づくFinanceページが複数あります。先頭採用を停止しました。");
 			}
 			existingPage = byProposal.results[0] ?? null;
-			// 提案シミュレーション紐づけで見つからない場合は、同一案件に既にある入力箱へ
-			// フォールバックして書き込む。候補が複数なら、入力待ちでも先頭採用しない。
-			if (!existingPage && projectId) {
-				const byProject = await notion.dataSources.query({
-					data_source_id: FINANCE_SIMULATION_DATA_SOURCE_ID,
-					filter: {
-						property: "関連案件",
-						relation: { contains: projectId },
-					},
-					page_size: 10,
-				});
-				const candidates = byProject.results ?? [];
-				if (candidates.length > 1) {
-					throw new Error("同一案件に紐づくFinanceページが複数あります。対象Financeを明示してください。");
-				}
-				existingPage = candidates[0] ?? null;
-			}
 			if (existingPage) {
 				assertFinancePageMatchesProposal(existingPage, proposalPage);
 			}
