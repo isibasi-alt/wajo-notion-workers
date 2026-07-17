@@ -31616,8 +31616,19 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			investigationGaps,
 		});
 		const aZoneScore = scoreLandAZoneV0(land, treasure.blockers);
+		const acquiredEvidenceReasons = buildLandAZoneAcquiredEvidenceReasons({
+			land,
+			mapContext,
+			treasure,
+		});
 		if (investigationGaps.length > 0) {
-			const aZone = decideLandAZone({ land, score: aZoneScore, blockers: treasure.blockers, investigationGaps });
+			const aZone = decideLandAZone({
+				land,
+				score: aZoneScore,
+				blockers: treasure.blockers,
+				investigationGaps,
+				acquiredEvidenceReasons,
+			});
 			const scout = buildLandScoutReport({
 				land,
 				treasure,
@@ -31691,7 +31702,12 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 				farmlandPreAssessmentText: treasure.farmlandPreAssessmentText,
 			};
 		}
-		const aZone = decideLandAZone({ land, score: aZoneScore, blockers: treasure.blockers });
+		const aZone = decideLandAZone({
+			land,
+			score: aZoneScore,
+			blockers: treasure.blockers,
+			acquiredEvidenceReasons,
+		});
 		const bZoneHandoff = buildLandBZoneHandoff({
 			nextAction: treasure.nextAction,
 			targetLabel: landBZoneTargetLabel(land),
@@ -32292,12 +32308,93 @@ function formatLandAZoneScore(score: LandAZoneScore): string {
 	return `配点バージョン=${score.version} / 100点換算=${score.total100}/100 / 60点換算=${score.total60}/60 / 内訳: ${details}`;
 }
 
+function formatLandAZoneInputLayer(land: LandInfo): string {
+	return [
+		land.address ? `所在地=${land.address}` : "所在地=未入力",
+		land.areaTsubo && land.areaTsubo > 0 ? `面積=${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪` : "面積=未入力",
+		land.powerArea ? `電力会社エリア=${land.powerArea}` : "電力会社エリア=住所推定または未確認",
+		land.inputEvidenceState ? `入力根拠区分=${land.inputEvidenceState}` : "入力根拠区分=未確認",
+	].join(" / ");
+}
+
+function buildLandAZoneAcquiredEvidenceReasons(input: {
+	land: LandInfo;
+	mapContext: LandMapContext;
+	treasure: LandTreasureEvaluation;
+}): string[] {
+	const { mapContext, treasure } = input;
+	const acquiredAt = new Date().toISOString();
+	const parcelLots =
+		mapContext.parcelCadastre.status === "connected"
+			? mapContext.parcelCadastre.candidates
+				.slice(0, 3)
+				.map((candidate) =>
+					`${[candidate.municipality, candidate.oaza, candidate.koaza].filter(Boolean).join("")}${candidate.lotNumber ? ` ${candidate.lotNumber}` : ""}`.trim(),
+				)
+				.filter(Boolean)
+			: [];
+	const reasons = [
+		mapContext.latitude !== null && mapContext.longitude !== null
+			? `住所正規化・座標｜取得元=${mapContext.geocodeSource || "土地DB入力座標"}｜取得日時=${acquiredAt}｜証拠区分=AI注記｜結果=緯度${mapContext.latitude} / 経度${mapContext.longitude}${mapContext.geocodeCandidateRequiresReview ? " / 住所候補のため地番確認要" : ""}`
+			: "",
+		parcelLots.length > 0
+			? `法務省地図｜取得元=登記所備付地図GeoJSON｜取得日時=${acquiredAt}｜証拠区分=二次資料｜結果=地番・筆界候補 ${parcelLots.join(" / ")}（登記権利確認ではない）`
+			: "",
+		mapContext.reinfolib.status === "connected" && mapContext.reinfolib.zoning
+			? `都市計画｜取得元=不動産情報ライブラリAPI｜取得日時=${acquiredAt}｜証拠区分=原本｜結果=${[
+				mapContext.reinfolib.zoning.useArea ? `用途地域=${mapContext.reinfolib.zoning.useArea}` : "",
+				mapContext.reinfolib.zoning.buildingCoverageRatio ? `建蔽率=${mapContext.reinfolib.zoning.buildingCoverageRatio}` : "",
+				mapContext.reinfolib.zoning.floorAreaRatio ? `容積率=${mapContext.reinfolib.zoning.floorAreaRatio}` : "",
+			].filter(Boolean).join(" / ")}`
+			: "",
+		mapContext.reinfolib.status === "connected" &&
+		(mapContext.reinfolib.landPrice || mapContext.reinfolib.transactionSummary || mapContext.reinfolib.referencePriceRange)
+			? `地価・取引｜取得元=不動産情報ライブラリAPI｜取得日時=${acquiredAt}｜証拠区分=原本｜結果=${[
+				mapContext.reinfolib.landPrice?.priceYenPerSqm ? `地価=${mapContext.reinfolib.landPrice.priceYenPerSqm.toLocaleString("ja-JP")}円/㎡` : "",
+				mapContext.reinfolib.referencePriceRange ? `参考価格レンジ=${mapContext.reinfolib.referencePriceRange}` : "",
+				mapContext.reinfolib.transactionSummary ? `取引事例候補=${mapContext.reinfolib.transactionSummary.count}件` : "",
+			].filter(Boolean).join(" / ")}（価格確定ではない）`
+			: "",
+		mapContext.reinfolib.status === "connected"
+			? `ハザード｜取得元=不動産情報ライブラリAPI｜取得日時=${acquiredAt}｜証拠区分=原本｜結果=${
+				mapContext.reinfolib.hazards.length > 0
+					? mapContext.reinfolib.hazards.map((risk) => risk.label).join(" / ")
+					: "API重なり未検出（津波・高潮・液状化は別確認）"
+			}`
+			: "",
+		mapContext.terrain.status === "connected" && mapContext.terrain.elevationM !== null
+			? `標高・地形｜取得元=国土地理院 標高取得プログラム｜取得日時=${acquiredAt}｜証拠区分=原本｜結果=標高 ${mapContext.terrain.elevationM.toLocaleString("ja-JP", { maximumFractionDigits: 1 })}m（造成確定ではない）`
+			: "",
+		mapContext.surroundingPlaces.status === "connected" && mapContext.surroundingPlaces.places.length > 0
+			? `周辺施設｜取得元=Google Places API｜取得日時=${acquiredAt}｜証拠区分=AI注記｜結果=${mapContext.surroundingPlaces.places.slice(0, 5).map((place) => `${place.categoryLabel}${place.distanceM !== null ? `約${place.distanceM}m` : ""}`).join(" / ")}（住宅密集確定ではない）`
+			: "",
+		mapContext.roadAccess || mapContext.gsiRoad.status === "connected"
+			? `道路候補｜取得元=Google Roads API / 国土地理院道路中心線｜取得日時=${acquiredAt}｜証拠区分=AI注記｜結果=${mapContext.roadAccess || mapContext.gsiRoad.candidates.slice(0, 3).map((road) => `${road.category || "道路候補"}${road.widthRank ? ` ${road.widthRank}` : ""}${road.distanceM !== null ? ` 約${road.distanceM}m` : ""}`).join(" / ")}（道路台帳確認前）`
+			: "",
+		treasure.nearestSubstationName
+			? `変電所候補｜取得元=WAJO変電所候補エンジン｜取得日時=${acquiredAt}｜証拠区分=AI注記｜結果=${treasure.nearestSubstationName}${treasure.nearestSubstationDistanceKm !== null ? ` 約${Math.round(treasure.nearestSubstationDistanceKm * 100) / 100}km` : ""}（接続可否・空容量確定ではない）`
+			: "",
+		mapContext.gridCapacity.status === "connected" && mapContext.gridCapacity.records.length > 0
+			? `系統空容量｜取得元=送配電会社公開JSON｜取得日時=${acquiredAt}｜証拠区分=二次資料｜結果=公表値候補 ${mapContext.gridCapacity.records.slice(0, 2).map((record) => record.facilityName || "設備名未記載").join(" / ")}（接続検討回答ではない）`
+			: "",
+		mapContext.farmlandNavi.status === "connected"
+			? `農地データ｜取得元=WAGRI/eMAFF農地ナビ｜取得日時=${acquiredAt}｜証拠区分=二次資料｜結果=${[
+				mapContext.farmlandNavi.nearest?.landCategory ? `地目=${mapContext.farmlandNavi.nearest.landCategory}` : "",
+				mapContext.farmlandNavi.nearest?.agriculturalClassification ? `農振=${mapContext.farmlandNavi.nearest.agriculturalClassification}` : "",
+				mapContext.farmlandNavi.nearest?.jurisdictionAgricultureCommitteeName ? `農業委員会=${mapContext.farmlandNavi.nearest.jurisdictionAgricultureCommitteeName}` : "",
+			].filter(Boolean).join(" / ") || "取得あり"}（農転許可確定ではない）`
+			: "",
+	];
+	return uniqueStrings(reasons.filter(Boolean)).slice(0, 10);
+}
+
 function decideLandAZone(input: {
 	land: LandInfo;
 	score: LandAZoneScore;
 	missing?: string[];
 	blockers?: string[];
 	investigationGaps?: string[];
+	acquiredEvidenceReasons?: string[];
 }): { decision: "行く" | "行かない"; reason: string } {
 	const { land } = input;
 	const missing = input.missing ?? [];
@@ -32329,18 +32426,37 @@ function decideLandAZone(input: {
 			reason: "行かない理由: 内部配点v0で初期材料が薄く、人間へ回収依頼を出す前に所在地・面積・電力エリアなどAI側で取れる材料を補う必要がある。",
 		};
 	}
+	if (!input.acquiredEvidenceReasons || input.acquiredEvidenceReasons.length === 0) {
+		return {
+			decision: "行かない",
+			reason: [
+				"NO-GO理由:",
+				`【入力値】${formatLandAZoneInputLayer(land)}`,
+				"【Aが取得した事実】実取得0件。入力値の言い換えだけではGOにしない。",
+				"【AIの統合判断】Aゾーン取得処理または外部接続を先に直すべき状態。",
+				"【Bへ渡す不足】住所正規化、地番・筆界候補、都市計画、地価/取引、ハザード、道路候補、変電所候補、農地データ、系統空容量、WAJO類似事例。",
+			].join("\n"),
+		};
+	}
 
-	const goReasons = [
-		land.address ? "所在地あり" : "",
-		area > 0 ? `面積${Math.round(area).toLocaleString("ja-JP")}坪あり` : "",
-		land.powerArea ? `電力会社エリア=${land.powerArea}` : "",
-		input.investigationGaps && input.investigationGaps.length > 0
-			? `Bゾーンで${input.investigationGaps.join(" / ")}を人間回収する前提`
-			: "AI側の一次評価材料は揃っている",
-	].filter(Boolean);
+	const bZoneGaps = uniqueStrings([
+		...(input.investigationGaps ?? []),
+		"登記・権利原本",
+		"道路台帳・大型車搬入",
+		"農地・農転正式確認",
+		"系統空容量・接続検討",
+		"WAJO類似成功/失敗事例",
+	]);
 	return {
 		decision: "行く",
-		reason: `GO理由: ${goReasons.join(" / ")}。農転可・案件化確定の断定ではなく、人間回収へ渡す判断。`,
+		reason: [
+			"GO理由:",
+			`【入力値】${formatLandAZoneInputLayer(land)}`,
+			"【Aが取得した事実】",
+			...input.acquiredEvidenceReasons.map((reason, index) => `${index + 1}. ${reason}`),
+			`【AIの統合判断】入力面積だけではなく、上記A取得材料で対象地の場所・地番候補・周辺/地形/公的参考情報を確認できたため、和上としてBゾーンの人間回収コストを掛ける価値あり。ただし農転可、登記権利、接道成立、系統接続、採算、ISSUEDの確定ではない。`,
+			`【Bへ渡す不足】${bZoneGaps.join(" / ")}`,
+		].join("\n"),
 	};
 }
 

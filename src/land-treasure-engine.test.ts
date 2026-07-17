@@ -1405,6 +1405,15 @@ async function main() {
 	assert.match(kansaiMemo, /kansai-td\.co\.jp\/application\/preliminary-consultation/);
 	assert.match(kansaiMemo, /東牟婁郡串本町二色 626-1|東牟婁郡串本町二色626-1/);
 	assert.match(kansaiMemo, /座標系=任意座標系/);
+	assert.match(kansaiMemo, /GO理由:|NO-GO理由:/);
+	assert.match(kansaiMemo, /【入力値】/);
+	assert.match(kansaiMemo, /【Aが取得した事実】/);
+	assert.match(kansaiMemo, /法務省地図/);
+	assert.match(kansaiMemo, /取得元=/);
+	assert.match(kansaiMemo, /取得日時=/);
+	assert.match(kansaiMemo, /証拠区分=/);
+	assert.match(kansaiMemo, /【AIの統合判断】/);
+	assert.match(kansaiMemo, /【Bへ渡す不足】/);
 
 	const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY;
 	const googleApiKey = process.env.GOOGLE_API_KEY;

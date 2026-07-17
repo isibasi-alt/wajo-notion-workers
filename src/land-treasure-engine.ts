@@ -445,7 +445,7 @@ function buildLandMissingDataRequest(
 	const blockerStatus = context.blockers.length > 0 ? context.blockers.join(" / ") : "重大な未入力阻害は未検出";
 	return [
 		"【今AIが欲しいデータ】",
-		"目的: 速報の「行く/行かない」を70点判定へ上げ、外れた理由をAI学習ログへ残す。",
+		"目的: 速報のGO/NO-GOを70点判定へ上げ、外れた理由をAI学習ログへ残す。",
 		`現状: 面積=${areaStatus} / 電力エリア=${context.powerArea || "未確認"} / 変電所=${distanceStatus} / 接道=${roadStatus} / Dゲート=${context.scaleDistanceGate} / 入力根拠=${context.scaleDistanceEvidenceState} / 農転正式確認=${context.farmlandPreAssessment.formalStatus} / 詰まり=${blockerStatus}`,
 		"誰が取るか:",
 		"- 営業: 地番、登記地目、登記面積または資料面積、接道状況、現地感メモ、所有者意向。",
