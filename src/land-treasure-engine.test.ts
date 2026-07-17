@@ -1347,11 +1347,15 @@ async function main() {
 
 	const mojUrlsForPublicDataGap = process.env.MOJ_CHIZU_GEOJSON_URLS;
 	const mojUrlForPublicDataGap = process.env.MOJ_CHIZU_GEOJSON_URL;
+	const mojInlineBase64ForPublicDataGap = process.env.MOJ_CHIZU_GEOJSON_INLINE_BASE64;
+	const mojInlineJsonForPublicDataGap = process.env.MOJ_CHIZU_GEOJSON_INLINE_JSON;
 	const gridUrlsForPublicDataGap = process.env.GRID_CAPACITY_PUBLIC_JSON_URLS;
 	const gridUrlForPublicDataGap = process.env.GRID_CAPACITY_PUBLIC_JSON_URL;
 	const gridJsonForPublicDataGap = process.env.GRID_CAPACITY_PUBLIC_JSON;
 	delete process.env.MOJ_CHIZU_GEOJSON_URLS;
 	delete process.env.MOJ_CHIZU_GEOJSON_URL;
+	delete process.env.MOJ_CHIZU_GEOJSON_INLINE_BASE64;
+	delete process.env.MOJ_CHIZU_GEOJSON_INLINE_JSON;
 	delete process.env.GRID_CAPACITY_PUBLIC_JSON_URLS;
 	delete process.env.GRID_CAPACITY_PUBLIC_JSON_URL;
 	delete process.env.GRID_CAPACITY_PUBLIC_JSON;
@@ -1376,6 +1380,10 @@ async function main() {
 	else process.env.MOJ_CHIZU_GEOJSON_URLS = mojUrlsForPublicDataGap;
 	if (mojUrlForPublicDataGap === undefined) delete process.env.MOJ_CHIZU_GEOJSON_URL;
 	else process.env.MOJ_CHIZU_GEOJSON_URL = mojUrlForPublicDataGap;
+	if (mojInlineBase64ForPublicDataGap === undefined) delete process.env.MOJ_CHIZU_GEOJSON_INLINE_BASE64;
+	else process.env.MOJ_CHIZU_GEOJSON_INLINE_BASE64 = mojInlineBase64ForPublicDataGap;
+	if (mojInlineJsonForPublicDataGap === undefined) delete process.env.MOJ_CHIZU_GEOJSON_INLINE_JSON;
+	else process.env.MOJ_CHIZU_GEOJSON_INLINE_JSON = mojInlineJsonForPublicDataGap;
 	if (gridUrlsForPublicDataGap === undefined) delete process.env.GRID_CAPACITY_PUBLIC_JSON_URLS;
 	else process.env.GRID_CAPACITY_PUBLIC_JSON_URLS = gridUrlsForPublicDataGap;
 	if (gridUrlForPublicDataGap === undefined) delete process.env.GRID_CAPACITY_PUBLIC_JSON_URL;
