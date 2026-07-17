@@ -4470,6 +4470,7 @@ worker.tool("processLandEvaluationById", {
 		scaleDistanceEvidenceState: j.string(),
 		scaleDistanceSource: j.string(),
 		aZoneDecision: j.string(),
+		salesDecisionLabel: j.string(),
 		aZoneReason: j.string(),
 		aZoneScore: j.object({
 			version: j.string(),
