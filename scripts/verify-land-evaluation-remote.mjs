@@ -31,6 +31,7 @@ function parseJsonOutput(output) {
 
 const results = [];
 const failures = [];
+const requiredHandoffLabels = ["担当=", "回収物=", "取得先=", "Notion戻し先=", "証拠区分=", "完了条件="];
 
 for (const testCase of cases) {
 	const payload = JSON.stringify({ pageId: testCase.pageId, dryRun: true });
@@ -92,9 +93,14 @@ for (const testCase of cases) {
 	if (!result.humanCollectionItems) {
 		failures.push(`${testCase.name}: expected humanCollectionItems in dry-run result`);
 	}
-	if (!result.bZoneHandoff) {
-		failures.push(`${testCase.name}: expected bZoneHandoff in dry-run result`);
-	}
+		if (!result.bZoneHandoff) {
+			failures.push(`${testCase.name}: expected bZoneHandoff in dry-run result`);
+		}
+		for (const label of requiredHandoffLabels) {
+			if (!String(result.bZoneHandoff || "").includes(label)) {
+				failures.push(`${testCase.name}: expected bZoneHandoff to include ${label}`);
+			}
+		}
 	if (!result.cZoneReadiness) {
 		failures.push(`${testCase.name}: expected cZoneReadiness in dry-run result`);
 	}

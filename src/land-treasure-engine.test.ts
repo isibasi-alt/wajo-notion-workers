@@ -331,6 +331,36 @@ function addressOnlyPage() {
 	};
 }
 
+function weakEvidenceCZoneOnlyPage() {
+	const page = highValueLandPage();
+	return {
+		...page,
+		id: "land-weak-evidence-c-zone-only-1",
+		properties: {
+			...page.properties,
+			土地名称: titleProp("【TDD】Cゾーン不可だけでも完了にしない"),
+			農地転用可否: selectProp("相談済み"),
+			接道状況: richTextProp("幅員候補5.5m以上13m未満。正式道路台帳は未取得。"),
+			登記確認状況: selectProp("取得済み"),
+			入力根拠区分: richTextProp("二次資料"),
+		},
+	};
+}
+
+function kansaiAddressOnlyPage() {
+	const page = addressOnlyPage();
+	return {
+		...page,
+		id: "land-kansai-address-only-1",
+		properties: {
+			...page.properties,
+			土地名称: titleProp("【TDD】関西エリア公式リンク表示"),
+			所在地: richTextProp("和歌山県東牟婁郡串本町二色"),
+			電力会社エリア: selectProp("関西電力"),
+		},
+	};
+}
+
 async function main() {
 	const scaleDistanceGateInput = {
 		name: "【TDD】D規模距離ゲート",
@@ -633,6 +663,24 @@ async function main() {
 	assert.match(blockedMemo, /農転事前判定/);
 	assert.match(blockedMemo, /見込みランク: 低/);
 	assert.match(blockedMemo, /停止・責任者判断/);
+
+	activePage = weakEvidenceCZoneOnlyPage();
+	const weakEvidenceResult = await processLandEvaluationForTest(
+		{ pageId: "land-weak-evidence-c-zone-only-1", dryRun: false },
+		notion as never,
+	);
+	assert.equal(weakEvidenceResult.action, "needs-review");
+	assert.notEqual(weakEvidenceResult.overallGrade, "未評価");
+	assert.equal(typeof weakEvidenceResult.score, "number");
+	assert.match(weakEvidenceResult.aZoneDecision, /行く|行かない/);
+	assert.equal(weakEvidenceResult.requiresInvestigation, true);
+	assert.equal(weakEvidenceResult.cZoneReady, false);
+	assert.match(weakEvidenceResult.cZoneReadiness, /入力根拠区分=二次資料/);
+	assert.match(weakEvidenceResult.message, /Aゾーン速報判断=/);
+	const weakEvidenceMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
+	assert.match(weakEvidenceMemo, /Cゾーン再評価: 不可/);
+	assert.match(weakEvidenceMemo, /未確認理由/);
+	assert.deepEqual((updates.at(-1)?.properties as Record<string, unknown>).処理ステータス, { select: { name: "要確認" } });
 
 	process.env.GOOGLE_MAPS_API_KEY = "test-google-key";
 	process.env.WAGRI_ACCESS_TOKEN = "test-wagri-token";
@@ -1186,6 +1234,19 @@ async function main() {
 	else process.env.GRID_CAPACITY_PUBLIC_JSON_URL = gridUrlForPublicDataGap;
 	if (gridJsonForPublicDataGap === undefined) delete process.env.GRID_CAPACITY_PUBLIC_JSON;
 	else process.env.GRID_CAPACITY_PUBLIC_JSON = gridJsonForPublicDataGap;
+
+	activePage = kansaiAddressOnlyPage();
+	const kansaiResult = await processLandEvaluationForTest(
+		{ pageId: "land-kansai-address-only-1", dryRun: false },
+		notion as never,
+	);
+	assert.equal(kansaiResult.action, "needs-review");
+	assert.match(kansaiResult.aZoneDecision, /行く|行かない/);
+	const kansaiMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
+	assert.match(kansaiMemo, /関西電力送配電 系統連系制約・空容量一覧/);
+	assert.match(kansaiMemo, /関西電力送配電 事前相談・高圧系統連系申込/);
+	assert.match(kansaiMemo, /kansai-td\.co\.jp\/consignment\/disclosure\/distribution-equipment/);
+	assert.match(kansaiMemo, /kansai-td\.co\.jp\/application\/preliminary-consultation/);
 
 	const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY;
 	const googleApiKey = process.env.GOOGLE_API_KEY;

@@ -26448,11 +26448,18 @@ async function processLandEvaluation(
 	const evaluation = await buildLandEvaluation(land);
 	const publicInvestigationGaps = landReviewHoldGaps(land, evaluation);
 	const publicRequiredInputGaps = landRequiredInputGaps(land);
-	const publicCZoneInvestigationGaps = publicInvestigationGaps.filter(
-		(gap) => !publicRequiredInputGaps.includes(gap),
-	);
-	const publicHold = evaluation.requiresInvestigation === true || publicInvestigationGaps.length > 0;
-	const publicHoldReason = landReviewHoldReason(publicInvestigationGaps);
+		const publicCZoneInvestigationGaps = publicInvestigationGaps.filter(
+			(gap) => !publicRequiredInputGaps.includes(gap),
+		);
+		const cZoneHold = evaluation.cZoneReady === false;
+		const publicHold = evaluation.requiresInvestigation === true || publicInvestigationGaps.length > 0 || cZoneHold;
+		const publicHoldReason = landReviewHoldReason(
+			publicInvestigationGaps.length > 0
+				? publicInvestigationGaps
+				: cZoneHold
+					? ["Cゾーン再評価不可"]
+					: [],
+		);
 	const result = (
 		action: LandResult["action"],
 		message: string,
@@ -26471,16 +26478,23 @@ async function processLandEvaluation(
 		sourceSummary: evaluation.sourceSummary,
 		humanCollectionItems: evaluation.humanCollectionItems,
 		bZoneHandoff: evaluation.bZoneHandoff,
-		cZoneReadiness: publicHold
-			? buildLandCZoneReadiness({
-				land,
-				missing: publicRequiredInputGaps,
-				investigationGaps: publicCZoneInvestigationGaps,
-			}).text
+			cZoneReadiness: publicHold
+				? cZoneHold
+					? evaluation.cZoneReadiness
+					: buildLandCZoneReadiness({
+					land,
+					missing: publicRequiredInputGaps,
+					investigationGaps: publicCZoneInvestigationGaps,
+				}).text
 			: evaluation.cZoneReadiness,
 		cZoneReady: publicHold ? false : evaluation.cZoneReady,
 		requiresInvestigation: publicHold,
-		investigationGaps: publicInvestigationGaps,
+			investigationGaps:
+				publicInvestigationGaps.length > 0
+					? publicInvestigationGaps
+					: cZoneHold
+						? ["Cゾーン再評価不可"]
+						: [],
 		message: publicHold
 			? `${action}: Aゾーン速報判断=${evaluation.aZoneDecision} / ${evaluation.overallGrade} / ${evaluation.score}点。${publicHoldReason}`
 			: message,
@@ -26495,7 +26509,7 @@ async function processLandEvaluation(
 		return result("needs-review", "所在地または面積が不足しているため、詳細評価前の要確認にしました。");
 	}
 
-	if (evaluation.requiresInvestigation) {
+		if (publicHold) {
 		await markLandNeedsReview(notion, land, evaluation);
 		return result(
 			"needs-review",
