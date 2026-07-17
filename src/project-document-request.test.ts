@@ -564,11 +564,19 @@ function makeNotion(options: {
 		},
 		fileUploads: {
 			create: async (args: Record<string, unknown>) => {
-				fileUploads.push({ action: "create", ...args });
-				return { id: `file-upload-${fileUploads.length}` };
+				const id = `file-upload-${fileUploads.length + 1}`;
+				fileUploads.push({ action: "create", id, ...args });
+				return { id };
 			},
 			send: async (args: Record<string, unknown>) => {
-				fileUploads.push({ action: "send", ...args });
+				const file = args.file as { filename?: string; data?: unknown } | undefined;
+				const data = file?.data;
+				fileUploads.push({
+					action: "send",
+					...args,
+					blobType: data instanceof Blob ? data.type : null,
+					blobText: data instanceof Blob ? await data.text() : null,
+				});
 				return {};
 			},
 			complete: async (args: Record<string, unknown>) => {
@@ -1143,6 +1151,47 @@ async function main() {
 		),
 		"住民説明会HTMLまたはFinance HTMLをtext/htmlで送信すること",
 	);
+
+	const htmlSends = fullOutputCase.fileUploads.filter((upload) => upload.action === "send" && String(upload.blobType).startsWith("text/html"));
+	assert.equal(htmlSends.length, 3, "提案・住民・Financeの3HTMLを個別に送信すること");
+	const proposalHtmlSend = htmlSends.find((upload) => String((upload.file as { filename?: string })?.filename).includes("提案シミュレーション"));
+	const residentHtmlSend = htmlSends.find((upload) => String((upload.file as { filename?: string })?.filename).includes("住民説明会資料"));
+	const financeHtmlSend = htmlSends.find((upload) => String((upload.file as { filename?: string })?.filename).includes("投資条件"));
+	assert.ok(proposalHtmlSend, "提案HTMLのBlobを特定できること");
+	assert.ok(residentHtmlSend, "住民説明会HTMLのBlobを特定できること");
+	assert.ok(financeHtmlSend, "Finance HTMLのBlobを特定できること");
+	for (const [label, upload] of [["提案", proposalHtmlSend], ["住民", residentHtmlSend], ["Finance", financeHtmlSend]] as const) {
+		assert.equal(upload!.blobType, "text/html; charset=utf-8", `${label}HTMLのBlob MIMEがtext/htmlであること`);
+		assert.equal(typeof upload!.blobText, "string", `${label}HTMLのBlob本文が取得できること`);
+		assert.ok(String(upload!.blobText).length > 1000, `${label}HTML本文が空でないこと`);
+	}
+	assert.match(String(proposalHtmlSend!.blobText), /湖南市250kW/);
+	assert.match(String(residentHtmlSend!.blobText), /2026S099|住民説明会資料/);
+	assert.match(String(financeHtmlSend!.blobText), /借入・税効果・キャッシュフロー|借入条件/);
+	assert.match(String(financeHtmlSend!.blobText), /年間返済|DSCR/);
+	assert.match(String(financeHtmlSend!.blobText), /実効税率 30%/);
+	const fullSalesRank = (fullSalesProps["S/A/B/C判定"] as { select: { name: string } }).select.name;
+	assert.match(fullSalesRank, /^[SABC]$/);
+	assert.match(String(financeHtmlSend!.blobText), new RegExp(`最終提案判定[\\s\\S]{0,120}${fullSalesRank}`));
+	assert.doesNotMatch(String(residentHtmlSend!.blobText), /WAJO Sales OS|Resident Briefing|住民説明会HTML|Record ID:/);
+
+	const uploadCreateById = new Map(
+		fullOutputCase.fileUploads
+			.filter((upload) => upload.action === "create")
+			.map((upload) => [String(upload.id ?? ""), upload]),
+	);
+	for (const upload of htmlSends) {
+		const created = uploadCreateById.get(String(upload.file_upload_id));
+		assert.ok(created, "HTML sendに対応するcreateがあること");
+		assert.equal(created!.content_type, "text/html; charset=utf-8");
+	}
+	const allowedAppendIds = new Set(["request-ready-1", "resident-1", "finance-1", "project-1"]);
+	assert.ok(fullOutputCase.appends.every((append) => allowedAppendIds.has(String(append.block_id))), "本文保存先が許可ページだけであること");
+	assert.ok(fullOutputCase.updates.every((update) => ["request-ready-1", "finance-1", "project-1", "resident-1", "equipment-1"].includes(String(update.page_id))), "更新先が許可ページだけであること");
+	assert.ok(fullOutputCase.creates.every((create) => [
+		"4c3a7df6-3ca1-458a-b595-d98cdeac2802",
+		"fde6d55f-3127-4716-862c-5fb43b2cc3b4",
+	].includes(String((create.parent as { data_source_id?: string })?.data_source_id))), "作成先DBが提案DBまたは案件資料DBだけであること");
 
 	const outputProjectIds = [
 		fullSalesProps.関連案件,
