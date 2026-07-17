@@ -9841,6 +9841,7 @@ function buildPipelineReason(parts: string[]): string {
 
 export {
 	markAiLearningLogsOutcome as markAiLearningLogsOutcomeForTest,
+	decideLandAZone as decideLandAZoneForTest,
 	processLandEvaluation as processLandEvaluationForTest,
 	processLandCaseCreation as processLandCaseCreationForTest,
 	assessInquiryPipeline as assessInquiryPipelineForTest,
@@ -32335,13 +32336,13 @@ function buildLandAZoneAcquiredEvidenceReasons(input: {
 			: [];
 	const reasons = [
 		mapContext.latitude !== null && mapContext.longitude !== null
-			? `住所正規化・座標｜取得元=${mapContext.geocodeSource || "土地DB入力座標"}｜取得日時=${acquiredAt}｜証拠区分=AI注記｜結果=緯度${mapContext.latitude} / 経度${mapContext.longitude}${mapContext.geocodeCandidateRequiresReview ? " / 住所候補のため地番確認要" : ""}`
+			? `住所正規化・座標｜取得元=${mapContext.geocodeSource || "土地DB入力座標"}｜Worker取得日時=${acquiredAt}｜証拠区分=AI注記｜結果=緯度${mapContext.latitude} / 経度${mapContext.longitude}${mapContext.geocodeCandidateRequiresReview ? " / 住所候補のため地番確認要" : ""}`
 			: "",
 		parcelLots.length > 0
-			? `法務省地図｜取得元=登記所備付地図GeoJSON｜取得日時=${acquiredAt}｜証拠区分=二次資料｜結果=地番・筆界候補 ${parcelLots.join(" / ")}（登記権利確認ではない）`
+			? `法務省地図｜取得元=登記所備付地図GeoJSON｜Worker取得日時=${acquiredAt}｜証拠区分=二次資料｜結果=地番・筆界候補 ${parcelLots.join(" / ")}（登記権利確認ではない）`
 			: "",
 		mapContext.reinfolib.status === "connected" && mapContext.reinfolib.zoning
-			? `都市計画｜取得元=不動産情報ライブラリAPI｜取得日時=${acquiredAt}｜証拠区分=原本｜結果=${[
+			? `都市計画｜取得元=不動産情報ライブラリAPI｜Worker取得日時=${acquiredAt}｜証拠区分=原本｜結果=${[
 				mapContext.reinfolib.zoning.useArea ? `用途地域=${mapContext.reinfolib.zoning.useArea}` : "",
 				mapContext.reinfolib.zoning.buildingCoverageRatio ? `建蔽率=${mapContext.reinfolib.zoning.buildingCoverageRatio}` : "",
 				mapContext.reinfolib.zoning.floorAreaRatio ? `容積率=${mapContext.reinfolib.zoning.floorAreaRatio}` : "",
@@ -32349,36 +32350,36 @@ function buildLandAZoneAcquiredEvidenceReasons(input: {
 			: "",
 		mapContext.reinfolib.status === "connected" &&
 		(mapContext.reinfolib.landPrice || mapContext.reinfolib.transactionSummary || mapContext.reinfolib.referencePriceRange)
-			? `地価・取引｜取得元=不動産情報ライブラリAPI｜取得日時=${acquiredAt}｜証拠区分=原本｜結果=${[
+			? `地価・取引｜取得元=不動産情報ライブラリAPI｜Worker取得日時=${acquiredAt}｜証拠区分=原本｜結果=${[
 				mapContext.reinfolib.landPrice?.priceYenPerSqm ? `地価=${mapContext.reinfolib.landPrice.priceYenPerSqm.toLocaleString("ja-JP")}円/㎡` : "",
 				mapContext.reinfolib.referencePriceRange ? `参考価格レンジ=${mapContext.reinfolib.referencePriceRange}` : "",
 				mapContext.reinfolib.transactionSummary ? `取引事例候補=${mapContext.reinfolib.transactionSummary.count}件` : "",
 			].filter(Boolean).join(" / ")}（価格確定ではない）`
 			: "",
 		mapContext.reinfolib.status === "connected"
-			? `ハザード｜取得元=不動産情報ライブラリAPI｜取得日時=${acquiredAt}｜証拠区分=原本｜結果=${
+			? `ハザード｜取得元=不動産情報ライブラリAPI｜Worker取得日時=${acquiredAt}｜証拠区分=原本｜結果=${
 				mapContext.reinfolib.hazards.length > 0
 					? mapContext.reinfolib.hazards.map((risk) => risk.label).join(" / ")
 					: "API重なり未検出（津波・高潮・液状化は別確認）"
 			}`
 			: "",
 		mapContext.terrain.status === "connected" && mapContext.terrain.elevationM !== null
-			? `標高・地形｜取得元=国土地理院 標高取得プログラム｜取得日時=${acquiredAt}｜証拠区分=原本｜結果=標高 ${mapContext.terrain.elevationM.toLocaleString("ja-JP", { maximumFractionDigits: 1 })}m（造成確定ではない）`
+			? `標高・地形｜取得元=国土地理院 標高取得プログラム｜Worker取得日時=${acquiredAt}｜証拠区分=原本｜結果=標高 ${mapContext.terrain.elevationM.toLocaleString("ja-JP", { maximumFractionDigits: 1 })}m（造成確定ではない）`
 			: "",
 		mapContext.surroundingPlaces.status === "connected" && mapContext.surroundingPlaces.places.length > 0
-			? `周辺施設｜取得元=Google Places API｜取得日時=${acquiredAt}｜証拠区分=AI注記｜結果=${mapContext.surroundingPlaces.places.slice(0, 5).map((place) => `${place.categoryLabel}${place.distanceM !== null ? `約${place.distanceM}m` : ""}`).join(" / ")}（住宅密集確定ではない）`
+			? `周辺施設｜取得元=Google Places API｜Worker取得日時=${acquiredAt}｜証拠区分=AI注記｜結果=${mapContext.surroundingPlaces.places.slice(0, 5).map((place) => `${place.categoryLabel}${place.distanceM !== null ? `約${place.distanceM}m` : ""}`).join(" / ")}（住宅密集確定ではない）`
 			: "",
 		mapContext.roadAccess || mapContext.gsiRoad.status === "connected"
-			? `道路候補｜取得元=Google Roads API / 国土地理院道路中心線｜取得日時=${acquiredAt}｜証拠区分=AI注記｜結果=${mapContext.roadAccess || mapContext.gsiRoad.candidates.slice(0, 3).map((road) => `${road.category || "道路候補"}${road.widthRank ? ` ${road.widthRank}` : ""}${road.distanceM !== null ? ` 約${road.distanceM}m` : ""}`).join(" / ")}（道路台帳確認前）`
+			? `道路候補｜取得元=Google Roads API / 国土地理院道路中心線｜Worker取得日時=${acquiredAt}｜証拠区分=AI注記｜結果=${mapContext.roadAccess || mapContext.gsiRoad.candidates.slice(0, 3).map((road) => `${road.category || "道路候補"}${road.widthRank ? ` ${road.widthRank}` : ""}${road.distanceM !== null ? ` 約${road.distanceM}m` : ""}`).join(" / ")}（道路台帳確認前）`
 			: "",
 		treasure.nearestSubstationName
-			? `変電所候補｜取得元=WAJO変電所候補エンジン｜取得日時=${acquiredAt}｜証拠区分=AI注記｜結果=${treasure.nearestSubstationName}${treasure.nearestSubstationDistanceKm !== null ? ` 約${Math.round(treasure.nearestSubstationDistanceKm * 100) / 100}km` : ""}（接続可否・空容量確定ではない）`
+			? `変電所候補｜取得元=WAJO変電所候補エンジン｜Worker取得日時=${acquiredAt}｜証拠区分=AI注記｜結果=${treasure.nearestSubstationName}${treasure.nearestSubstationDistanceKm !== null ? ` 約${Math.round(treasure.nearestSubstationDistanceKm * 100) / 100}km` : ""}（接続可否・空容量確定ではない）`
 			: "",
 		mapContext.gridCapacity.status === "connected" && mapContext.gridCapacity.records.length > 0
-			? `系統空容量｜取得元=送配電会社公開JSON｜取得日時=${acquiredAt}｜証拠区分=二次資料｜結果=公表値候補 ${mapContext.gridCapacity.records.slice(0, 2).map((record) => record.facilityName || "設備名未記載").join(" / ")}（接続検討回答ではない）`
+			? `系統空容量｜取得元=送配電会社公開JSON｜Worker取得日時=${acquiredAt}｜証拠区分=二次資料｜結果=公表値候補 ${mapContext.gridCapacity.records.slice(0, 2).map((record) => record.facilityName || "設備名未記載").join(" / ")}（接続検討回答ではない）`
 			: "",
 		mapContext.farmlandNavi.status === "connected"
-			? `農地データ｜取得元=WAGRI/eMAFF農地ナビ｜取得日時=${acquiredAt}｜証拠区分=二次資料｜結果=${[
+			? `農地データ｜取得元=WAGRI/eMAFF農地ナビ｜Worker取得日時=${acquiredAt}｜証拠区分=二次資料｜結果=${[
 				mapContext.farmlandNavi.nearest?.landCategory ? `地目=${mapContext.farmlandNavi.nearest.landCategory}` : "",
 				mapContext.farmlandNavi.nearest?.agriculturalClassification ? `農振=${mapContext.farmlandNavi.nearest.agriculturalClassification}` : "",
 				mapContext.farmlandNavi.nearest?.jurisdictionAgricultureCommitteeName ? `農業委員会=${mapContext.farmlandNavi.nearest.jurisdictionAgricultureCommitteeName}` : "",

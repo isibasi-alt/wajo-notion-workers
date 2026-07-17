@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { processLandEvaluationForTest } from "./index";
+import { decideLandAZoneForTest, processLandEvaluationForTest } from "./index";
 import { evaluateLandTreasure } from "./land-treasure-engine";
 
 function titleProp(value: string) {
@@ -420,6 +420,49 @@ async function main() {
 	assert.equal(scaleDistanceFar.scaleDistanceGate, "距離超過");
 	assert.equal(scaleDistanceFar.scaleDistanceSource, "土地DB手入力距離");
 	assert.match(scaleDistanceFar.nextAction, /直線距離2km/);
+	const noAcquisitionDecision = decideLandAZoneForTest({
+		land: {
+			page: highValueLandPage() as never,
+			name: "【TDD】A実取得0件はGOにしない",
+			address: "和歌山県東牟婁郡串本町二色626",
+			areaTsubo: 13000,
+			powerArea: "関西電力",
+			landUse: "",
+			road: "",
+			ownerInfo: "",
+			buyerCandidateIds: [],
+			targetUse: "",
+			caseReason: "",
+			farmland: "",
+			farmlandType: "",
+			registry: "",
+			inputEvidenceState: "未確認",
+			nearbyResidentialDistanceM: null,
+			nearbyResidentialCheck: "",
+			transmissionLine: "",
+			substationDistance: "",
+			substationDistanceKm: null,
+			latitude: null,
+			longitude: null,
+			caseStatus: "",
+			relatedProjectIds: [],
+			targetUniqueness: "",
+			salesTargetKind: "",
+			processingStatus: "",
+			canonicalPageStatus: "",
+		} as never,
+		score: {
+			version: "v0",
+			total100: 20,
+			total60: 12,
+			categories: [],
+		},
+		blockers: [],
+		acquiredEvidenceReasons: [],
+	});
+	assert.equal(noAcquisitionDecision.decision, "行かない");
+	assert.match(noAcquisitionDecision.reason, /実取得0件/);
+	assert.doesNotMatch(noAcquisitionDecision.reason, /^GO理由:/);
 
 	const updates: Array<Record<string, unknown>> = [];
 	const createdPages: Array<Record<string, unknown>> = [];
@@ -1410,7 +1453,7 @@ async function main() {
 	assert.match(kansaiMemo, /【Aが取得した事実】/);
 	assert.match(kansaiMemo, /法務省地図/);
 	assert.match(kansaiMemo, /取得元=/);
-	assert.match(kansaiMemo, /取得日時=/);
+	assert.match(kansaiMemo, /Worker取得日時=/);
 	assert.match(kansaiMemo, /証拠区分=/);
 	assert.match(kansaiMemo, /【AIの統合判断】/);
 	assert.match(kansaiMemo, /【Bへ渡す不足】/);
