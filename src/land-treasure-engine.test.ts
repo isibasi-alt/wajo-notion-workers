@@ -384,7 +384,7 @@ async function main() {
 	assert.equal(scaleDistancePass.scaleDistanceEvidenceState, "根拠未確認");
 	assert.equal(scaleDistancePass.scaleDistanceSource, "変電所DB座標再計算");
 	assert.equal(scaleDistancePass.quickDecision, "行く");
-	assert.match(scaleDistancePass.nextAction, /この土地は速報では「行く」/);
+	assert.match(scaleDistancePass.nextAction, /この土地は速報では「GO」/);
 	assert.match(scaleDistancePass.nextAction, /70点判定に上げるため、\d{4}-\d{2}-\d{2} 18:00まで/);
 	assert.match(scaleDistancePass.nextAction, /1\. 地番/);
 	assert.match(scaleDistancePass.nextAction, /5\. 現地感メモ/);
@@ -497,7 +497,7 @@ async function main() {
 	assert.match(memo, /見込みランク: 高/);
 	assert.match(memo, /正式確認状態: 回答済み/);
 	assert.match(memo, /営業担当への入力案内/);
-	assert.match(memo, /この土地は速報では「行く」/);
+	assert.match(memo, /この土地は速報では「GO」/);
 	assert.match(memo, /【今AIが欲しいデータ】/);
 	assert.match(memo, /誰が取るか/);
 	assert.match(memo, /大ちゃんに即出すタスク/);
@@ -558,7 +558,7 @@ async function main() {
 	);
 	assert.notDeepEqual(secondaryEvidenceUpdate.総合評価, { select: null });
 	assert.notDeepEqual(secondaryEvidenceUpdate.AI総合スコア, { number: null });
-	assert.match(JSON.stringify(secondaryEvidenceUpdate.案件化メモ ?? {}), /Aゾーン判断: (行く|行かない)/);
+	assert.match(JSON.stringify(secondaryEvidenceUpdate.案件化メモ ?? {}), /Aゾーン判断: (GO|NO-GO)/);
 	assert.match(JSON.stringify(secondaryEvidenceUpdate.案件化メモ ?? {}), /未確認理由/);
 	assert.match(JSON.stringify(secondaryEvidenceUpdate.Webhook引き継ぎメモ ?? {}), /Cゾーン再評価: 不可/);
 
@@ -1337,7 +1337,7 @@ async function main() {
 	assert.match(humanCollectionItems, /件名=【Bゾーン回収依頼】/);
 	assert.match(humanCollectionItems, /本文全文:/);
 	assert.match(humanCollectionItems, /対象土地:/);
-	assert.match(humanCollectionItems, /A判断: (行く|行かない)/);
+	assert.match(humanCollectionItems, /A判断: (GO|NO-GO)/);
 	assert.match(humanCollectionItems, /理由:/);
 	assert.match(humanCollectionItems, /送信済み条件=送信ツールの成功結果/);
 	assert.doesNotMatch(humanCollectionItems, /個人宛|個人アドレス|個人の宛先|CC候補|宛先探索/);

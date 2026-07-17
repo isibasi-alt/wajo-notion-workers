@@ -26571,7 +26571,9 @@ async function processLandEvaluation(
 		scaleDistanceEvidenceState: evaluation.scaleDistanceEvidenceState,
 		scaleDistanceSource: evaluation.scaleDistanceSource,
 		aZoneDecision: evaluation.aZoneDecision,
-		aZoneReason: publicHold ? `${evaluation.aZoneReason}\n${publicHoldReason}` : evaluation.aZoneReason,
+		aZoneReason: publicHold
+			? `${landAZoneReasonSalesLabel(evaluation.aZoneReason)}\n${publicHoldReason}`
+			: landAZoneReasonSalesLabel(evaluation.aZoneReason),
 		aZoneScore: evaluation.aZoneScore,
 		sourceSummary: evaluation.sourceSummary,
 		humanCollectionItems: evaluation.humanCollectionItems,
@@ -26587,14 +26589,14 @@ async function processLandEvaluation(
 			: evaluation.cZoneReadiness,
 		cZoneReady: publicHold ? false : evaluation.cZoneReady,
 		requiresInvestigation: publicHold,
-			investigationGaps:
+		investigationGaps:
 				publicInvestigationGaps.length > 0
 					? publicInvestigationGaps
 					: cZoneHold
 						? ["Cゾーン再評価不可"]
 						: [],
 		message: publicHold
-			? `${action}: Aゾーン速報判断=${evaluation.aZoneDecision} / ${evaluation.overallGrade} / ${evaluation.score}点。${publicHoldReason}`
+			? `${action}: Aゾーン速報判断=${landAZoneDecisionSalesLabel(evaluation.aZoneDecision)} / ${evaluation.overallGrade} / ${evaluation.score}点。${publicHoldReason}`
 			: message,
 	});
 
@@ -31506,6 +31508,20 @@ function landBZoneStandardDeadline(now = new Date()): string {
 	return `${yyyy}-${mm}-${dd} 18:00`;
 }
 
+function landAZoneDecisionSalesLabel(decision: "行く" | "行かない"): "GO" | "NO-GO" {
+	return decision === "行く" ? "GO" : "NO-GO";
+}
+
+function landAZoneReasonSalesLabel(reason: string): string {
+	return reason
+		.replace(/^行く理由:/, "GO理由:")
+		.replace(/^行かない理由:/, "NO-GO理由:")
+		.replace(/「行く」/g, "「GO」")
+		.replace(/「行かない」/g, "「NO-GO」")
+		.replace(/行く\/行かない/g, "GO/NO-GO")
+		.replace(/案件化(?:OK|オーケー)/g, "案件化確定");
+}
+
 function buildLandHumanCollectionItems(input: {
 	missing?: string[];
 	investigationGaps?: string[];
@@ -32028,7 +32044,10 @@ function buildLandBZoneHandoff(input: {
 	const items = uniqueStrings([...(input.missing ?? []), ...(input.investigationGaps ?? [])]);
 	const targetLabel = input.targetLabel || "対象土地未特定";
 	const aZoneDecision = input.aZoneDecision || "行く";
-	const aZoneReason = input.aZoneReason || input.nextAction || "Aゾーン速報判断の理由は案件化メモを参照";
+	const aZoneDecisionLabel = landAZoneDecisionSalesLabel(aZoneDecision);
+	const aZoneReason = landAZoneReasonSalesLabel(
+		input.aZoneReason || input.nextAction || "Aゾーン速報判断の理由は案件化メモを参照",
+	);
 	const deadline = input.deadline || landBZoneStandardDeadline();
 	const tasks = items.map(buildLandBZoneTaskForGap);
 	const taskLines =
@@ -32055,11 +32074,11 @@ function buildLandBZoneHandoff(input: {
 					"完了条件=Cゾーン再評価へ進める状態を確認",
 				].join("｜"),
 			];
-	const subject = `【Bゾーン回収依頼】${targetLabel}｜A判断=${aZoneDecision}`;
+	const subject = `【Bゾーン回収依頼】${targetLabel}｜A判断=${aZoneDecisionLabel}`;
 	const body = [
 		"以下、Aゾーン速報判断に基づくBゾーン回収依頼です。",
 		`対象土地: ${targetLabel}`,
-		`A判断: ${aZoneDecision}`,
+		`A判断: ${aZoneDecisionLabel}`,
 		`理由: ${aZoneReason}`,
 		`期限: ${deadline}`,
 		"",
@@ -32120,7 +32139,7 @@ function buildLandCZoneReadiness(input: {
 				"Cゾーン再評価: 不可",
 				`理由=${blockers.join(" / ")}`,
 				"条件=対象土地一意性、面積原本、地番・筆構成、登記/農地/接道/系統の根拠区分が揃ってから再評価",
-				"停止線=Cゾーン正式採点、正式な行く/行かない、A完了、ISSUEDへ進めない",
+				"停止線=Cゾーン正式採点、正式なGO/NO-GO、A完了、ISSUEDへ進めない",
 			].join("\n"),
 		};
 	}
@@ -32130,7 +32149,7 @@ function buildLandCZoneReadiness(input: {
 			"Cゾーン再評価: 可",
 			`対象一意性=${input.land.targetUniqueness || "入力上は候補複数表示なし"}`,
 			`原本採用可否=可（入力根拠区分=${evidence}）`,
-			"次処理=採点、行く/行かない、根拠、次アクションを一貫して返す",
+			"次処理=採点、GO/NO-GO、根拠、次アクションを一貫して返す",
 			"注意=ISSUEDは証明書発行ゲートで別途最終確認",
 		].join("\n"),
 	};
@@ -32321,7 +32340,7 @@ function decideLandAZone(input: {
 	].filter(Boolean);
 	return {
 		decision: "行く",
-		reason: `行く理由: ${goReasons.join(" / ")}。農転可・案件化OKの断定ではなく、人間回収へ渡す判断。`,
+		reason: `GO理由: ${goReasons.join(" / ")}。農転可・案件化確定の断定ではなく、人間回収へ渡す判断。`,
 	};
 }
 
@@ -32335,6 +32354,8 @@ function buildLandScoutReport(input: {
 	aZoneReason: string;
 }): { landEvaluation: string; nextAction: string; reviewMemo: string } {
 	const { land, treasure, mapEvidence, quickEvidence, investigationGaps, aZoneDecision, aZoneReason } = input;
+	const aZoneDecisionLabel = landAZoneDecisionSalesLabel(aZoneDecision);
+	const aZoneReasonLabel = landAZoneReasonSalesLabel(aZoneReason);
 	const areaText =
 		land.areaTsubo && land.areaTsubo > 0
 			? `${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪`
@@ -32385,8 +32406,8 @@ function buildLandScoutReport(input: {
 	const nextAction = [
 		salesPathRequest,
 		missingDataRequest,
-		`Aゾーン判断: ${aZoneDecision}`,
-		aZoneReason,
+		`Aゾーン判断: ${aZoneDecisionLabel}`,
+		aZoneReasonLabel,
 		"",
 		todayActionSummary,
 		farmlandSalesInputGuide,
@@ -32412,8 +32433,8 @@ function buildLandScoutReport(input: {
 		missingDataRequest,
 		"",
 		"土地スカウト一次評価",
-		`Aゾーン判断: ${aZoneDecision}`,
-		aZoneReason,
+		`Aゾーン判断: ${aZoneDecisionLabel}`,
+		aZoneReasonLabel,
 		`結論: ${conclusion}`,
 		substationCandidateStatus,
 		uncheckedStatus,
@@ -32441,8 +32462,8 @@ function buildLandScoutReport(input: {
 		nextAction,
 	].filter(Boolean).join("\n");
 	const reviewMemo = [
-		`Aゾーン判断: ${aZoneDecision}`,
-		aZoneReason,
+		`Aゾーン判断: ${aZoneDecisionLabel}`,
+		aZoneReasonLabel,
 		`本評価不可。公的確認または人間確認が必要: ${investigationGaps.join(" / ")}`,
 		`調査指示: 地番、登記、農地・農転、道路台帳、系統空き、所有者意向を確認してから本評価へ進める。`,
 		`見送り理由候補: ${rejectionReasons.join(" / ")}`,
@@ -32597,7 +32618,7 @@ async function markLandNeedsReview(
 		総合評価: { kind: "select", value: evaluation.overallGrade },
 		AI総合スコア: { kind: "number", value: evaluation.score },
 		Aゾーン判断: { kind: "select", value: evaluation.aZoneDecision },
-		Aゾーン判断理由: { kind: "text", value: `${evaluation.aZoneReason}\n${holdReason}` },
+		Aゾーン判断理由: { kind: "text", value: `${landAZoneReasonSalesLabel(evaluation.aZoneReason)}\n${holdReason}` },
 		Aゾーン配点バージョン: { kind: "text", value: evaluation.aZoneScore.version },
 		Aゾーン内部スコア100: { kind: "number", value: evaluation.aZoneScore.total100 },
 		Aゾーン内部スコア60: { kind: "number", value: evaluation.aZoneScore.total60 },
@@ -32710,7 +32731,7 @@ async function writeLandEvaluation(
 		総合評価: { kind: "select", value: evaluation.overallGrade },
 		AI総合スコア: { kind: "number", value: evaluation.score },
 		Aゾーン判断: { kind: "select", value: evaluation.aZoneDecision },
-		Aゾーン判断理由: { kind: "text", value: evaluation.aZoneReason },
+		Aゾーン判断理由: { kind: "text", value: landAZoneReasonSalesLabel(evaluation.aZoneReason) },
 		Aゾーン配点バージョン: { kind: "text", value: evaluation.aZoneScore.version },
 		Aゾーン内部スコア100: { kind: "number", value: evaluation.aZoneScore.total100 },
 		Aゾーン内部スコア60: { kind: "number", value: evaluation.aZoneScore.total60 },

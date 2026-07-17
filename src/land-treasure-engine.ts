@@ -396,8 +396,8 @@ function buildLandSalesPathRequest(
 ): string {
 	const lead =
 		quickDecision === "行く"
-			? "この土地は速報では「行く」。"
-			: "この土地は速報では「行かない」。";
+			? "この土地は速報では「GO」。"
+			: "この土地は速報では「NO-GO」。";
 	const requestLead =
 		quickDecision === "行く"
 			? `70点判定に上げるため、${deadline}までに以下を埋めてください。`
