@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { auditLandEvaluationEnvKeys, parseDotEnvKeys } from "./verify-land-evaluation-env.mjs";
+import { auditLandEvaluationEnvKeys, parseDotEnvKeys, remoteEnvKeys } from "./verify-land-evaluation-env.mjs";
 
 const requirements = [
 	{
@@ -183,11 +183,29 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 		readFileSync("scripts/verify-farmland-navi-connection.test.mjs", "utf8"),
 	].join("\n");
 	const remoteVerified = process.argv.includes("--remote-verified");
+	const useRemoteEnv = process.argv.includes("--remote-env");
+	let envSource = ".env.land.local";
+	let envKeys = new Set();
+	let envReadError = "";
+	if (useRemoteEnv) {
+		envSource = "ntn workers env list";
+		try {
+			envKeys = remoteEnvKeys();
+		} catch (error) {
+			envReadError = String(error?.message || error);
+		}
+	} else {
+		envKeys = readLocalEnvKeys();
+	}
 	const result = auditLandEvaluationGoalCoverage({
 		sourceText,
 		testText,
-		envKeys: readLocalEnvKeys(),
+		envKeys,
 		remoteVerified,
 	});
-	finish(result.ok ? 0 : 1, result);
+	finish(result.ok ? 0 : 1, {
+		...result,
+		envSource,
+		...(envReadError ? { envReadError } : {}),
+	});
 }

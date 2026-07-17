@@ -86,7 +86,7 @@ function finish(code, payload) {
 	process.exit(code);
 }
 
-function remoteEnvKeys() {
+export function remoteEnvKeys() {
 	const output = execFileSync("npx", ["ntn", "workers", "env", "list"], {
 		encoding: "utf8",
 		env: { ...process.env, NOTION_KEYRING: "0" },
@@ -95,7 +95,7 @@ function remoteEnvKeys() {
 	return parseNtnEnvList(output);
 }
 
-function localEnvKeys(file) {
+export function localEnvKeys(file) {
 	const content = readFileSync(file, "utf8");
 	return parseDotEnvKeys(content);
 }
