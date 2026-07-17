@@ -2,6 +2,8 @@
 .env.*
 dist/
 node_modules/
+output/
 tmp/
 workers.*.json
 workers.json
+.DS_Store

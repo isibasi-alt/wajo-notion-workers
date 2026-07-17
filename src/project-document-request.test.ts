@@ -909,6 +909,10 @@ async function main() {
 	assert.match(JSON.stringify(repairedFinanceBodyAppend), /営業担当が入力する3項目/);
 
 	const simulationCase = makeNotion({
+		projectPropertyOverrides: {
+			実効税率: numberProp(30),
+			今期利益見込: numberProp(8000000),
+		},
 		existingByDocumentType: {
 			提案書: [completedProposalRequestPage()],
 		},
@@ -931,7 +935,11 @@ async function main() {
 	);
 	assert.equal(
 		(salesProposalProps["案件アクション分類"] as { select: { name: string } }).select.name,
-		"化ける案件",
+		"保留案件",
+	);
+	assert.equal(
+		(salesProposalProps["S/A/B/C判定"] as { select: { name: string } }).select.name,
+		"保留",
 	);
 	assert.deepEqual(
 		(salesProposalProps["関連提案シミュレーション依頼"] as { relation: Array<{ id: string }> }).relation,
@@ -944,8 +952,9 @@ async function main() {
 	);
 	assert.match(
 		JSON.stringify(salesProposalProps["営業説明サマリー"]),
-		/files型の『提案PDF』を開く/,
+		/正式提案ページ: HTML/,
 	);
+	assert.match(JSON.stringify(salesProposalProps["営業説明サマリー"]), /参考PDF:/);
 	assert.doesNotMatch(JSON.stringify(salesProposalProps), /prod-files-secure|X-Amz-/);
 	const proposalRequestPdfCleanup = simulationCase.updates.find((update) => {
 		if (update.page_id !== "request-ready-1") return false;
@@ -960,7 +969,7 @@ async function main() {
 		(create.parent as { data_source_id?: string })?.data_source_id ===
 		"fde6d55f-3127-4716-862c-5fb43b2cc3b4"
 	);
-	assert.ok(proposalLedgerCreate, "生成した提案PDFを案件資料DBへ台帳登録すること");
+	assert.ok(proposalLedgerCreate, "生成したHTML提案書を案件資料DBへ台帳登録すること");
 	const proposalLedgerProps = proposalLedgerCreate!.properties as Record<string, unknown>;
 	assert.equal(
 		(proposalLedgerProps.資料種別 as { select: { name: string } }).select.name,
@@ -995,13 +1004,51 @@ async function main() {
 		(financeRecordProps.関連案件 as { relation: Array<{ id: string }> }).relation,
 		[{ id: "project-1" }],
 	);
-	const projectPdfAppend = simulationCase.appends.find((append) => append.block_id === "project-1");
-	assert.ok(projectPdfAppend);
-	assert.match(JSON.stringify(projectPdfAppend), /"type":"pdf"/);
+	const projectHtmlAppend = simulationCase.appends.find((append) => append.block_id === "project-1");
+	assert.ok(projectHtmlAppend);
+	assert.match(JSON.stringify(projectHtmlAppend), /HTML提案書リンク/);
+	assert.match(JSON.stringify(projectHtmlAppend), /\.html/);
 	assert.equal(
 		simulationCase.fileUploads.some((upload) => upload.action === "complete"),
 		false,
 	);
+
+	const taxPendingSalesCase = makeNotion({
+		projectPropertyOverrides: {
+			流動比率: numberProp(180),
+			利益剰余金: numberProp(70000000),
+			自己資本比率: numberProp(42),
+			実効税率: numberProp(null),
+			今期利益見込: numberProp(null),
+		},
+		existingByDocumentType: {
+			提案書: [completedProposalRequestPage()],
+		},
+	});
+	await processProposalSimulationForTest(
+		{ pageId: "request-ready-1", dryRun: false },
+		taxPendingSalesCase.notion as never,
+	);
+	const taxPendingSalesProposalCreate = taxPendingSalesCase.creates.find((create) =>
+		(create.parent as { data_source_id?: string })?.data_source_id ===
+		"4c3a7df6-3ca1-458a-b595-d98cdeac2802"
+	);
+	assert.ok(taxPendingSalesProposalCreate);
+	const taxPendingSalesProps = taxPendingSalesProposalCreate!.properties as Record<string, unknown>;
+	assert.equal(
+		(taxPendingSalesProps["S/A/B/C判定"] as { select: { name: string } }).select.name,
+		"保留",
+	);
+	assert.equal(
+		(taxPendingSalesProps["案件アクション分類"] as { select: { name: string } }).select.name,
+		"保留案件",
+	);
+	assert.match(JSON.stringify(taxPendingSalesProps["営業説明サマリー"]), /投資判定: 保留 \/ 保留案件/);
+	assert.match(JSON.stringify(taxPendingSalesProps["営業がまず見る数字"]), /NPV: .*参考試算（仮置き前提）/);
+	assert.match(JSON.stringify(taxPendingSalesProps["営業がまず見る数字"]), /IRR: .*参考試算（仮置き前提）/);
+	assert.match(JSON.stringify(taxPendingSalesProps["営業トーク下書き"]), /営業提案ランクは保留/);
+	assert.doesNotMatch(JSON.stringify(taxPendingSalesProps["営業説明サマリー"]), /やるべき案件/);
+	assert.doesNotMatch(JSON.stringify(taxPendingSalesProps["営業説明サマリー"]), /投資判定: S/);
 
 	// 二重化しない: 同一案件に既存 finance 入力箱があり、その 関連提案シミュレーション が
 	// 今回の提案ページ(request-ready-1)と不一致でも、新規作成せず既存箱を update し、
@@ -1052,7 +1099,7 @@ async function main() {
 	);
 	assert.equal(
 		(dedupProps.ファイナンス状態 as { select: { name: string } }).select.name,
-		"準備完了",
+		"要確認",
 	);
 	assert.equal(
 		typeof (dedupProps.年間返済額 as { number: number }).number,

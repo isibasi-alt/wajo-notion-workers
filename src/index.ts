@@ -1188,6 +1188,15 @@ const PROPOSAL_PDF_URL_PROPERTY_ALIASES = [
 	"PDF URL",
 ];
 
+const PROPOSAL_HTML_FILE_PROPERTY_ALIASES = [
+	"提案HTML",
+	"提案書HTML",
+	"提案シミュレーションHTML",
+	"HTML提案書",
+	"正式提案ページ",
+	"提案書リンク",
+];
+
 const INVESTMENT_CONDITION_PDF_FILE_PROPERTY_ALIASES = [
 	"投資条件シミュレーションPDF",
 	"投資条件PDF",
@@ -1196,6 +1205,18 @@ const INVESTMENT_CONDITION_PDF_FILE_PROPERTY_ALIASES = [
 ];
 
 const INVESTMENT_CONDITION_PDF_HEADING = "投資条件シミュレーションPDF";
+
+const INVESTMENT_CONDITION_HTML_FILE_PROPERTY_ALIASES = [
+	"投資条件シミュレーションHTML",
+	"投資条件HTML",
+	"ファイナンスシミュレーションHTML",
+	"ファイナンスHTML",
+	"ファイナンス提案書HTML",
+	"投資条件リンク",
+	"ファイナンス提案リンク",
+];
+
+const INVESTMENT_CONDITION_HTML_HEADING = "投資条件シミュレーションHTML";
 
 // Notionのtext/urlプロパティは2000文字制限があり、署名付きURL（セキュリティトークン込みで
 // 2000文字を超えることがある）を超過分は問答無用で切り詰めて保存する。
@@ -5701,16 +5722,16 @@ worker.webhook("processProjectFinanceRequestWebhook", {
 });
 
 worker.webhook("processInvestmentConditionPdfWebhook", {
-	title: "WAJO 投資条件シミュレーションPDF出力Webhook",
+	title: "WAJO 投資条件シミュレーションHTML出力Webhook",
 	description:
-		"ファイナンスシミュレーションDBのページIDを受け取り、投資判定・NPV/IRR/DSCR・借入・税効果を2ページのPDFにして同じファイナンス記録本文へ表示します。",
+		"ファイナンスシミュレーションDBのページIDを受け取り、投資判定・NPV/IRR/DSCR・借入・税効果をHTML提案書リンクとして同じファイナンス記録本文へ表示します。",
 	execute: async (events, { notion }) => {
 		for (const event of events) {
 			const body = event.body as Record<string, unknown>;
 			const sourcePageId = extractProjectPageIdFromWebhook(body);
 			if (!sourcePageId) {
 				throw new Error(
-					"financePageId / pageId / entity.id のいずれからも投資条件PDFの対象ページIDを特定できませんでした。",
+					"financePageId / pageId / entity.id のいずれからも投資条件シミュレーションの対象ページIDを特定できませんでした。",
 				);
 			}
 			const sourcePage = (await notion.pages.retrieve({ page_id: sourcePageId })) as Page & {
@@ -5726,7 +5747,7 @@ worker.webhook("processInvestmentConditionPdfWebhook", {
 				]);
 				if (financeIds.length !== 1) {
 					throw new Error(
-						"投資条件PDFはファイナンスシミュレーションの入力ページ、または関連ファイナンスが1件だけ紐づいた案件ページから押してください。",
+						"投資条件シミュレーションはファイナンスシミュレーションの入力ページ、または関連ファイナンスが1件だけ紐づいた案件ページから押してください。",
 					);
 				}
 				financePageId = financeIds[0]!;
@@ -15488,6 +15509,7 @@ type ProposalSimulationDraft = {
 	annualNetIncome: number | null;
 	solarDetails: SolarProposalDetails | null;
 	wajoSupport: ProposalWajoSupport;
+	improvementPlan: ProposalImprovementPlan;
 	sitePhotos: ProposalSitePhoto[];
 	runningCostBreakdown: RunningCostBreakdownItem[];
 	annualReductionAmount: number | null;
@@ -15502,6 +15524,15 @@ type ProposalSimulationDraft = {
 	summaryLines: string[];
 	pageOneLines: string[];
 	pageTwoLines: string[];
+};
+
+type ProposalGenerationTrace = {
+	runMode: "dry-run" | "write";
+	status: "入力待ち" | "シミュレーション準備完了";
+	gates: Array<{ label: string; status: "通過" | "停止" | "未確認" | "対象外"; note: string }>;
+	inputSources: string[];
+	unconfirmedItems: string[];
+	outputDestinations: string[];
 };
 
 type CurtailmentScenario = "抑制なし" | "抑制あり";
@@ -15565,8 +15596,11 @@ type FinanceSimulation = {
 	annualRightsDepreciation: number;
 	annualDepreciation: number;
 	effectiveTaxRate: number;
+	effectiveTaxRateSource: "input" | "default";
 	pretaxProfit: number | null;
+	pretaxProfitSource: "input" | "missing";
 	taxBenefit: number;
+	taxBenefitBasis: "input-derived" | "provisional";
 	projectNpv: number | null;
 	projectIrr: number | null;
 	equityNpv: number | null;
@@ -15594,6 +15628,77 @@ type FinanceSimulation = {
 	salesRubric: BalanceSheetSalesRubric;
 	lines: string[];
 };
+
+function isFinalFinanceJudgmentReady(finance: FinanceSimulation): boolean {
+	return finance.salesRubric.totalScore !== null && finance.taxBenefitBasis === "input-derived";
+}
+
+function getFinalFinanceHoldReason(finance: FinanceSimulation): string {
+	const missing: string[] = [];
+	if (finance.salesRubric.totalScore === null) missing.push("財務3指標");
+	if (finance.taxBenefitBasis !== "input-derived") missing.push("税務前提");
+	if (missing.length === 0) return "";
+	if (missing.length === 1 && missing[0] === "税務前提") return "税務前提確認中";
+	if (missing.length === 1) return "財務情報確認中";
+	return "財務情報・税務前提確認中";
+}
+
+function getFinalFinanceHoldAction(finance: FinanceSimulation): string {
+	if (isFinalFinanceJudgmentReady(finance)) return "";
+	const missing: string[] = [];
+	if (finance.salesRubric.totalScore === null) {
+		missing.push("流動比率・利益剰余金・自己資本比率");
+	}
+	if (finance.taxBenefitBasis !== "input-derived") {
+		missing.push("実効税率・今期利益見込");
+	}
+	return `${missing.join("、")}を入力後、顧客財務込みの最終提案判定を確定します。`;
+}
+
+function formatFinalFinanceDecisionMetric(finance: FinanceSimulation): string {
+	if (!isFinalFinanceJudgmentReady(finance)) return "最終判定保留";
+	return formatInvestmentDecisionMetric(finance.timingRank);
+}
+
+function formatConditionEvaluationMetric(finance: FinanceSimulation): string {
+	const value = `${finance.timingRank}（投資対象条件の評価）`;
+	return finance.taxBenefitBasis === "input-derived"
+		? value
+		: `${value} / 参考試算（仮置き前提）`;
+}
+
+function formatFinanceTimingHeadline(finance: FinanceSimulation): string {
+	return finance.taxBenefitBasis === "input-derived"
+		? finance.timingHeadline
+		: "税務前提を確認中のため、投資対象条件の評価は参考試算です。";
+}
+
+function formatFinanceTimingReason(finance: FinanceSimulation): string {
+	return finance.taxBenefitBasis === "input-derived"
+		? finance.timingReason
+		: "実効税率と今期利益見込を入力すると、税引き後キャッシュと出口条件を確定評価します。";
+}
+
+function formatFinanceTaxBasisLabel(finance: FinanceSimulation): string {
+	const rateLabel = finance.effectiveTaxRateSource === "input"
+		? `実効税率 ${trimTrailingZeros(finance.effectiveTaxRate)}%（入力値）`
+		: `実効税率 ${trimTrailingZeros(finance.effectiveTaxRate)}%（標準仮置き）`;
+	const profitLabel = finance.pretaxProfitSource === "input"
+		? `今期利益見込 ${formatYen(finance.pretaxProfit ?? 0)}（入力値）`
+		: "今期利益見込 未入力（償却上限未確認）";
+	return `${rateLabel} / ${profitLabel}`;
+}
+
+function formatFinanceTaxBenefitLabel(finance: FinanceSimulation): string {
+	const prefix = finance.taxBenefitBasis === "input-derived" ? "入力値由来" : "参考試算（仮置き前提）";
+	return `${formatYen(finance.taxBenefit)} / ${prefix} / ${formatFinanceTaxBasisLabel(finance)}`;
+}
+
+function formatFinanceDerivedLabel(value: string, finance: FinanceSimulation): string {
+	return finance.taxBenefitBasis === "input-derived"
+		? value
+		: `${value} / 参考試算（仮置き前提）`;
+}
 
 type BalanceSheetSalesRubric = {
 	liquidityRatio: number | null;
@@ -15653,7 +15758,19 @@ type ProposalWajoSupport = {
 	warrantyComment: string;
 	remainingRisk: string;
 	checkedItems: string[];
+	evidenceLabel: string;
 	hasConcreteCheck: boolean;
+};
+
+type ProposalImprovementPlan = {
+	cost: number | null;
+	annualRevenueLift: number | null;
+	annualGenerationLiftKwh: number | null;
+	afterAnnualNetIncome: number | null;
+	paybackYears: number | null;
+	items: string;
+	note: string;
+	hasConcretePlan: boolean;
 };
 
 type ProposalKind = "corporate" | "individual" | "esg" | "gridBattery";
@@ -15820,6 +15937,12 @@ async function processProposalSimulation(
 	const draft = evaluateProposalSimulationDraft(simulationSourcePage);
 
 	if (draft.missingField) {
+		const trace = buildProposalGenerationTrace({
+			draft,
+			dryRun: Boolean(input.dryRun),
+			equipmentPage,
+			financeInputPage,
+		});
 		const message = buildSequentialMissingMessage(
 			"提案シミュレーション",
 			draft.missingField,
@@ -15853,6 +15976,7 @@ async function processProposalSimulation(
 				{ kind: "text", value: draft.typeGuideLines.join("\n") },
 			);
 			await safeUpdateExistingProperties(notion, page, patches);
+			console.log("proposal simulation generation trace", trace);
 			await createPageComment(notion, page.id, `⚠️ ${message}`);
 		}
 		return {
@@ -15867,11 +15991,20 @@ async function processProposalSimulation(
 		};
 	}
 
+	const htmlExport = input.dryRun
+		? {
+				attached: false,
+				destination: "none" as const,
+				message: "dry-runのためHTML提案書は保存していません。",
+				fileName: "",
+				fileUrl: null as string | null,
+		  }
+		: await exportProposalSimulationHtml(notion, page, draft);
 	const pdfExport = input.dryRun
 		? {
 				attached: false,
 				destination: "none" as const,
-				message: "dry-runのためPDFは保存していません。",
+				message: "dry-runのため参考PDFは保存していません。",
 				fileName: "",
 				fileUrl: null as string | null,
 		  }
@@ -15886,13 +16019,22 @@ async function processProposalSimulation(
 	const caseDocumentRegistration = input.dryRun
 		? { action: "skipped" as const, message: "dry-runのため案件資料DBへは登録していません。" }
 		: await upsertGeneratedCaseDocument(notion, {
-				kind: "proposal",
+				kind: "proposalHtml",
 				requestPageId: page.id,
 				projectPageId: resolvedProjectId,
 				sourceTitle: draft.proposalTitle,
-				fileUploadId: pdfExport.fileUploadId,
-				fileName: pdfExport.fileName,
+				fileUploadId: htmlExport.fileUploadId,
+				fileName: htmlExport.fileName,
 		  });
+	const generationTrace = buildProposalGenerationTrace({
+		draft,
+		dryRun: Boolean(input.dryRun),
+		equipmentPage,
+		financeInputPage,
+		htmlMessage: htmlExport.message,
+		pdfMessage: pdfExport.message,
+		caseDocumentMessage: caseDocumentRegistration.message,
+	});
 	const readyMessage = [
 		"提案シミュレーションの必須入力チェックを通過しました。",
 		`提案書タイトル: ${draft.proposalTitle}`,
@@ -15902,15 +16044,16 @@ async function processProposalSimulation(
 		...draft.pageOneLines,
 		"【提案メモ｜前提・リスク】",
 		...draft.pageTwoLines,
-		`PDF出力: ${pdfExport.message}`,
+		`HTML提案書: ${htmlExport.message}`,
+		`参考PDF: ${pdfExport.message}`,
 		`資料台帳: ${caseDocumentRegistration.message}`,
 		"【確認手順】",
-		pdfExport.destination === "property"
-			? "1. このレコードのfiles型『提案PDF』を開く"
-			: pdfExport.destination === "page_block"
-				? "1. このレコード本文の末尾に追加されたPDFを開く"
-				: "1. files型の『提案PDF』プロパティを追加する",
-		"2. 『資料PDF』は今回の提案シミュレーションでは使いません",
+		htmlExport.destination === "property"
+			? "1. このレコードのfiles型『提案HTML』または『HTML提案書』を開く"
+			: htmlExport.destination === "page_block"
+				? "1. このレコード本文の末尾に追加されたHTML提案書を開く"
+				: "1. files型の『提案HTML』または『HTML提案書』プロパティを追加する",
+		"2. PDFはV1では参考出力です。正式提案ページはHTML提案書リンクを使います",
 	].join("\n");
 	if (!input.dryRun) {
 		const patches: Record<string, SafePatch> = {};
@@ -15939,11 +16082,11 @@ async function processProposalSimulation(
 			["提案タイプガイド", "提案タイプ説明", "資料タイプ説明"],
 			{ kind: "text", value: draft.typeGuideLines.join("\n") },
 		);
-		// 期限付きS3直URLを後続画面へ残さない。PDFはfiles型の提案PDFから開く。
+		// 期限付きS3直URLを後続画面へ残さない。PDFは参考出力としてfiles型から開く。
 		setAliasPatch(patches, [...PROPOSAL_PDF_URL_PROPERTY_ALIASES, "作成した提案PDFを開く"], {
 			kind: "clear",
 		});
-	if (draft.grossProfit !== null) {
+		if (draft.grossProfit !== null) {
 			setAliasPatch(
 				patches,
 				["想定粗利額", "粗利試算", "試算粗利額"],
@@ -15961,7 +16104,7 @@ async function processProposalSimulation(
 			setAliasPatch(
 				patches,
 				["想定回収年数", "回収年数"],
-			{ kind: "number", value: draft.paybackYears },
+				{ kind: "number", value: draft.paybackYears },
 			);
 		}
 		if (draft.fitRemainingYears !== null) {
@@ -16077,6 +16220,7 @@ async function processProposalSimulation(
 			simulationSourcePage,
 			draft,
 			pdfExport,
+			htmlExport,
 			financeSync?.pageId ?? null,
 		);
 		await syncProposalSimulationRelations(
@@ -16085,11 +16229,12 @@ async function processProposalSimulation(
 			financeSync?.pageId ?? null,
 			salesProposalSync?.pageId ?? null,
 		);
-		await updateRelatedProjectProposalResult(notion, simulationSourcePage, draft, pdfExport);
+		await updateRelatedProjectProposalResult(notion, simulationSourcePage, draft, pdfExport, htmlExport);
+		console.log("proposal simulation generation trace", generationTrace);
 		await createPageComment(
 			notion,
 			page.id,
-			`✅ 提案シミュレーションの準備が完了しました。\n${draft.summaryLines.join("\n")}\n${pdfExport.message}`,
+			`✅ 提案シミュレーションの準備が完了しました。\n${draft.summaryLines.join("\n")}\n${htmlExport.message}\n参考PDF: ${pdfExport.message}`,
 		);
 	}
 	return {
@@ -16181,8 +16326,8 @@ const PROJECT_DOCUMENT_REQUEST_CONFIGS: Record<
 		statusValue: "入力待ち",
 		createdLabel: "提案シミュレーション依頼",
 		nextActionMessage:
-			"次は資料作成依頼側で不足項目を補完し、PDF提案化してください。",
-		memo: "案件管理DBから作成しました。必要項目を補完してPDF提案化してください。",
+			"次は資料作成依頼側で不足項目を補完し、HTML提案書リンクを作成してください。",
+		memo: "案件管理DBから作成しました。必要項目を補完してHTML提案書リンクを作成してください。PDFはV1では参考出力です。",
 		finalizeOnCreate: false,
 	},
 	finance: {
@@ -17087,7 +17232,7 @@ async function processProjectDocumentRequest(
 	const documentSourcePage = mergeProjectWithEquipmentDetail(projectPage, equipmentPage);
 	const projectName = readGenericPageTitle(projectPage) || "案件";
 	// 動線1本道の締め（2026-07-10設計正本）：ファイナンスは提案シミュレーション完成後にのみ進める。
-	// 完成の定義＝シミュレーションステータス「シミュレーション準備完了」またはfiles型の提案PDFがあること。
+	// 完成の定義＝シミュレーションステータス「シミュレーション準備完了」またはfiles型のHTML提案書があること。
 	if (kind === "finance") {
 		const proposalRequest = await findExistingProjectDocumentRequest(
 			notion,
@@ -17097,15 +17242,15 @@ async function processProjectDocumentRequest(
 		const proposalStatus = proposalRequest
 			? text(proposalRequest.properties?.["シミュレーションステータス"])
 			: "";
-		const proposalPdfAttached = proposalRequest
-			? PROPOSAL_PDF_FILE_PROPERTY_ALIASES.some((name) =>
+		const proposalHtmlAttached = proposalRequest
+			? PROPOSAL_HTML_FILE_PROPERTY_ALIASES.some((name) =>
 					notionPropertyHasValue(proposalRequest.properties?.[name]),
 				)
 			: false;
-		const simulationDone = proposalStatus === "シミュレーション準備完了" || proposalPdfAttached;
+		const simulationDone = proposalStatus === "シミュレーション準備完了" || proposalHtmlAttached;
 		if (!simulationDone) {
 			const gateMessage = proposalRequest
-				? "先に提案シミュレーションを完成させてください（提案シミュレーションレコードの「シミュレーションPDFを出力」→ files型の「提案PDF」が表示されたらファイナンスに進めます）。"
+				? "先に提案シミュレーションを完成させてください（提案シミュレーションレコードでHTML提案書リンクが表示されたらファイナンスに進めます）。"
 				: "先に「シミュレーション作成」で提案シミュレーションを作り、完成させてからファイナンスに進んでください。";
 			if (!input.dryRun) {
 				await safeUpdateExistingProperties(notion, projectPage, {
@@ -17787,6 +17932,7 @@ async function updateRelatedProjectProposalResult(
 	proposalPage: Page,
 	draft: ProposalSimulationDraft,
 	pdfExport: ProposalPdfExportResult,
+	htmlExport: ProposalHtmlExportResult,
 ): Promise<void> {
 	const relatedProjectIds = relationIdsFromProperty(proposalPage.properties?.["関連案件"]);
 	if (relatedProjectIds.length === 0) return;
@@ -17794,7 +17940,9 @@ async function updateRelatedProjectProposalResult(
 		try {
 			const projectPage = await notion.pages.retrieve({ page_id: projectPageId });
 			const memoLines = [
-				"提案PDFを作成しました。提案シミュレーションレコードのfiles型『提案PDF』から開いてください。",
+				"正式提案ページを作成しました。提案シミュレーションレコードのfiles型『提案HTML』または本文末尾のHTML提案書から開いてください。",
+				`HTML提案書: ${htmlExport.message}`,
+				`参考PDF: ${pdfExport.message}`,
 				draft.grossProfit !== null
 					? `予定粗利額を販売価格 - 仕入れ価格で自動更新: ${formatYen(draft.grossProfit)}`
 					: "",
@@ -17813,10 +17961,10 @@ async function updateRelatedProjectProposalResult(
 				patches.予定粗利の根拠 = { kind: "select", value: "価格あり" };
 			}
 			await safeUpdateExistingProperties(notion, projectPage, patches);
-			if (pdfExport.fileUploadId && notion.blocks?.children?.append) {
+			if (htmlExport.fileUploadId && notion.blocks?.children?.append) {
 				await notion.blocks.children.append({
 					block_id: projectPageId,
-					children: buildProposalPdfBlocks(pdfExport.fileUploadId, pdfExport.fileName),
+					children: buildProposalHtmlBlocks(htmlExport.fileUploadId, htmlExport.fileName),
 				});
 			}
 		} catch (error) {
@@ -18167,6 +18315,7 @@ async function syncSalesProposalRecord(
 	proposalPage: Page,
 	draft: ProposalSimulationDraft,
 	pdfExport: ProposalPdfExportResult,
+	htmlExport: ProposalHtmlExportResult,
 	financePageId: string | null,
 ): Promise<SalesProposalSyncResult | null> {
 	try {
@@ -18183,10 +18332,12 @@ async function syncSalesProposalRecord(
 			proposalPage,
 			draft,
 			pdfExport,
+			htmlExport,
 			financePageId,
 		);
 		if (existingPage) {
 			await safeUpdateExistingProperties(notion, existingPage, patches);
+			await syncProposalHtmlFileProperty(notion, existingPage, htmlExport.fileUploadId);
 			await syncProposalPdfFileProperty(notion, existingPage, pdfExport.fileUploadId);
 			return { pageId: existingPage.id, action: "updated" };
 		}
@@ -18194,6 +18345,7 @@ async function syncSalesProposalRecord(
 			parent: { data_source_id: SALES_PROPOSAL_DATA_SOURCE_ID },
 			properties: buildSalesProposalRecordCreateProperties(patches),
 		});
+		await syncProposalHtmlFileProperty(notion, created, htmlExport.fileUploadId);
 		await syncProposalPdfFileProperty(notion, created, pdfExport.fileUploadId);
 		return { pageId: created.id, action: "created" };
 	} catch (error) {
@@ -18209,6 +18361,7 @@ function buildSalesProposalRecordPatches(
 	proposalPage: Page,
 	draft: ProposalSimulationDraft,
 	pdfExport: ProposalPdfExportResult,
+	htmlExport: ProposalHtmlExportResult,
 	financePageId: string | null,
 ): Record<string, SafePatch> {
 	const relatedProjectIds = relationIdsFromProperty(proposalPage.properties?.["関連案件"]);
@@ -18217,24 +18370,27 @@ function buildSalesProposalRecordPatches(
 		"発電所設備詳細",
 		"設備詳細",
 	]);
-	const proposalState = inferSalesProposalState(pdfExport);
+	const proposalState = inferSalesProposalState(htmlExport);
 	const actionCategory = inferSalesProposalActionCategory(draft);
 	const enablement = buildSalesProposalEnablementSections(
 		proposalPage,
 		draft,
 		pdfExport,
+		htmlExport,
 		actionCategory,
 	);
 	const reasonLines = [
 		draft.conclusionText,
 		draft.financeSimulation
-			? `購入タイミング判定: ${draft.financeSimulation.timingRank} / ${draft.financeSimulation.timingReason}`
+			? isFinalFinanceJudgmentReady(draft.financeSimulation)
+				? `購入タイミング判定: ${draft.financeSimulation.timingRank} / ${draft.financeSimulation.timingReason}`
+				: `購入タイミング判定: 保留 / ${getFinalFinanceHoldReason(draft.financeSimulation)}`
 			: "",
 		draft.financeSimulation
 			? `B/Sルーブリック: ${formatBalanceSheetSalesRubricSummary(draft.financeSimulation.salesRubric)}`
 			: "",
 	].filter(Boolean);
-	const nextActionLines = buildSalesProposalNextActionLines(actionCategory, pdfExport);
+	const nextActionLines = buildSalesProposalNextActionLines(actionCategory, htmlExport);
 	const patches: Record<string, SafePatch> = {
 		Name: { kind: "text", value: draft.proposalTitle },
 		関連提案シミュレーション依頼: { kind: "relation", ids: [proposalPage.id] },
@@ -18258,6 +18414,8 @@ function buildSalesProposalRecordPatches(
 	};
 	patches.提案PDFリンク = { kind: "clear" };
 	patches.作成した提案PDFを開く = { kind: "clear" };
+	patches.HTML提案書メモ = { kind: "text", value: htmlExport.message };
+	patches.PDF参考出力メモ = { kind: "text", value: pdfExport.message };
 	if (relatedProjectIds.length > 0) {
 		patches.関連案件 = { kind: "relation", ids: [relatedProjectIds[0]!] };
 	}
@@ -18274,6 +18432,7 @@ function buildSalesProposalEnablementSections(
 	proposalPage: Page,
 	draft: ProposalSimulationDraft,
 	pdfExport: ProposalPdfExportResult,
+	htmlExport: ProposalHtmlExportResult,
 	actionCategory: string,
 ): {
 	summary: string;
@@ -18287,6 +18446,8 @@ function buildSalesProposalEnablementSections(
 	const properties = proposalPage.properties ?? {};
 	const finance = draft.financeSimulation;
 	const rank = inferSalesProposalRank(draft);
+	const finalFinanceReady = finance ? isFinalFinanceJudgmentReady(finance) : false;
+	const financeHoldReason = finance && !finalFinanceReady ? getFinalFinanceHoldReason(finance) : "";
 	const details = draft.solarDetails;
 	const rubricSummary = finance ? formatBalanceSheetSalesRubricSummary(finance.salesRubric) : "未判定";
 	const fitLine = details
@@ -18303,7 +18464,8 @@ function buildSalesProposalEnablementSections(
 		"判定の意味: 発電所そのものの品質評価ではなく、現時点の価格・収益・融資・税効果・B/S前提を合わせた「今この条件で提案するべきか」の投資判定です。",
 		`提案タイプ: ${proposalKindJapaneseLabel(draft.proposalKind)}`,
 		`B/Sルーブリック: ${rubricSummary}`,
-		"顧客向けPDF: files型の『提案PDF』を開く",
+		`正式提案ページ: ${htmlExport.message}`,
+		`参考PDF: ${pdfExport.message}`,
 	].join("\n");
 	const keyNumbers = [
 		`販売価格: ${formatOptionalYen(draft.salePrice)}`,
@@ -18314,29 +18476,33 @@ function buildSalesProposalEnablementSections(
 		`想定回収年数: ${draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"}`,
 		`FIT/FIP: ${fitLine}`,
 		`出力抑制: ${formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)}`,
-		`NPV: ${finance?.projectNpv !== null && finance?.projectNpv !== undefined ? formatYen(finance.projectNpv) : "未算出"}`,
-		`IRR: ${finance?.projectIrr !== null && finance?.projectIrr !== undefined ? `${trimTrailingZeros(finance.projectIrr)}%` : "未算出"}`,
+		`NPV: ${finance?.projectNpv !== null && finance?.projectNpv !== undefined ? formatFinanceDerivedLabel(formatYen(finance.projectNpv), finance) : "未算出"}`,
+		`IRR: ${finance?.projectIrr !== null && finance?.projectIrr !== undefined ? formatFinanceDerivedLabel(`${trimTrailingZeros(finance.projectIrr)}%`, finance) : "未算出"}`,
 		`DSCR: ${finance?.dscr !== null && finance?.dscr !== undefined ? trimTrailingZeros(finance.dscr) : "借入なし/未算出"}`,
-		`税効果: ${finance ? formatYen(finance.taxBenefit) : "未算出"}`,
-		`経済メリット: ${finance ? formatYen(finance.economicBenefit) : "未算出"}`,
+		`税効果: ${finance ? formatFinanceDerivedLabel(formatYen(finance.taxBenefit), finance) : "未算出"}`,
+		`経済メリット: ${finance ? formatFinanceDerivedLabel(formatYen(finance.economicBenefit), finance) : "未算出"}`,
 		`和上確認: ${buildProposalWajoCompactLine(draft.wajoSupport)}`,
 	].join("\n");
 	const talkDraft = [
 		"冒頭:",
-		`この資料では、利回りだけではなく「今この条件で買うべきか」を判定しています。今回の判定は ${rank} です。`,
+		finance && !finalFinanceReady
+			? `この資料では、利回りだけではなく「今この条件で買うべきか」を判定します。現時点では${financeHoldReason}のため、営業提案ランクは保留です。`
+			: `この資料では、利回りだけではなく「今この条件で買うべきか」を判定しています。今回の判定は ${rank} です。`,
 		"",
 		"説明順:",
 		"1. まずFIT/FIP、売電単価、残存期間、抑制前提を確認します。",
 		`2. 次に年間手残り ${formatOptionalYen(draft.annualNetIncome)} と回収年数 ${draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"} を見ます。`,
 		finance
-			? `3. その上で、融資・税効果込みでは NPV ${finance.projectNpv !== null ? formatYen(finance.projectNpv) : "未算出"} / IRR ${finance.projectIrr !== null ? `${trimTrailingZeros(finance.projectIrr)}%` : "未算出"} / 経済メリット ${formatYen(finance.economicBenefit)} として見ます。`
+			? `3. その上で、融資・税効果込みでは NPV ${finance.projectNpv !== null ? formatFinanceDerivedLabel(formatYen(finance.projectNpv), finance) : "未算出"} / IRR ${finance.projectIrr !== null ? formatFinanceDerivedLabel(`${trimTrailingZeros(finance.projectIrr)}%`, finance) : "未算出"} / 経済メリット ${formatFinanceDerivedLabel(formatYen(finance.economicBenefit), finance)} として見ます。`
 			: "3. 融資・税効果・B/S情報が入れば、F/CシミュレーションとしてNPV・IRR・税効果まで出せます。",
 		`4. 設備面は ${equipmentLine} を根拠に確認します。パネル補足は ${details?.panelPublicComment || "未入力"}、PCS補足は ${details?.powerConditionerPublicComment || "未入力"} です。`,
 		`5. 最後に、和上が見た整備・保証材料として ${buildProposalWajoCompactLine(draft.wajoSupport)} を確認し、残リスク ${draft.wajoSupport.remainingRisk || "未入力"} を隠さず説明します。`,
 	].join("\n");
 	const objectionHandling = [
 		"反論: 利回りだけ見ると迷う。",
-		`切り返し: 今回は利回り単体ではなく、FIT残存期間、返済、税効果、B/Sタイミングを合わせた投資判定として ${rank} を出しています。`,
+		finance && !finalFinanceReady
+			? `切り返し: 今回は利回り単体ではなく、FIT残存期間、返済、税効果、B/Sタイミングを合わせて見ます。現時点では${financeHoldReason}のため、最終ランクは出しません。`
+			: `切り返し: 今回は利回り単体ではなく、FIT残存期間、返済、税効果、B/Sタイミングを合わせた投資判定として ${rank} を出しています。`,
 		"",
 		"反論: 設備が古い、壊れないか不安。",
 		`切り返し: 設備情報は ${equipmentLine} です。事故歴・整備履歴・残リスクは和上側で確認した範囲と未確認を分けて説明します。`,
@@ -18346,7 +18512,7 @@ function buildSalesProposalEnablementSections(
 		"",
 		"反論: 税務メリットは本当に使えるのか。",
 		finance
-			? `切り返し: 本資料では実効税率 ${trimTrailingZeros(finance.effectiveTaxRate)}%、年間償却 ${formatYen(finance.annualDepreciation)}、税効果 ${formatYen(finance.taxBenefit)} として試算しています。実処理は顧問税理士確認前提です。`
+			? `切り返し: 本資料では実効税率 ${trimTrailingZeros(finance.effectiveTaxRate)}%、年間償却 ${formatYen(finance.annualDepreciation)}、税効果 ${formatFinanceDerivedLabel(formatYen(finance.taxBenefit), finance)} として試算しています。実処理は顧問税理士確認前提です。`
 			: "切り返し: 税率、融資、利益見込を入れると税効果まで試算できます。実処理は顧問税理士確認前提です。",
 	].join("\n");
 	const financeMemo = finance
@@ -18354,7 +18520,7 @@ function buildSalesProposalEnablementSections(
 				`商品構成: 土地 ${formatYen(finance.landPrice)} / システム ${formatYen(finance.systemPrice)} / 権利代 ${formatYen(finance.rightsPrice)}`,
 				`償却: システム17年 / 権利代5年 / 年間償却 ${formatYen(finance.annualDepreciation)} / 減価償却年数 ${trimTrailingZeros(finance.depreciationYears)}年`,
 				`融資: 借入 ${formatYen(finance.loanAmount)} / 金利 ${trimTrailingZeros(finance.interestRate)}% / 年間返済 ${formatYen(finance.annualDebtService)} / 元本 ${formatYen(finance.annualPrincipalRepayment)} / 利息 ${formatYen(finance.annualInterestExpense)}`,
-				`税効果後CF: ${formatYen(finance.afterTaxCashflow)} / DSCR ${finance.dscr !== null ? trimTrailingZeros(finance.dscr) : "借入なし"} / 購入タイミング ${finance.timingRank}`,
+				`税効果後CF: ${formatFinanceDerivedLabel(formatYen(finance.afterTaxCashflow), finance)} / DSCR ${finance.dscr !== null ? trimTrailingZeros(finance.dscr) : "借入なし"} / 購入タイミング ${finalFinanceReady ? finance.timingRank : "保留"}`,
 				`B/S提案: ${rubricSummary} / ${finance.salesRubric.recommendedModel} / ${finance.salesRubric.recommendedLocation}`,
 				`営業ひと言: ${finance.salesRubric.killerPhrase}`,
 				`和上確認: ${buildProposalWajoCompactLine(draft.wajoSupport)} / 残リスク ${draft.wajoSupport.remainingRisk || "未入力"}`,
@@ -18399,6 +18565,16 @@ function readProposalWajoSupport(properties: Record<string, unknown>): ProposalW
 	const maintenanceSummary = readFirstTextByAliases(properties, ["和上整備サマリー", "整備サマリー"]);
 	const warrantyComment = readFirstTextByAliases(properties, ["和上保証コメント", "和上保証・整備コメント"]);
 	const remainingRisk = readFirstTextByAliases(properties, ["残リスク", "未対策事項"]);
+	const evidenceLabel =
+		readFirstDateLabelByAliases(properties, ["現地確認日", "和上確認日", "設備確認日"]) ||
+		readFirstTextByAliases(properties, [
+			"確認元区分",
+			"和上確認範囲",
+			"確認資料URL",
+			"和上確認資料",
+			"保証範囲",
+			"保証除外事項",
+		]);
 	const checkedItems = [
 		readFirstTextByAliases(properties, ["草刈り実施"]),
 		readFirstTextByAliases(properties, ["電気点検実施"]),
@@ -18413,24 +18589,96 @@ function readProposalWajoSupport(properties: Record<string, unknown>): ProposalW
 		warrantyComment,
 		remainingRisk,
 		checkedItems,
+		evidenceLabel,
 		hasConcreteCheck: Boolean(
-			accidentStatus ||
-			maintenanceRank ||
-			warrantyRank ||
+			evidenceLabel ||
 			maintenanceSummary ||
 			warrantyComment ||
-			remainingRisk ||
 			checkedItems.length > 0
 		),
 	};
 }
 
+function readProposalImprovementPlan(properties: Record<string, unknown>): ProposalImprovementPlan {
+	const cost = readFirstNumberByAliases(properties, [
+		"是正工事費用",
+		"整備費用",
+		"修繕費用",
+		"追加整備費用",
+		"WAJOリボン費用",
+	]);
+	const annualRevenueLift = readFirstNumberByAliases(properties, [
+		"年間売電改善額",
+		"年間売電アップ額",
+		"売電改善額",
+		"整備後売電改善額",
+		"年間収益改善額",
+	]);
+	const annualGenerationLiftKwh = readFirstNumberByAliases(properties, [
+		"発電量改善kWh",
+		"年間発電量改善",
+		"発電量アップ",
+		"整備後発電量改善",
+	]);
+	const afterAnnualNetIncome = readFirstNumberByAliases(properties, [
+		"整備後年間手残り",
+		"改善後年間手残り",
+		"整備後キャッシュ",
+		"改善後年間キャッシュ",
+	]);
+	const explicitPaybackYears = readFirstNumberByAliases(properties, [
+		"整備費回収年数",
+		"是正工事回収年数",
+		"修繕費回収年数",
+	]);
+	const calculatedPaybackYears =
+		explicitPaybackYears ??
+		(cost !== null && annualRevenueLift !== null && annualRevenueLift > 0
+			? roundTo(cost / annualRevenueLift, 2)
+			: null);
+	const items = readFirstTextByAliases(properties, [
+		"是正工事内容",
+		"整備内容",
+		"修繕内容",
+		"追加整備内容",
+		"WAJOリボン内容",
+	]);
+	const note = readFirstTextByAliases(properties, [
+		"是正提案メモ",
+		"整備提案メモ",
+		"修繕提案メモ",
+		"WAJOリボンメモ",
+	]);
+	return {
+		cost,
+		annualRevenueLift,
+		annualGenerationLiftKwh,
+		afterAnnualNetIncome,
+		paybackYears: calculatedPaybackYears,
+		items,
+		note,
+		hasConcretePlan:
+			cost !== null ||
+			annualRevenueLift !== null ||
+			annualGenerationLiftKwh !== null ||
+			afterAnnualNetIncome !== null ||
+			items.length > 0 ||
+			note.length > 0,
+	};
+}
+
 function buildProposalWajoCompactLine(support: ProposalWajoSupport): string {
+	if (!support.hasConcreteCheck) {
+		return "和上確認 要確認 / 整備 要確認 / 保証 要確認";
+	}
 	const parts = [
 		`事故歴 ${support.accidentStatus || "未確認"}`,
 		`整備 ${support.maintenanceRank || "未確認"}`,
 		`保証 ${support.warrantyRank || "要確認"}`,
 	];
+	if (support.evidenceLabel) {
+		parts.push(`根拠 ${support.evidenceLabel}`);
+	}
 	if (support.checkedItems.length > 0) {
 		parts.push(`実施 ${support.checkedItems.join(" / ")}`);
 	}
@@ -18517,14 +18765,57 @@ async function syncProposalPdfFileProperty(
 	}
 }
 
-function inferSalesProposalState(pdfExport: ProposalPdfExportResult): string {
-	if (pdfExport.attached) return "提案可能";
-	if (pdfExport.destination === "none") return "要確認";
+async function syncProposalHtmlFileProperty(
+	notion: NotionClient,
+	targetPage: Page,
+	fileUploadId?: string | null,
+): Promise<void> {
+	if (!fileUploadId) return;
+	const filePropertyName = findFirstFilesPropertyNameByAliases(
+		targetPage.properties ?? {},
+		PROPOSAL_HTML_FILE_PROPERTY_ALIASES,
+	);
+	if (!filePropertyName) {
+		console.log("proposal html file property not found", {
+			pageId: targetPage.id,
+		});
+		return;
+	}
+	try {
+		await notion.pages.update({
+			page_id: targetPage.id,
+			properties: {
+				[filePropertyName]: {
+					files: [
+						{
+							type: "file_upload",
+							file_upload: { id: fileUploadId },
+							name: "提案シミュレーション.html",
+						},
+					],
+				},
+			},
+		});
+	} catch (error) {
+		console.log("proposal html file sync skipped", {
+			pageId: targetPage.id,
+			error: String(error),
+		});
+	}
+}
+
+function inferSalesProposalState(htmlExport: ProposalHtmlExportResult): string {
+	if (htmlExport.attached) return "提案可能";
+	if (htmlExport.destination === "none") return "要確認";
 	return "下書き";
 }
 
 function inferSalesProposalRank(draft: ProposalSimulationDraft): string {
-	if (draft.financeSimulation?.timingRank) return draft.financeSimulation.timingRank;
+	if (draft.financeSimulation) {
+		return isFinalFinanceJudgmentReady(draft.financeSimulation)
+			? draft.financeSimulation.timingRank
+			: "保留";
+	}
 	if (draft.expectedYield !== null && draft.expectedYield >= 8) return "A";
 	if (draft.expectedYield !== null && draft.expectedYield >= 5) return "B";
 	return "C";
@@ -18534,6 +18825,7 @@ function inferSalesProposalActionCategory(draft: ProposalSimulationDraft): strin
 	if (draft.grossProfit !== null && draft.grossProfit <= 0) return "捨てる案件";
 	if (draft.annualNetIncome !== null && draft.annualNetIncome <= 0) return "捨てる案件";
 	if (draft.paybackYears !== null && draft.paybackYears > 20) return "捨てる案件";
+	if (draft.financeSimulation && !isFinalFinanceJudgmentReady(draft.financeSimulation)) return "保留案件";
 	const timingRank = draft.financeSimulation?.timingRank ?? null;
 	if (timingRank === "S" || timingRank === "A") return "やるべき案件";
 	if (timingRank === "B") return "化ける案件";
@@ -18543,10 +18835,12 @@ function inferSalesProposalActionCategory(draft: ProposalSimulationDraft): strin
 
 function buildSalesProposalNextActionLines(
 	actionCategory: string,
-	pdfExport: ProposalPdfExportResult,
+	htmlExport: ProposalHtmlExportResult,
 ): string[] {
 	const lines = [
-		"提案PDF確認: files型の『提案PDF』を開く",
+		htmlExport.attached
+			? "正式提案ページ確認: files型の『提案HTML』または本文末尾のHTML提案書を開く"
+			: "正式提案ページ確認: files型の『提案HTML』または『HTML提案書』プロパティを追加する",
 	];
 	switch (actionCategory) {
 		case "やるべき案件":
@@ -18571,6 +18865,8 @@ function buildFinanceSimulationRecordProperties(
 	projectIdOverride?: string | null,
 ): Record<string, unknown> {
 	const finance = draft.financeSimulation!;
+	const finalJudgmentReady = isFinalFinanceJudgmentReady(finance);
+	const taxInputReady = finance.taxBenefitBasis === "input-derived";
 	const equityBase = draft.salePrice ?? draft.purchaseCost ?? 0;
 	const selfFunding = Math.max(0, equityBase - finance.loanAmount);
 	const relatedProjectId =
@@ -18589,19 +18885,19 @@ function buildFinanceSimulationRecordProperties(
 			年間利息額: { number: finance.annualInterestExpense },
 			返済期間: finance.loanYears !== null ? { number: finance.loanYears } : undefined,
 			自己資金: { number: selfFunding },
-			実効税率: { number: finance.effectiveTaxRate },
+			実効税率: finance.effectiveTaxRateSource === "input" ? { number: finance.effectiveTaxRate } : undefined,
 			減価償却年数: { number: finance.depreciationYears },
-			NPV: { number: finance.projectNpv },
-			IRR: { number: finance.projectIrr },
-			経済メリット: { number: finance.economicBenefit },
+			NPV: taxInputReady ? { number: finance.projectNpv } : undefined,
+			IRR: taxInputReady ? { number: finance.projectIrr } : undefined,
+			経済メリット: taxInputReady ? { number: finance.economicBenefit } : undefined,
 			今期利益見込: finance.pretaxProfit !== null ? { number: finance.pretaxProfit } : undefined,
 		土地代: compositionItemConfirmed("土地代") ? { number: finance.landPrice } : undefined,
 		システム本体価格: compositionItemConfirmed("システム本体価格") ? { number: finance.systemPrice } : undefined,
 		権利代: compositionItemConfirmed("権利代") ? { number: finance.rightsPrice } : undefined,
 		年間返済額: { number: finance.annualDebtService },
 		年間償却額: { number: finance.annualDepreciation },
-		税効果: { number: finance.taxBenefit },
-		税引後キャッシュフロー: { number: finance.afterTaxCashflow },
+		税効果: taxInputReady ? { number: finance.taxBenefit } : undefined,
+		税引後キャッシュフロー: taxInputReady ? { number: finance.afterTaxCashflow } : undefined,
 		投資構成確認: richText(
 			finance.composition.verificationStatus === "確認済み"
 				? "土地代・システム本体価格・権利代の構成を確認済み"
@@ -18617,22 +18913,22 @@ function buildFinanceSimulationRecordProperties(
 		出口時残債: finance.exitScenario.loanBalanceAtExit !== null
 			? { number: finance.exitScenario.loanBalanceAtExit }
 			: undefined,
-		出口手取り: finance.exitScenario.netExitProceeds !== null
+		出口手取り: taxInputReady && finance.exitScenario.netExitProceeds !== null
 			? { number: finance.exitScenario.netExitProceeds }
 			: undefined,
-		出口エクイティNPV: finance.exitScenario.equityNpv !== null
+		出口エクイティNPV: taxInputReady && finance.exitScenario.equityNpv !== null
 			? { number: finance.exitScenario.equityNpv }
 			: undefined,
-		出口エクイティIRR: finance.exitScenario.equityIrr !== null
+		出口エクイティIRR: taxInputReady && finance.exitScenario.equityIrr !== null
 			? { number: finance.exitScenario.equityIrr }
 			: undefined,
-		"3年累計運用手取り": finance.exitScenario.cumulativeOperatingCashflow !== null
+		"3年累計運用手取り": taxInputReady && finance.exitScenario.cumulativeOperatingCashflow !== null
 			? { number: finance.exitScenario.cumulativeOperatingCashflow }
 			: undefined,
-		"3年総受取額": finance.exitScenario.totalCashReceived !== null
+		"3年総受取額": taxInputReady && finance.exitScenario.totalCashReceived !== null
 			? { number: finance.exitScenario.totalCashReceived }
 			: undefined,
-		"3年投資差益": finance.exitScenario.netInvestmentGain !== null
+		"3年投資差益": taxInputReady && finance.exitScenario.netInvestmentGain !== null
 			? { number: finance.exitScenario.netInvestmentGain }
 			: undefined,
 		出口価格根拠: richText(
@@ -18645,8 +18941,12 @@ function buildFinanceSimulationRecordProperties(
 		DSCR: finance.dscr !== null ? { number: finance.dscr } : undefined,
 		実質金利: finance.effectiveInterestRate !== null ? { number: finance.effectiveInterestRate } : undefined,
 		アドオン金利: finance.addOnInterestRate !== null ? { number: finance.addOnInterestRate } : undefined,
-		購入タイミング判定: select(finance.timingRank),
-		購入タイミング理由: richText(finance.timingReason),
+		購入タイミング判定: finalJudgmentReady ? select(finance.timingRank) : undefined,
+		購入タイミング理由: richText(
+			finalJudgmentReady
+				? finance.timingReason
+				: `${getFinalFinanceHoldReason(finance)}のため、顧客財務込みの最終判定は保留です。投資対象としての条件評価は別途HTMLで表示します。`,
+		),
 		金利メモ: richText(
 			"入力金利は元利均等返済の年率として扱い、アドオン金利は総支払利息から換算しています。",
 		),
@@ -18655,8 +18955,11 @@ function buildFinanceSimulationRecordProperties(
 			finance.salesRubric.totalScore !== null
 				? `B/Sルーブリック: ${finance.salesRubric.totalScore}点 / ${finance.salesRubric.route}ルート / ${finance.salesRubric.routeTitle}`
 				: "B/Sルーブリック: 流動比率・利益剰余金・自己資本比率が未入力のため判定保留。",
+			finance.taxBenefitBasis === "input-derived"
+				? "税効果: 実効税率・今期利益見込の入力値由来。"
+				: "税効果: 実効税率または今期利益見込が未入力のため、HTML上は参考試算に限定し、通常数値プロパティへは書き戻しません。",
 		].join("\n")),
-		ファイナンス状態: select("準備完了"),
+		ファイナンス状態: select(finalJudgmentReady ? "準備完了" : "要確認"),
 	};
 	return Object.fromEntries(
 		Object.entries(properties).filter(([, value]) => value !== undefined),
@@ -18677,9 +18980,11 @@ type ProposalPdfExportResult = {
 	fileUrl: string | null;
 };
 
+type ProposalHtmlExportResult = ProposalPdfExportResult;
+
 type ResidentDocumentPdfExportResult = ProposalPdfExportResult;
 
-type GeneratedCaseDocumentKind = "proposal" | "finance" | "resident";
+type GeneratedCaseDocumentKind = "proposal" | "proposalHtml" | "finance" | "resident";
 
 type GeneratedCaseDocumentRegistration = {
 	action: "created" | "updated" | "skipped";
@@ -18703,8 +19008,12 @@ const GENERATED_CASE_DOCUMENT_CONFIG: Record<
 		titleSuffix: "提案シミュレーションPDF",
 		documentTypeCandidates: ["発電シミュレーション"],
 	},
+	proposalHtml: {
+		titleSuffix: "提案シミュレーションHTML",
+		documentTypeCandidates: ["発電シミュレーション"],
+	},
 	finance: {
-		titleSuffix: "投資条件シミュレーションPDF",
+		titleSuffix: "投資条件シミュレーションHTML",
 		// 現行の案件資料DBには投資条件専用の選択肢が未確認のため、
 		// 既存選択肢を勝手に増やさず、該当候補がある場合だけ設定する。
 		documentTypeCandidates: ["投資条件シミュレーション", "ファイナンスシミュレーション"],
@@ -18755,7 +19064,7 @@ async function upsertGeneratedCaseDocument(
 	input: GeneratedCaseDocumentInput,
 ): Promise<GeneratedCaseDocumentRegistration> {
 	if (!input.fileUploadId) {
-		return { action: "skipped", message: "PDFアップロードIDがないため案件資料DBへの登録を見送りました。" };
+		return { action: "skipped", message: "資料ファイルのアップロードIDがないため案件資料DBへの登録を見送りました。" };
 	}
 	if (!input.projectPageId) {
 		return { action: "skipped", message: "関連案件を解決できないため案件資料DBへの登録を見送りました。" };
@@ -18821,13 +19130,13 @@ async function upsertGeneratedCaseDocument(
 		);
 		if (existingPage) {
 			await notion.pages.update({ page_id: existingPage.id, properties });
-			return { action: "updated", message: "案件資料DBの既存PDF台帳を更新しました。" };
+			return { action: "updated", message: "案件資料DBの既存資料台帳を更新しました。" };
 		}
 		await notion.pages.create({
 			parent: { data_source_id: CASE_DOCUMENT_DATA_SOURCE_ID },
 			properties,
 		});
-		return { action: "created", message: "案件資料DBへPDF台帳を登録しました。" };
+		return { action: "created", message: "案件資料DBへ資料台帳を登録しました。" };
 	} catch (error) {
 		console.log("generated case document registration skipped", {
 			kind: input.kind,
@@ -18835,7 +19144,7 @@ async function upsertGeneratedCaseDocument(
 			projectPageId: input.projectPageId,
 			error: String(error),
 		});
-		return { action: "skipped", message: "案件資料DBへの台帳登録に失敗しました。PDF本体は元レコードへ保存済みです。" };
+		return { action: "skipped", message: "案件資料DBへの台帳登録に失敗しました。資料本体は元レコードへ保存済みです。" };
 	}
 }
 
@@ -18889,6 +19198,40 @@ function buildProposalPdfBlocks(
 	];
 }
 
+function buildProposalHtmlBlocks(
+	fileUploadId: string,
+	fileName: string,
+): Array<Record<string, unknown>> {
+	return [
+		{
+			object: "block",
+			type: "heading_3",
+			heading_3: {
+				rich_text: [
+					{
+						type: "text",
+						text: { content: "HTML提案書リンク" },
+					},
+				],
+			},
+		},
+		{
+			object: "block",
+			type: "file",
+			file: {
+				type: "file_upload",
+				file_upload: { id: fileUploadId },
+				caption: [
+					{
+						type: "text",
+						text: { content: fileName },
+					},
+				],
+			},
+		},
+	];
+}
+
 function buildInvestmentConditionPdfBlocks(
 	fileUploadId: string,
 	fileName: string,
@@ -18912,8 +19255,91 @@ function buildInvestmentConditionPdfBlocks(
 	];
 }
 
+function buildInvestmentConditionHtmlBlocks(
+	fileUploadId: string,
+	fileName: string,
+): Array<Record<string, unknown>> {
+	return [
+		{
+			object: "block",
+			type: "heading_3",
+			heading_3: {
+				rich_text: [{ type: "text", text: { content: INVESTMENT_CONDITION_HTML_HEADING } }],
+			},
+		},
+		{
+			object: "block",
+			type: "file",
+			file: {
+				type: "file_upload",
+				file_upload: { id: fileUploadId },
+				caption: [{ type: "text", text: { content: fileName } }],
+			},
+		},
+	];
+}
+
 function blockTextIncludes(block: Record<string, unknown>, textToFind: string): boolean {
 	return JSON.stringify(block).includes(textToFind);
+}
+
+async function upsertInvestmentConditionHtmlPreview(
+	notion: NotionClient,
+	financePageId: string,
+	fileUploadId: string,
+	fileName: string,
+): Promise<{ attached: boolean; message: string }> {
+	if (!notion.blocks?.children?.list || !notion.blocks.children.append) {
+		return {
+			attached: false,
+			message: "HTML本文リンクを保存するBlocks APIが利用できません。",
+		};
+	}
+	try {
+		const listed = await notion.blocks.children.list({ block_id: financePageId, page_size: 100 });
+		const blocks = listed.results ?? [];
+		const headingIndex = blocks.findIndex((block) =>
+			blockTextIncludes(block, INVESTMENT_CONDITION_HTML_HEADING),
+		);
+		const existingFile =
+			headingIndex >= 0
+				? blocks.slice(headingIndex + 1).find((block) => block.type === "file")
+				: undefined;
+
+		if (existingFile) {
+			const blockId = typeof existingFile.id === "string" ? existingFile.id : "";
+			if (!blockId || !notion.blocks.update) {
+				return {
+					attached: false,
+					message: "既存の投資条件HTMLリンクを置換するBlocks APIが利用できません。重複追加は行いませんでした。",
+				};
+			}
+			await notion.blocks.update({
+				block_id: blockId,
+				type: "file",
+				file: {
+					type: "file_upload",
+					file_upload: { id: fileUploadId },
+					caption: [{ type: "text", text: { content: fileName } }],
+				},
+			});
+			return { attached: true, message: "既存の投資条件HTMLリンクを更新しました。" };
+		}
+
+		await notion.blocks.children.append({
+			block_id: financePageId,
+			children:
+				headingIndex >= 0
+					? buildInvestmentConditionHtmlBlocks(fileUploadId, fileName).slice(1)
+					: buildInvestmentConditionHtmlBlocks(fileUploadId, fileName),
+		});
+		return { attached: true, message: "投資条件ページ本文へHTML提案書リンクを追加しました。" };
+	} catch (error) {
+		return {
+			attached: false,
+			message: `投資条件HTMLリンクの保存に失敗しました。${String(error)}`,
+		};
+	}
 }
 
 async function upsertInvestmentConditionPdfPreview(
@@ -19377,6 +19803,117 @@ function formatInvestmentDecisionMetric(rank: "S" | "A" | "B" | "C"): string {
 	return "C / 再検討";
 }
 
+function formatFinanceExitSourceLabel(scenario: FinanceExitScenario): string {
+	if (scenario.priceSource === "和上買取コミット") {
+		return `${scenario.commitmentStatus} / ${scenario.commitmentPrice !== null ? formatYen(scenario.commitmentPrice) : "価格要設定"}`;
+	}
+	if (scenario.priceSource === "出口想定") {
+		return `出口想定 / ${scenario.exitSalePrice !== null ? formatYen(scenario.exitSalePrice) : "価格要設定"}`;
+	}
+	return "出口価格を設定すると算出";
+}
+
+function buildFinanceCustomerThesisLines(finance: FinanceSimulation): string[] {
+	const exit = finance.exitScenario;
+	const exitIsReady = exit.missingItems.length === 0;
+	const exitPhrase = finance.taxBenefitBasis !== "input-derived"
+		? `${exit.exitYears}年出口の手取りは参考試算（仮置き前提）です。税務前提の入力後に確定評価します。`
+		: exitIsReady
+			? `${exit.exitYears}年出口まで含めて、税引き後キャッシュを確認できる状態です。`
+			: `${exit.exitYears}年出口は、${exit.missingItems.join("・")}を入れると手取りまで確定できます。`;
+	const commitmentPhrase = exit.priceSource === "和上買取コミット"
+		? "和上買取コミットを出口価格の根拠に置けるため、売却時の見通しを説明しやすい案件です。"
+		: "出口価格を固めることで、保有中の収益と売却時の手取りを一体で判断できます。";
+	if (!isFinalFinanceJudgmentReady(finance)) {
+		const holdReason = getFinalFinanceHoldReason(finance);
+		return [
+			"本資料では、投資対象としての条件評価と、顧客財務を含む最終提案判定を分けて確認します。",
+			`現時点では${holdReason}のため、最終判定は保留です。表面利回りだけではなく、借入返済、減価償却、税効果、出口手取りを合わせて見ます。${exitPhrase}`,
+			commitmentPhrase,
+		];
+	}
+	const rankText = formatInvestmentDecisionMetric(finance.timingRank);
+	return [
+		`本資料の結論は「${rankText}」です。表面利回りだけではなく、借入返済、減価償却、税効果、出口手取りを合わせて見ます。`,
+		`取得時に使える税制を、出口まで含めた税引き後キャッシュで選ぶことが、この案件を見るうえで一番大事です。${exitPhrase}`,
+		commitmentPhrase,
+	];
+}
+
+function buildFinanceDecisionRows(finance: FinanceSimulation): string {
+	const exit = finance.exitScenario;
+	const finalJudgmentReady = isFinalFinanceJudgmentReady(finance);
+	const nextConditionLabel = finalJudgmentReady && finance.timingRank === "S" ? "提案の進め方" : "次に固める条件";
+	const nextConditionValue =
+		finalJudgmentReady && finance.timingRank === "S"
+			? "この条件を土台に、出口価格・融資条件・税務処理の順で最終確認へ進めます。"
+			: finalJudgmentReady
+				? finance.timingUpperGapReason
+				: getFinalFinanceHoldAction(finance);
+	return htmlRows([
+		["投資対象としての条件評価", `${formatConditionEvaluationMetric(finance)}。${formatFinanceTimingHeadline(finance)}`],
+		[
+			"顧客財務込みの最終提案判定",
+			finalJudgmentReady
+				? `${formatInvestmentDecisionMetric(finance.timingRank)}。${formatFinanceTimingHeadline(finance)}`
+				: `${getFinalFinanceHoldReason(finance)} / 最終判定保留`,
+		],
+		["判断軸", "表面利回りではなく、借入返済・税効果・出口手取りまで含めた税引き後キャッシュで判断します。"],
+		["進め方", formatFinanceTimingReason(finance)],
+		[nextConditionLabel, nextConditionValue],
+		[
+			`${exit.exitYears}年出口`,
+			exit.missingItems.length
+				? `${exit.missingItems.join("・")}を入れると出口手取りを確定できます。`
+				: finance.taxBenefitBasis !== "input-derived"
+					? `${formatFinanceExitSourceLabel(exit)}を前提にした出口手取り ${formatYen(exit.netExitProceeds ?? 0)} は参考試算（仮置き前提）です。`
+					: `${formatFinanceExitSourceLabel(exit)}を前提に、出口手取り ${formatYen(exit.netExitProceeds ?? 0)} まで確認済みです。`,
+		],
+	]);
+}
+
+function buildFinanceCashflowRows(finance: FinanceSimulation): string {
+	return htmlRows([
+		["年間売電手残り", "返済前の年間収支を基準に、返済と税効果を重ねて見ます。"],
+		["年間返済", `${formatYen(finance.annualDebtService)}（元本 ${formatYen(finance.annualPrincipalRepayment)} / 利息 ${formatYen(finance.annualInterestExpense)}）`],
+		["減価償却", `年間 ${formatYen(finance.annualDepreciation)}（システム17年 / 権利代5年）`],
+		["税効果", formatFinanceTaxBenefitLabel(finance)],
+		["税効果後CF", formatFinanceDerivedLabel(`${formatYen(finance.afterTaxCashflow)} / 経済メリット累計 ${formatYen(finance.totalEconomicalBenefit)}`, finance)],
+		["DSCR", finance.dscr !== null ? `${trimTrailingZeros(finance.dscr)} / 返済余力の確認値` : "借入なし"],
+	]);
+}
+
+function buildFinanceExitRows(finance: FinanceSimulation): string {
+	const exit = finance.exitScenario;
+	return htmlRows([
+		["出口価格の根拠", formatFinanceExitSourceLabel(exit)],
+		["出口想定年数", `${exit.exitYears}年`],
+		["出口売却価格", exit.exitSalePrice !== null ? formatYen(exit.exitSalePrice) : "要設定"],
+		["出口費用率", exit.exitCostRate !== null ? `${trimTrailingZeros(exit.exitCostRate)}%` : "要設定"],
+		["出口時残債", exit.loanBalanceAtExit !== null ? formatYen(exit.loanBalanceAtExit) : "要設定"],
+		["出口手取り", exit.netExitProceeds !== null ? formatFinanceDerivedLabel(formatYen(exit.netExitProceeds), finance) : "要設定"],
+		["保有中手取り", exit.cumulativeOperatingCashflow !== null ? formatFinanceDerivedLabel(formatYen(exit.cumulativeOperatingCashflow), finance) : "要設定"],
+		["出口込み受取", exit.totalCashReceived !== null ? formatFinanceDerivedLabel(formatYen(exit.totalCashReceived), finance) : "要設定"],
+		["出口計算の不足", exit.missingItems.length ? exit.missingItems.join("・") : "不足なし"],
+	]);
+}
+
+function buildFinanceBankRows(finance: FinanceSimulation): string {
+	const rubric = finance.salesRubric;
+	return htmlRows([
+		["財務3指標", `流動比率 ${formatRubricMetric(rubric.liquidityRatio, "%")} / 利益剰余金 ${formatRubricMetric(rubric.retainedEarnings, "円")} / 自己資本比率 ${formatRubricMetric(rubric.equityRatio, "%")}`],
+		["B/S判定", formatBalanceSheetSalesRubricSummary(rubric)],
+		["提案ルート", rubric.recommendedModel],
+		[
+			"銀行相談",
+			rubric.totalScore === null
+				? "財務3指標を入れると、融資相談の打ち出し方を確定できます。"
+				: `${rubric.routeTitle}として、借入額・返済期間・自己資金の組み方を調整します。`,
+		],
+		["与信情報", "TDB等の与信取得後に、銀行説明用の補足資料を更新します。"],
+	]);
+}
+
 async function exportInvestmentConditionPdf(
 	notion: NotionClient,
 	financePage: Page,
@@ -19514,13 +20051,43 @@ async function processInvestmentConditionPdf(
 	notion: NotionClient,
 ): Promise<InvestmentConditionPdfResult> {
 	const financePage = await notion.pages.retrieve({ page_id: input.financePageId });
+	const financeProjectIds = relationIdsFromProperty(financePage.properties?.["関連案件"]);
+	if (financeProjectIds.length > 1) {
+		return {
+			financePageId: financePage.id,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			missingField: "関連案件",
+			message: "投資条件シミュレーションは、関連案件が1件だけ紐づいたファイナンスページから実行してください。",
+		};
+	}
 	const proposalPage = await resolveInvestmentConditionProposalPage(notion, financePage);
 	if (!proposalPage) {
 		return {
 			financePageId: financePage.id,
 			action: input.dryRun ? "dry-run" : "needs-input",
 			missingField: "提案シミュレーション",
-			message: "投資条件PDFを出力する前に、関連する提案シミュレーションを1件だけ作成してください。",
+			message: "投資条件シミュレーションを出力する前に、関連する提案シミュレーションを1件だけ作成してください。",
+		};
+	}
+	const proposalProjectIds = relationIdsFromProperty(proposalPage.properties?.["関連案件"]);
+	if (proposalProjectIds.length > 1) {
+		return {
+			financePageId: financePage.id,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			missingField: "関連案件",
+			message: "関連する提案シミュレーションの関連案件を1件に絞ってから、投資条件シミュレーションを実行してください。",
+		};
+	}
+	if (
+		financeProjectIds.length === 1 &&
+		proposalProjectIds.length === 1 &&
+		financeProjectIds[0] !== proposalProjectIds[0]
+	) {
+		return {
+			financePageId: financePage.id,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			missingField: "関連案件",
+			message: "ファイナンスページと提案シミュレーションの関連案件が一致していません。対象案件を確認してください。",
 		};
 	}
 
@@ -19590,7 +20157,7 @@ async function processInvestmentConditionPdf(
 			financePageId: financePage.id,
 			action: input.dryRun ? "dry-run" : "error",
 			missingField: null,
-			message: "現行の投資条件PDFは太陽光のファイナンス計算を対象にしています。系統用蓄電池の投資条件PDFは別ロジックで実装します。",
+			message: "現行の投資条件シミュレーションは太陽光のファイナンス計算を対象にしています。系統用蓄電池の投資条件シミュレーションは別ロジックで実装します。",
 		};
 	}
 	const readiness = evaluateInvestmentConditionPdfReadiness(financePage.properties ?? {});
@@ -19600,7 +20167,7 @@ async function processInvestmentConditionPdf(
 			action: input.dryRun ? "dry-run" : "needs-input",
 			missingField: readiness.missingField,
 			message: buildSequentialMissingMessage(
-				"投資条件PDF",
+				"投資条件シミュレーション",
 				readiness.missingField,
 				readiness.nextRequiredFields,
 			),
@@ -19611,35 +20178,27 @@ async function processInvestmentConditionPdf(
 			financePageId: financePage.id,
 			action: "dry-run",
 			missingField: null,
-			message: "dry-run: 投資条件ページ本文へPDFプレビューを作成します。",
+			message: "dry-run: 投資条件ページ本文へHTML提案書リンクを作成します。",
 		};
 	}
 
-	const projectId = relationIdsFromProperty(financePage.properties?.["関連案件"])[0] ?? null;
+	const projectId = financeProjectIds[0] ?? proposalProjectIds[0] ?? null;
 	await syncFinanceSimulationRecord(notion, simulationSourcePage, draft, projectId);
 	const refreshedFinancePage = await notion.pages.retrieve({ page_id: financePage.id });
-	const pdfExport = await exportInvestmentConditionPdf(notion, refreshedFinancePage, draft);
-	if (!pdfExport.attached) {
+	const htmlExport = await exportInvestmentConditionHtml(notion, refreshedFinancePage, draft);
+	if (!htmlExport.attached) {
 		return {
 			financePageId: financePage.id,
 			action: "error",
 			missingField: null,
-			message: pdfExport.message,
+			message: htmlExport.message,
 		};
 	}
-	const caseDocumentRegistration = await upsertGeneratedCaseDocument(notion, {
-		kind: "finance",
-		requestPageId: proposalPage.id,
-		projectPageId: projectId,
-		sourceTitle: readGenericPageTitle(proposalPage),
-		fileUploadId: pdfExport.fileUploadId,
-		fileName: pdfExport.fileName,
-	});
-	const preparedMessage = `${pdfExport.message}\n資料台帳: ${caseDocumentRegistration.message}`;
+	const preparedMessage = htmlExport.message;
 	await createPageComment(
 		notion,
 		financePage.id,
-		`✅ 投資条件シミュレーションPDFを更新しました。\n${preparedMessage}`,
+		`✅ 投資条件シミュレーションHTMLを更新しました。\n${preparedMessage}`,
 	);
 	return {
 		financePageId: financePage.id,
@@ -19647,6 +20206,394 @@ async function processInvestmentConditionPdf(
 		missingField: null,
 		message: preparedMessage,
 	};
+}
+
+function escapeHtml(value: string): string {
+	return value
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;");
+}
+
+function htmlParagraphs(lines: string[]): string {
+	return lines
+		.filter((line) => line.trim().length > 0)
+		.map((line) => `<p>${escapeHtml(line)}</p>`)
+		.join("\n");
+}
+
+function htmlRows(rows: Array<[string, string]>): string {
+	return rows
+		.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`)
+		.join("\n");
+}
+
+function buildProposalSimulationHtml(draft: ProposalSimulationDraft): string {
+	const coverCards = buildProposalCoverCards(draft)
+		.map(
+			(card) => `
+				<div class="metric">
+					<span>${escapeHtml(card.label)}</span>
+					<strong>${escapeHtml(card.value)}</strong>
+				</div>`,
+		)
+		.join("\n");
+	const proposalSpecRows = htmlRows(buildProposalSpecRows(draft));
+	const generationBasisRows = htmlRows(buildProposalGenerationBasisRows(draft));
+	const longTermRows = htmlRows(buildProposalLongTermOutlookRows(draft));
+	const revenueRows = htmlRows(buildProposalRevenueRows(draft));
+	const safeRows = htmlRows(buildProposalCoverSafeRows(draft));
+	const wajoRows = htmlRows(buildProposalWajoReviewRows(draft));
+	const improvementRows = htmlRows(buildProposalImprovementRows(draft));
+	const checkRows = htmlRows(buildProposalSiteDueDiligenceRows(draft));
+	const qualityRows = htmlRows(buildProposalQualityUpgradeRows(draft));
+	const generationTrend = buildProposalAnnualGenerationTrend(draft)
+		.slice(0, 12)
+		.map((point) => `<span><b>${escapeHtml(point.label)}</b>${escapeHtml(formatProposalMwhForPdf(point.value))}</span>`)
+		.join("");
+	const revenueTrend = buildProposalAnnualRevenueTrend(draft)
+		.slice(0, 12)
+		.map((point) => `<span><b>${escapeHtml(point.label)}</b>${escapeHtml(formatCompactYenForPdf(point.value))}</span>`)
+		.join("");
+	const netTrend = buildProposalAnnualNetTrend(draft)
+		.slice(0, 12)
+		.map((point) => `<span><b>${escapeHtml(point.label)}</b>${escapeHtml(formatCompactYenForPdf(point.value))}</span>`)
+		.join("");
+	const sitePhotos = draft.sitePhotos.slice(0, 4).map((photo) =>
+		photo.url
+			? `<figure><img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.name)}"><figcaption>${escapeHtml(photo.name)}</figcaption></figure>`
+			: "",
+	).join("\n");
+	return `<!doctype html>
+<html lang="ja">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>${escapeHtml(draft.proposalTitle)}</title>
+	<style>
+		:root { --ink:#17212b; --muted:#64717b; --brand:#006b68; --line:#d8e2e1; --soft:#f3f8f7; --gold:#caa54b; }
+		* { box-sizing: border-box; }
+		body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif; color:var(--ink); background:#eef3f2; line-height:1.7; }
+		main { width:min(1120px, calc(100% - 32px)); margin:32px auto; background:white; box-shadow:0 12px 40px rgba(0,0,0,.08); }
+		header { background:#102d3a; color:white; padding:38px 48px; }
+		header p { margin:8px 0 0; color:#d9ecec; }
+		section { padding:34px 48px; border-bottom:1px solid var(--line); }
+		h1 { margin:0; font-size:32px; letter-spacing:0; line-height:1.35; }
+		h2 { margin:0 0 18px; color:var(--brand); font-size:22px; border-bottom:2px solid var(--line); padding-bottom:8px; }
+		h3 { margin:22px 0 10px; color:var(--brand); font-size:18px; }
+		.lead { font-size:17px; font-weight:700; }
+		.metrics { display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; margin-top:24px; }
+		.metric { border:1px solid var(--line); background:var(--soft); padding:18px; min-height:94px; }
+		.metric span { display:block; color:var(--muted); font-size:13px; margin-bottom:8px; }
+		.metric strong { font-size:24px; line-height:1.25; }
+		.specline { color:var(--muted); font-size:14px; margin-top:10px; }
+		.keymessage { border:1px solid var(--line); background:var(--soft); padding:18px 20px; margin-top:18px; font-weight:700; }
+		table { width:100%; border-collapse:collapse; margin:12px 0 20px; }
+		th, td { text-align:left; padding:12px 14px; border-bottom:1px solid #edf2f1; vertical-align:top; }
+		th { width:230px; color:var(--muted); font-weight:700; background:#fbfdfd; }
+		.grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+		.grid-strong { display:grid; grid-template-columns:1.1fr .9fr; gap:20px; align-items:start; }
+		.note { border:1px solid var(--line); background:var(--soft); padding:18px 20px; margin-top:16px; }
+		.ribbon { border-left:8px solid var(--gold); background:#fffaf0; padding:18px 20px; }
+		.trend { display:grid; grid-template-columns:repeat(6, 1fr); gap:8px; }
+		.trend span { display:block; border:1px solid var(--line); padding:8px; background:#fbfdfd; font-size:12px; }
+		.trend b { display:block; color:var(--brand); font-size:12px; }
+		.photos { display:grid; grid-template-columns:repeat(2, 1fr); gap:14px; }
+		figure { margin:0; border:1px solid var(--line); background:#f8fbfb; }
+		img { width:100%; height:220px; object-fit:cover; display:block; }
+		figcaption { padding:8px 10px; color:var(--muted); font-size:12px; }
+		footer { padding:22px 48px 34px; color:var(--muted); font-size:12px; }
+		@media (max-width: 780px) { main { width:100%; margin:0; } header, section, footer { padding:24px; } .metrics, .grid, .photos { grid-template-columns:1fr; } .trend { grid-template-columns:repeat(2, 1fr); } th { width:42%; } }
+		@media print { body { background:white; } main { width:100%; margin:0; box-shadow:none; } section { break-inside:avoid; } }
+	</style>
+</head>
+<body>
+<main>
+	<header>
+		<p>WAJO Sales OS | HTML Proposal</p>
+		<h1>${escapeHtml(draft.proposalTitle)}</h1>
+		<p>${escapeHtml(todayIsoDateInTokyo())}</p>
+	</header>
+	<section>
+		<h2>この発電所の提案</h2>
+		<p class="specline">${escapeHtml(buildProposalSpecLine(draft))}</p>
+		<div class="lead">${htmlParagraphs(draft.conclusionText.split("\n"))}</div>
+		<div class="metrics">${coverCards}</div>
+		<div class="keymessage">${htmlParagraphs(buildProposalCustomerCoreMessageLines(draft))}</div>
+	</section>
+	<section>
+		<h2>数字で見る発電所</h2>
+		<div class="grid-strong">
+			<div>
+				<h3>提案条件</h3>
+				<table>${proposalSpecRows}</table>
+			</div>
+			<div>
+				<h3>売電収支</h3>
+				<table>${revenueRows}</table>
+			</div>
+		</div>
+		<div class="note">${htmlParagraphs(buildProposalRevenueSummaryLines(draft))}</div>
+	</section>
+	<section>
+		<h2>設備・制度・発電量の根拠</h2>
+		<div class="grid">
+			<div>
+				<h3>設備・制度</h3>
+				<table>${safeRows}</table>
+			</div>
+			<div>
+				<h3>発電量の読み方</h3>
+				<table>${generationBasisRows}</table>
+			</div>
+		</div>
+	</section>
+	<section>
+		<h2>残存FIT・卒FITまでの見通し</h2>
+		<h3>年間発電量</h3>
+		<div class="trend">${generationTrend}</div>
+		<h3>年間売電収入</h3>
+		<div class="trend">${revenueTrend}</div>
+		<h3>年間手残り</h3>
+		<div class="trend">${netTrend}</div>
+		<table>${longTermRows}</table>
+	</section>
+	<section>
+		<h2>和上確認・整備付き購入の選択肢</h2>
+		<div class="grid">
+			<div>
+				<h3>和上確認・残リスク</h3>
+				<table>${wajoRows}</table>
+			</div>
+			<div class="ribbon">
+				<h3>整備付き購入の選択肢</h3>
+				<table>${improvementRows}</table>
+			</div>
+		</div>
+	</section>
+	<section>
+		<h2>現場写真・追加確認で提案精度を上げる項目</h2>
+		${sitePhotos ? `<div class="photos">${sitePhotos}</div>` : `<div class="note"><p>現場写真は未登録です。写真が入ると、設備・周辺環境の安心材料として使えます。</p></div>`}
+		<h3>現地・法令・環境チェック</h3>
+		<table>${checkRows}</table>
+		<h3>最終版で効く追加項目</h3>
+		<table>${qualityRows}</table>
+		<div class="note">${htmlParagraphs(buildProposalFinalCheckLines(draft))}</div>
+	</section>
+	<footer>
+		本ページはHTML提案書リンクを正式提案ページとして扱います。PDF化が必要な場合はブラウザ印刷で出力できますが、V1では参考出力です。
+	</footer>
+</main>
+</body>
+</html>`;
+}
+
+function buildInvestmentConditionHtml(draft: ProposalSimulationDraft): string {
+	const finance = draft.financeSimulation;
+	if (!finance) throw new Error("投資条件HTMLに必要なファイナンス計算結果がありません。");
+	const finalJudgmentReady = isFinalFinanceJudgmentReady(finance);
+	const metricCards = [
+		["最終提案判定", formatFinalFinanceDecisionMetric(finance)],
+		["投資対象条件", formatConditionEvaluationMetric(finance)],
+		[
+			`${finance.exitScenario.exitYears}年出口IRR`,
+			finance.exitScenario.equityIrr !== null
+				? formatFinanceDerivedLabel(`${trimTrailingZeros(finance.exitScenario.equityIrr)}%`, finance)
+				: "要設定",
+		],
+		[
+			`${finance.exitScenario.exitYears}年出口手取り`,
+			finance.exitScenario.netExitProceeds !== null
+				? formatFinanceDerivedLabel(formatYen(finance.exitScenario.netExitProceeds), finance)
+				: "要設定",
+		],
+		["DSCR", finance.dscr !== null ? trimTrailingZeros(finance.dscr) : "借入なし"],
+		[
+			"NPV / IRR",
+			formatFinanceDerivedLabel(
+				`${finance.projectNpv !== null ? formatYen(finance.projectNpv) : "未算出"} / ${finance.projectIrr !== null ? `${trimTrailingZeros(finance.projectIrr)}%` : "未算出"}`,
+				finance,
+			),
+		],
+		["税効果後CF", formatFinanceDerivedLabel(formatYen(finance.afterTaxCashflow), finance)],
+	]
+		.map(
+			([label, value]) => `
+				<div class="metric">
+					<span>${escapeHtml(label)}</span>
+					<strong>${escapeHtml(value)}</strong>
+				</div>`,
+		)
+		.join("\n");
+	const thesisLines = buildFinanceCustomerThesisLines(finance);
+	const decisionRows = buildFinanceDecisionRows(finance);
+	const compositionRows = htmlRows([
+		["販売価格", formatYen(draft.salePrice ?? 0)],
+		["土地代", formatYen(finance.landPrice)],
+		["システム本体価格", formatYen(finance.systemPrice)],
+		["権利代", formatYen(finance.rightsPrice)],
+		["構成合計 / 差額", `${formatYen(finance.composition.componentTotal)} / ${formatFinanceSignedYen(finance.componentBalanceDifference)}`],
+		["構成確認", finance.composition.verificationStatus],
+	]);
+	const cashflowRows = buildFinanceCashflowRows(finance);
+	const exitRows = buildFinanceExitRows(finance);
+	const rubric = finance.salesRubric;
+	const bankRows = buildFinanceBankRows(finance);
+	const nextReviewLine =
+		finalJudgmentReady && finance.timingRank === "S"
+			? "出口価格・融資条件・税務処理の順で、提案条件を最終確認します。"
+			: finalJudgmentReady
+				? finance.timingUpperGapReason
+				: getFinalFinanceHoldAction(finance);
+	return `<!doctype html>
+<html lang="ja">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>${escapeHtml(draft.titleLabel || "投資条件シミュレーション")}</title>
+	<style>
+		:root { --ink:#17212b; --muted:#65717a; --brand:#006b68; --line:#d9e4e3; --soft:#f4f8f7; --navy:#102d3a; --gold:#caa54b; --alert:#fff7df; }
+		* { box-sizing:border-box; }
+		body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif; color:var(--ink); background:#eef3f2; line-height:1.75; }
+		main { width:min(1120px, calc(100% - 32px)); margin:32px auto; background:white; box-shadow:0 12px 40px rgba(0,0,0,.08); }
+		header { background:var(--navy); color:white; padding:38px 48px; }
+		header p { margin:8px 0 0; color:#d9ecec; }
+		section { padding:34px 48px; border-bottom:1px solid var(--line); }
+		h1 { margin:0; font-size:32px; line-height:1.35; letter-spacing:0; }
+		h2 { margin:0 0 18px; color:var(--brand); font-size:22px; border-bottom:2px solid var(--line); padding-bottom:8px; }
+		h3 { margin:22px 0 10px; color:var(--brand); font-size:18px; }
+		.lead { font-size:17px; font-weight:700; }
+		.metrics { display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; margin-top:22px; }
+		.metric { border:1px solid var(--line); background:var(--soft); padding:18px; min-height:96px; }
+		.metric span { display:block; color:var(--muted); font-size:13px; margin-bottom:8px; }
+		.metric strong { font-size:24px; line-height:1.25; }
+		table { width:100%; border-collapse:collapse; margin:12px 0 20px; }
+		th, td { text-align:left; padding:12px 14px; border-bottom:1px solid #edf2f1; vertical-align:top; }
+		th { width:230px; color:var(--muted); background:#fbfdfd; }
+		.grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+		.thesis { border:1px solid var(--line); background:var(--alert); padding:20px 24px; margin-top:16px; }
+		.thesis p { margin:0 0 10px; font-weight:700; }
+		.thesis p:last-child { margin-bottom:0; }
+		.decision { border-left:8px solid var(--gold); background:#fffaf0; padding:18px 20px; margin-top:16px; }
+		.note { border:1px solid var(--line); background:var(--soft); padding:18px 20px; margin-top:16px; }
+		footer { padding:22px 48px 34px; color:var(--muted); font-size:12px; }
+		@media (max-width:780px) { main { width:100%; margin:0; } header, section, footer { padding:24px; } .metrics, .grid { grid-template-columns:1fr; } th { width:42%; } }
+		@media print { body { background:white; } main { width:100%; margin:0; box-shadow:none; } section { break-inside:avoid; } }
+	</style>
+</head>
+<body>
+<main>
+	<header>
+		<p>WAJO Sales OS | Finance Simulation</p>
+		<h1>${escapeHtml(draft.titleLabel || "投資条件シミュレーション")}</h1>
+		<p>${escapeHtml(todayIsoDateInTokyo())}</p>
+	</header>
+	<section>
+		<h2>財務提案の結論</h2>
+		<div class="thesis">${htmlParagraphs(thesisLines)}</div>
+		<div class="metrics">${metricCards}</div>
+		<table>${decisionRows}</table>
+	</section>
+	<section>
+		<h2>税引き後キャッシュで見る取得判断</h2>
+		<div class="grid">
+			<div>
+				<h3>投資構成</h3>
+				<table>${compositionRows}</table>
+			</div>
+			<div>
+				<h3>借入・税効果・キャッシュフロー</h3>
+				<table>${cashflowRows}</table>
+			</div>
+		</div>
+	</section>
+	<section>
+		<h2>${finance.exitScenario.exitYears}年出口設計</h2>
+		<table>${exitRows}</table>
+		<div class="decision">${htmlParagraphs([
+			finance.exitScenario.missingItems.length
+				? `出口計算は ${finance.exitScenario.missingItems.join("・")} の入力後に確定します。`
+				: `出口手取り ${formatFinanceDerivedLabel(formatYen(finance.exitScenario.netExitProceeds ?? 0), finance)}、運用手取り ${formatFinanceDerivedLabel(formatYen(finance.exitScenario.cumulativeOperatingCashflow ?? 0), finance)} を合わせて確認します。`,
+		])}</div>
+	</section>
+	<section>
+		<h2>融資・銀行相談の見立て</h2>
+		<table>${bankRows}</table>
+		<div class="note">${htmlParagraphs([
+			`確認後のご提案: ${rubric.totalScore === null ? "財務3指標を確認後、借入・返済・税効果をお客様の財務状況に合わせて最終調整します。" : `${rubric.recommendedModel}を具体的に検討します。`}`,
+			`次の確認: ${nextReviewLine}`,
+		])}</div>
+	</section>
+	<footer>
+		本ページはHTML提案書リンクを正式な投資条件資料として扱います。PDFはV1では参考出力です。
+	</footer>
+</main>
+</body>
+</html>`;
+}
+
+async function exportInvestmentConditionHtml(
+	notion: NotionClient,
+	financePage: Page,
+	draft: ProposalSimulationDraft,
+): Promise<ProposalHtmlExportResult> {
+	if (!notion.fileUploads?.create || !notion.fileUploads.send) {
+		return { attached: false, destination: "none", message: "この実行環境ではHTMLアップロード機能を利用できません。", fileName: "", fileUrl: null };
+	}
+	const titleSeed = draft.titleLabel || readGenericPageTitle(financePage) || "investment-condition";
+	const fileName = `${sanitizeFileName(titleSeed)}_投資条件_${todayIsoDateInTokyo()}.html`;
+	try {
+		const html = buildInvestmentConditionHtml(draft);
+		const created = await notion.fileUploads.create({
+			mode: "single_part",
+			filename: fileName,
+			content_type: "text/html; charset=utf-8",
+		});
+		const fileUploadId = firstString(
+			(created as Record<string, unknown>).id,
+			readNestedString(created, ["file_upload", "id"]),
+		) ?? "";
+		if (!fileUploadId) {
+			return { attached: false, destination: "none", message: "投資条件HTMLのアップロードIDを取得できませんでした。", fileName, fileUrl: null };
+		}
+		await notion.fileUploads.send({
+			file_upload_id: fileUploadId,
+			file: { filename: fileName, data: new Blob([html], { type: "text/html; charset=utf-8" }) },
+		});
+
+		const filePropertyName = findFirstFilesPropertyNameByAliases(
+			financePage.properties ?? {},
+			INVESTMENT_CONDITION_HTML_FILE_PROPERTY_ALIASES,
+		);
+		if (filePropertyName) {
+			await notion.pages.update({
+				page_id: financePage.id,
+				properties: {
+					[filePropertyName]: {
+						files: [{ type: "file_upload", file_upload: { id: fileUploadId }, name: fileName }],
+					},
+				},
+			});
+		}
+		const preview = await upsertInvestmentConditionHtmlPreview(
+			notion,
+			financePage.id,
+			fileUploadId,
+			fileName,
+		);
+		return {
+			attached: filePropertyName ? true : preview.attached,
+			destination: filePropertyName ? "property" : preview.attached ? "page_block" : "none",
+			message: filePropertyName ? `投資条件HTMLを保存しました（${filePropertyName}）。` : preview.message,
+			fileName,
+			fileUploadId,
+			fileUrl: null,
+		};
+	} catch (error) {
+		return { attached: false, destination: "none", message: `投資条件HTMLの保存に失敗しました。${String(error)}`, fileName, fileUrl: null };
+	}
 }
 
 async function exportProposalSimulationPdf(
@@ -19759,6 +20706,118 @@ async function exportProposalSimulationPdf(
 			attached: false,
 			destination: "none",
 			message: `PDF保存に失敗しました。${String(error)}`,
+			fileName,
+			fileUrl: null,
+		};
+	}
+}
+
+async function exportProposalSimulationHtml(
+	notion: NotionClient,
+	page: Page,
+	draft: ProposalSimulationDraft,
+): Promise<ProposalHtmlExportResult> {
+	if (!notion.fileUploads?.create || !notion.fileUploads.send) {
+		return {
+			attached: false,
+			destination: "none",
+			message: "この実行環境ではHTMLアップロード機能を利用できません。",
+			fileName: "",
+			fileUrl: null,
+		};
+	}
+
+	const properties = page.properties ?? {};
+	const filePropertyName = findFirstFilesPropertyNameByAliases(
+		properties,
+		PROPOSAL_HTML_FILE_PROPERTY_ALIASES,
+	);
+
+	const titleSeed = draft.titleLabel || readGenericPageTitle(page) || "proposal-simulation";
+	const fileName = `${sanitizeFileName(titleSeed)}_${todayIsoDateInTokyo()}.html`;
+	try {
+		const html = buildProposalSimulationHtml(draft);
+		const created = await notion.fileUploads.create({
+			mode: "single_part",
+			filename: fileName,
+			content_type: "text/html; charset=utf-8",
+		});
+		const fileUploadId =
+			firstString(
+				(created as Record<string, unknown>).id,
+				readNestedString(created, ["file_upload", "id"]),
+			) ?? "";
+		if (!fileUploadId) {
+			return {
+				attached: false,
+				destination: "none",
+				message: "HTMLアップロードIDの取得に失敗しました。",
+				fileName,
+				fileUrl: null,
+			};
+		}
+
+		await notion.fileUploads.send({
+			file_upload_id: fileUploadId,
+			file: {
+				filename: fileName,
+				data: new Blob([html], { type: "text/html; charset=utf-8" }),
+			},
+		});
+
+		if (filePropertyName) {
+			await notion.pages.update({
+				page_id: page.id,
+				properties: {
+					[filePropertyName]: {
+						files: [
+							{
+								type: "file_upload",
+								file_upload: { id: fileUploadId },
+								name: fileName,
+							},
+						],
+					},
+				},
+			});
+			return {
+				attached: true,
+				destination: "property",
+				message: `HTML提案書を保存しました（${filePropertyName}）。`,
+				fileName,
+				fileUploadId,
+				fileUrl: null,
+			};
+		}
+
+		if (notion.blocks?.children?.append) {
+			await notion.blocks.children.append({
+				block_id: page.id,
+				children: buildProposalHtmlBlocks(fileUploadId, fileName),
+			});
+			return {
+				attached: true,
+				destination: "page_block",
+				message: "HTML保存先プロパティが無かったため、同じレコード本文の末尾にHTML提案書を追加しました。",
+				fileName,
+				fileUploadId,
+				fileUrl: null,
+			};
+		}
+
+		return {
+			attached: false,
+			destination: "none",
+			message: "HTMLアップロードは完了しましたが、保存先が未設定です。files型の「提案HTML」または「HTML提案書」を追加してください。",
+			fileName,
+			fileUploadId,
+			fileUrl: null,
+		};
+	} catch (error) {
+		return {
+			attached: false,
+			destination: "none",
+			message: `HTML保存に失敗しました。${String(error)}`,
 			fileName,
 			fileUrl: null,
 		};
@@ -20727,7 +21786,7 @@ async function buildProposalSimulationPdfBytes(
 	drawNoteBox(
 		first,
 		y,
-		"投資ハイライト",
+		"この発電所の見立て",
 		buildProposalCoverHandlingLines(draft),
 		86,
 	);
@@ -20738,8 +21797,8 @@ async function buildProposalSimulationPdfBytes(
 	drawHeader(
 		second,
 		2,
-		"物件情報・税務前提",
-		"設備・税務の前提を確認",
+		"物件情報・売電収支",
+		"設備・売電条件を確認",
 	);
 
 	y = pageHeight - 126;
@@ -20771,31 +21830,26 @@ async function buildProposalSimulationPdfBytes(
 	}
 
 	y -= 4;
-	y = drawSectionTitle(second, y, "ファイナンス・税務前提");
+	y = drawSectionTitle(second, y, "売電収支");
 	drawNoteBox(
 		second,
 		y,
-		"ファイナンス要約",
-		buildProposalFinanceSummaryLines(draft),
+		"収支の読み方",
+		buildProposalRevenueSummaryLines(draft),
 		48,
 	);
 	y -= 56;
 	y = drawHorizontalValueBars(
 		second,
 		y,
-		"収益フロー",
+		"売電収支イメージ",
 		buildProposalChartItems(draft),
 		88,
 	);
-	const financeRows = buildProposalPdfFinanceRows(draft);
-	const primaryFinanceLabels = new Set([
-		"今回の投資判定",
-		"判定理由",
-	]);
 	y = drawDetailRows(
 		second,
 		y,
-		financeRows.filter(([label]) => primaryFinanceLabels.has(label)),
+		buildProposalRevenueRows(draft),
 	);
 
 	if (draft.proposalKind === "gridBattery") {
@@ -20866,7 +21920,7 @@ async function buildProposalSimulationPdfBytes(
 			{
 				height: 168,
 				formatter: (value) => formatCompactYenForPdf(value),
-				subtitle: "出力抑制とパネル経年劣化を前提に、売電収入と手残りの落ち方を見せます。",
+				subtitle: "パネル経年劣化を前提に、売電収入と手残りの落ち方を見せます。",
 				valueLabels: "all",
 			},
 		);
@@ -20892,56 +21946,29 @@ async function buildProposalSimulationPdfBytes(
 			fourth,
 			4,
 			"詳細根拠・確認事項",
-			"ファイナンス根拠・現場写真",
+			"現場写真・確認事項",
 		);
 
 		y = pageHeight - 126;
-		y = drawComparisonBarChart(
-			fourth,
-			y,
-			"投資構成 / 価格イメージ",
-			buildProposalInvestmentChartItems(draft),
-			84,
-		);
-		y = drawCompactBarTrendChart(
-			fourth,
-			y,
-			"減価償却を加味した経済メリット推移（1〜5年）",
-			buildProposalEconomicBenefitTrend(draft),
-			{
-				height: 122,
-				formatter: (value) => formatCompactYenForPdf(value),
-				subtitle: "売電手残り、返済、減価償却による税効果を合わせた年次推移です。",
-			},
-		);
+		y = drawSectionTitle(fourth, y, "現場写真");
+		await drawSitePhotoFrame(fourth, y, draft.sitePhotos, { height: 146 });
+		y -= 170;
+		y = drawSectionTitle(fourth, y, "和上確認・残リスク");
+		y = drawDetailRows(fourth, y, buildProposalWajoReviewRows(draft));
+		y -= 4;
+		y = drawSectionTitle(fourth, y, "WAJOリボン｜整備付き購入の選択肢");
+		y = drawDetailRows(fourth, y, buildProposalImprovementRows(draft));
+		y -= 4;
+		y = drawSectionTitle(fourth, y, "現地・法令・環境チェック");
+		y = drawDetailRows(fourth, y, buildProposalSiteDueDiligenceRows(draft));
+		y -= 4;
 		drawNoteBox(
 			fourth,
 			y,
-			"B/S提案ルート",
-			buildProposalPdfRubricBoxLines(draft),
-			54,
+			"次に確認すること",
+			buildProposalFinalCheckLines(draft),
+			94,
 		);
-		y -= 64;
-		y = drawSectionTitle(fourth, y, "ファイナンス詳細");
-		const secondaryFinanceLabels = new Set([
-			"NPV",
-			"IRR",
-			"税効果",
-			"税引後キャッシュフロー",
-			"DSCR",
-			"借入条件",
-			"年間元本返済額",
-			"年間利息額",
-		]);
-		y = drawDetailRows(
-			fourth,
-			y,
-			financeRows.filter(([label]) => secondaryFinanceLabels.has(label)),
-		);
-		y -= 2;
-
-		y = drawSectionTitle(fourth, y, "現場写真");
-		await drawSitePhotoFrame(fourth, y, draft.sitePhotos, { height: 132 });
 		drawFooter(fourth, 14);
 		// Keep the brand above any late photo/chart drawing on the final page.
 		drawHeaderBrand(fourth);
@@ -21042,6 +22069,189 @@ function buildProposalFinanceSummaryLines(draft: ProposalSimulationDraft): strin
 	];
 }
 
+function buildProposalRevenueSummaryLines(draft: ProposalSimulationDraft): string[] {
+	const yieldLabel = draft.expectedYield !== null ? `${trimTrailingZeros(draft.expectedYield)}%` : "算出中";
+	const paybackLabel = draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出中";
+	const fitTotal = draft.fitTotalNetCashflow !== null ? formatYen(draft.fitTotalNetCashflow) : "算出中";
+	if (draft.proposalKind === "gridBattery") {
+		return [
+			`年間総売上 ${formatOptionalYen(draft.annualIncome)}、年間ランニングコスト ${formatOptionalYen(draft.runningCost)}、年間純利益 ${formatOptionalYen(draft.annualNetIncome)}で見ます。`,
+			`想定利回り ${yieldLabel}、想定回収 ${paybackLabel}です。補助金や運用条件は別途確認します。`,
+		];
+	}
+	return [
+		`販売価格 ${formatOptionalYen(draft.salePrice)}に対し、年間売電収入 ${formatOptionalYen(draft.annualIncome)}、年間手残り ${formatOptionalYen(draft.annualNetIncome)}で見ます。`,
+		`表面利回り ${yieldLabel}、想定回収 ${paybackLabel}、残存FIT期間内の総手残りは ${fitTotal}です。`,
+		`出力抑制は ${formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)} として表示します。`,
+	];
+}
+
+function buildProposalRevenueRows(draft: ProposalSimulationDraft): Array<[string, string]> {
+	return [
+		["販売価格", formatOptionalYen(draft.salePrice)],
+		["年間売電収入", formatOptionalYen(draft.annualIncome)],
+		["年間維持費", formatOptionalYen(draft.runningCost)],
+		["年間手残り", formatOptionalYen(draft.annualNetIncome)],
+		["表面利回り", draft.expectedYield !== null ? `${trimTrailingZeros(draft.expectedYield)}%` : "算出中"],
+		["想定回収", draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出中"],
+		["残存FIT期間内の総手残り", draft.fitTotalNetCashflow !== null ? formatYen(draft.fitTotalNetCashflow) : "算出中"],
+		["出力抑制", formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)],
+	];
+}
+
+function buildProposalSpecLine(draft: ProposalSimulationDraft): string {
+	const details = draft.solarDetails;
+	if (!details) return "発電所情報は入力待ちです。";
+	const capacity = details.dcCapacityKw !== null ? `${trimTrailingZeros(details.dcCapacityKw)}kW` : "容量確認中";
+	const voltage = details.voltageClass || "電圧区分確認中";
+	const area = details.powerArea || "電力会社エリア確認中";
+	const fit = details.fitFipType || "売電制度確認中";
+	const unitPrice = details.unitPrice !== null ? `${trimTrailingZeros(details.unitPrice)}円/kWh` : "売電単価確認中";
+	const remaining = details.remainingSalesYears !== null ? `残存${trimTrailingZeros(details.remainingSalesYears)}年` : "残存期間確認中";
+	return `${details.plantName || "発電所名確認中"} / ${details.location || "所在地確認中"} / ${area} / ${voltage} / DC ${capacity} / ${fit} ${unitPrice} ${remaining}`;
+}
+
+function buildProposalCustomerCoreMessageLines(draft: ProposalSimulationDraft): string[] {
+	const lines = [
+		"この資料では、発電所の価格、売電収入、維持費、残存FIT期間を分けて確認し、現状条件で提案できる商品かを先に示します。",
+	];
+	if (draft.improvementPlan.hasConcretePlan) {
+		lines.push("そのうえで、任意の整備付き購入プランを併記し、現状購入と整備後購入を比較できる形にします。");
+	} else {
+		lines.push("整備付き購入は必須条件ではなく、現地確認後に追加で選べる上位プランとして切り分けます。");
+	}
+	if (draft.financeSimulation) {
+		lines.push("法人向けには、別途ファイナンスシミュレーションで融資、税効果、B/Sへの影響まで接続できます。");
+	} else {
+		lines.push("法人向けの投資判断では、必要に応じてファイナンスシミュレーションを追加し、融資、税効果、B/Sへの影響まで確認できます。");
+	}
+	return lines;
+}
+
+function buildProposalSpecRows(draft: ProposalSimulationDraft): Array<[string, string]> {
+	const details = draft.solarDetails;
+	return [
+		["発電所", details?.plantName || "未入力"],
+		["所在地", details?.location || "未入力"],
+		["電力会社 / 区分", details ? `${details.powerArea || "未入力"} / ${details.voltageClass || "未入力"}` : "未入力"],
+		["パネル / DC容量", details ? `${details.panelMaker || "未入力"} ${details.panelModel || ""} / ${formatDecimalForPdf(details.dcCapacityKw, 1)}kW / ${formatIntegerForPdf(details.panelCount)}枚` : "未入力"],
+		["PCS / AC容量", details ? `${details.powerConditionerMaker || "未入力"} ${details.powerConditionerModel || ""} / ${formatDecimalForPdf(details.pcsCapacityKw, 1)}kW` : "未入力"],
+		["売電制度", details ? `${details.fitFipType || "未入力"} / ${formatDecimalForPdf(details.unitPrice, 2)}円/kWh / 残存${formatDecimalForPdf(details.remainingSalesYears, 1)}年` : "未入力"],
+		["連系開始 / 稼働年数", details ? `${details.gridConnectionDate || "未入力"} / ${formatOperationYearsForPdf(details.operationYears)}` : "未入力"],
+	];
+}
+
+function buildProposalGenerationBasisRows(draft: ProposalSimulationDraft): Array<[string, string]> {
+	const details = draft.solarDetails;
+	const annualGeneration = estimateAnnualGenerationKwhFromSales(draft);
+	return [
+		["年間発電量", annualGeneration !== null ? `${trimTrailingZeros(annualGeneration)}kWh（年間売電収入と売電単価から算出）` : "売電単価・年間売電収入の入力後に算出"],
+		["売電単価", details?.unitPrice !== null && details?.unitPrice !== undefined ? `${trimTrailingZeros(details.unitPrice)}円/kWh` : "未入力"],
+		["パネル劣化率", `${trimTrailingZeros(draft.panelDegradationRate)}% / 年`],
+		["出力抑制", `${formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)}。本資料では収支計算に差し引かず、条件として提示します。`],
+		["NEDO・日射量", "入力後に、発電量根拠として接続します。未入力の場合は売電条件ベースで表示します。"],
+		["PCS交換費", "交換時期・交換費用が入ると、長期見通しと整備付き購入の判断に反映します。"],
+	];
+}
+
+function buildProposalLongTermOutlookRows(draft: ProposalSimulationDraft): Array<[string, string]> {
+	const details = draft.solarDetails;
+	const fitYears = details?.remainingSalesYears ?? draft.fitRemainingYears;
+	const fitTotal = draft.fitTotalNetCashflow !== null ? formatYen(draft.fitTotalNetCashflow) : "算出中";
+	const annualNet = draft.annualNetIncome !== null ? formatYen(draft.annualNetIncome) : "算出中";
+	const remainingFit = fitYears !== null ? `${trimTrailingZeros(fitYears)}年` : "未入力";
+	return [
+		["残存FIT総手残り", `${remainingFit} / FIT期間内の総手残り ${fitTotal}`],
+		["年間手残り", `${annualNet}（維持費控除後・融資前）`],
+		["卒FIT単価", "和上買取・卒FIT単価の入力後、FIT後10年などの長期キャッシュフローへ反映します。"],
+		["出口戦略", "通常提案では残存FITの収支を先に確認し、法人向け投資提案では3年出口や長期保有を別紙で比較します。"],
+		["交換・修繕", "PCS交換費、パネル交換、是正工事費が入ると、回収期間と整備後手残りを表示します。"],
+	];
+}
+
+function buildProposalQualityUpgradeRows(draft: ProposalSimulationDraft): Array<[string, string]> {
+	return [
+		["現場写真", draft.sitePhotos.length > 0 ? `${draft.sitePhotos.length}点登録済み` : "未登録 / 写真が入ると現場感と安心材料が強くなります"],
+		["ハザード判定", "ハザードマップ、排水、傾斜、接道、造成の確認後に、必要な対策費を整理します。"],
+		["NEDO・日射量", "近傍地点の日射量を接続すると、売電実績だけでなく発電量根拠を補強できます。"],
+		["抑制条件", `${formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)}。収支反映ではなく条件提示として扱います。`],
+		["PCS交換費", "交換時期と交換費用が入ると、長期保有時の見通しが締まります。"],
+		["WAJOリボン", draft.improvementPlan.hasConcretePlan ? "整備付き購入プラン入力済み" : "是正・整備の費用、改善額、回収年数を入れると上位提案として併記します"],
+	];
+}
+
+function estimateAnnualGenerationKwhFromSales(draft: ProposalSimulationDraft): number | null {
+	const unitPrice = draft.solarDetails?.unitPrice;
+	if (!unitPrice || unitPrice <= 0 || draft.annualIncome === null) return null;
+	return roundTo(draft.annualIncome / unitPrice, 0);
+}
+
+function buildProposalWajoReviewRows(draft: ProposalSimulationDraft): Array<[string, string]> {
+	if (!draft.wajoSupport.hasConcreteCheck) {
+		return [
+			["確認状態", "要確認 / 和上確認日・確認資料・実施チェックが未入力"],
+			["事故歴", "要確認"],
+			["和上整備", "要確認"],
+			["保証判定", "要確認"],
+			["残リスク", draft.wajoSupport.remainingRisk || "未入力"],
+		];
+	}
+	return nonEmptyLinesAsRows([
+		["確認根拠", draft.wajoSupport.evidenceLabel || "入力あり / 根拠詳細は要確認"],
+		["事故歴", draft.wajoSupport.accidentStatus || "未確認"],
+		["和上整備", draft.wajoSupport.maintenanceRank || "未確認"],
+		["保証判定", draft.wajoSupport.warrantyRank || "要確認"],
+		["整備サマリー", draft.wajoSupport.maintenanceSummary || ""],
+		["保証コメント", draft.wajoSupport.warrantyComment || ""],
+		["残リスク", draft.wajoSupport.remainingRisk || "未入力"],
+	]);
+}
+
+function buildProposalSiteDueDiligenceRows(draft: ProposalSimulationDraft): Array<[string, string]> {
+	const checkedItems = draft.wajoSupport.checkedItems.length > 0
+		? draft.wajoSupport.checkedItems.join(" / ")
+		: "要確認";
+	const details = draft.solarDetails;
+	return [
+		["現場写真", draft.sitePhotos.length > 0 ? `写真 ${draft.sitePhotos.length}点登録 / 設備・周辺環境の安心材料として確認` : "要確認 / 写真が入ると現場感を示せます"],
+		["O&M・除草・点検", checkedItems],
+		["出力抑制", formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)],
+		["法令・許認可", "認定・連系・自治体条件は原本確認で確定"],
+		["地盤・排水・造成", draft.wajoSupport.remainingRisk || "要確認"],
+		["追加入力で精度向上", details?.remainingSalesYears ? "NEDO・ハザード・PCS交換費・卒FIT単価を入れると最終版へ進めます" : "NEDO・ハザード・PCS交換費・卒FIT単価を確認"],
+	];
+}
+
+function buildProposalImprovementRows(draft: ProposalSimulationDraft): Array<[string, string]> {
+	const plan = draft.improvementPlan;
+	if (!plan.hasConcretePlan) {
+		return [
+			["標準提案", "現状条件でも収支が成立する発電所として提示します。整備付き購入は、現地確認後に追加見積として切り分けます。"],
+			["WAJOリボン", "是正・整備プランの費用、改善額、対象工事が入力された場合だけ、整備付き購入として併記します。"],
+		];
+	}
+	const rows: Array<[string, string]> = [
+		["標準提案", "現状条件でも購入判断できる発電所です。整備は必須条件ではなく、追加で選べる上位プランとして提示します。"],
+	];
+	if (plan.items) rows.push(["整備内容", plan.items]);
+	if (plan.cost !== null) rows.push(["是正・整備費用", formatYen(plan.cost)]);
+	if (plan.annualRevenueLift !== null) rows.push(["年間売電改善額", formatYen(plan.annualRevenueLift)]);
+	if (plan.annualGenerationLiftKwh !== null) rows.push(["発電量改善", `${trimTrailingZeros(plan.annualGenerationLiftKwh)}kWh / 年`]);
+	if (plan.paybackYears !== null) rows.push(["整備費回収", `約${trimTrailingZeros(plan.paybackYears)}年`]);
+	if (plan.afterAnnualNetIncome !== null) rows.push(["整備後年間手残り", formatYen(plan.afterAnnualNetIncome)]);
+	if (plan.note) rows.push(["提案メモ", plan.note]);
+	return rows;
+}
+
+function buildProposalFinalCheckLines(draft: ProposalSimulationDraft): string[] {
+	const details = draft.solarDetails;
+	return [
+		`売電単価 ${details?.unitPrice !== null && details?.unitPrice !== undefined ? `${trimTrailingZeros(details.unitPrice)}円/kWh` : "未入力"}、残存FIT ${details?.remainingSalesYears !== null && details?.remainingSalesYears !== undefined ? `${trimTrailingZeros(details.remainingSalesYears)}年` : "未入力"}、連系開始日 ${details?.gridConnectionDate || "未入力"}を確認します。`,
+		`抑制条件は ${formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)}。本資料では条件提示に留めます。`,
+		"ファイナンスシミュレーションでは、土地代・権利代・融資条件・税率・B/S3指標まで接続し、会社ごとの投資判断に落とし込みます。",
+	];
+}
+
 function buildProposalCoverIntroLines(draft: ProposalSimulationDraft): string[] {
 	const details = draft.solarDetails;
 	const area = details?.powerArea || "対象エリア確認中";
@@ -21050,7 +22260,7 @@ function buildProposalCoverIntroLines(draft: ProposalSimulationDraft): string[] 
 	const scaleLine = dcCapacityKw !== null
 		? `${trimTrailingZeros(dcCapacityKw)}kW規模の${voltage}案件として、設備条件と運用前提を先に確認する資料です。`
 		: `${voltage}案件として、設備条件と運用前提を先に確認する資料です。`;
-	const locationLine = `対象エリアは ${area} を前提に整理しています。売電条件、収益推移、税効果は後続ページで数字まで見せます。`;
+	const locationLine = `対象エリアは ${area} を前提に整理しています。売電条件、収益推移、現場確認は後続ページで数字と根拠を見せます。`;
 	if (draft.proposalKind === "gridBattery") {
 		return [
 			"本資料は、系統用蓄電池候補について、系統条件・設備条件・運用条件を先に整理するための概要資料です。",
@@ -21060,9 +22270,9 @@ function buildProposalCoverIntroLines(draft: ProposalSimulationDraft): string[] 
 	}
 	if (details?.fitFipType === "FIT" || details?.fitFipType === "FIP") {
 		return [
-			"本資料は、FIT/FIP売電を前提とした太陽光発電投資について、収益・設備・税務の根拠をまとめた提案資料です。",
+			"本資料は、FIT/FIP売電を前提とした太陽光発電投資について、収益・設備・現場確認の根拠をまとめた提案資料です。",
 			scaleLine,
-			"残存売電期間、売電単価、維持費、融資・税効果を分けて確認し、投資判断の材料を整理します。",
+			"残存売電期間、売電単価、維持費、現場写真を分けて確認し、提案判断の材料を整理します。",
 			locationLine,
 		];
 	}
@@ -21073,15 +22283,10 @@ function buildProposalCoverIntroLines(draft: ProposalSimulationDraft): string[] 
 			locationLine,
 		];
 	}
-	const finance = draft.financeSimulation;
-	const companyStateLine =
-		finance?.timingRank === "S" || finance?.timingRank === "A"
-			? "財務条件が整う企業では、導入判断を前向きに進めやすい前提です。"
-			: "財務条件や導入優先度は企業ごとに異なるため、判断材料を段階的に整理します。";
 	return [
 		"本資料は、太陽光発電所を『売り物』として魅力と根拠の両方を伝えるための提案資料です。",
 		scaleLine,
-		companyStateLine,
+		"売電条件、設備情報、現場確認、残存FIT期間の収益推移を分けて確認します。",
 		locationLine,
 	];
 }
@@ -21090,9 +22295,9 @@ function buildProposalCoverCards(
 	draft: ProposalSimulationDraft,
 ): Array<{ label: string; value: string }> {
 	const details = draft.solarDetails;
-	const financeLabel = draft.financeSimulation
-		? `${draft.financeSimulation.timingRank}判定`
-		: "判定保留";
+	const wajoLabel = draft.wajoSupport.hasConcreteCheck
+		? draft.wajoSupport.warrantyRank || draft.wajoSupport.maintenanceRank || "入力あり"
+		: "要確認";
 	return [
 		{ label: "販売価格", value: formatOptionalYen(draft.salePrice) },
 		{ label: "表面利回り", value: draft.expectedYield !== null ? `${trimTrailingZeros(draft.expectedYield)}%` : "算出中" },
@@ -21106,8 +22311,8 @@ function buildProposalCoverCards(
 			value: `${formatDecimalForPdf(details?.remainingSalesYears ?? draft.fitRemainingYears ?? null, 1)}年`,
 		},
 		{
-			label: "投資判定",
-			value: financeLabel,
+			label: "和上確認",
+			value: wajoLabel,
 		},
 	];
 }
@@ -21128,7 +22333,22 @@ function buildProposalCoverSafeRows(draft: ProposalSimulationDraft): Array<[stri
 }
 
 function buildProposalCoverHandlingLines(draft: ProposalSimulationDraft): string[] {
-	return buildProposalInsightLines(draft);
+	const details = draft.solarDetails;
+	const fitLabel = details
+		? `${details.fitFipType} / ${formatDecimalForPdf(details.unitPrice, 2)}円/kWh / 残存${formatDecimalForPdf(details.remainingSalesYears, 1)}年`
+		: "売電制度 未入力";
+	const generationScale = details
+		? `DC ${formatDecimalForPdf(details.dcCapacityKw, 1)}kW / PCS ${formatDecimalForPdf(details.pcsCapacityKw, 1)}kW / パネル ${formatIntegerForPdf(details.panelCount)}枚`
+		: "設備規模 未入力";
+	const siteCheck = draft.sitePhotos.length > 0
+		? `現場写真 ${draft.sitePhotos.length}点登録`
+		: "現場写真 要確認";
+	const wajoCheck = buildProposalWajoCompactLine(draft.wajoSupport);
+	return [
+		`収益: 年間売電収入 ${formatOptionalYen(draft.annualIncome)} / 年間手残り ${formatOptionalYen(draft.annualNetIncome)} / 残存FIT総手残り ${draft.fitTotalNetCashflow !== null ? formatYen(draft.fitTotalNetCashflow) : "算出中"}`,
+		`設備・制度: ${generationScale} / ${fitLabel}`,
+		`現場感: ${siteCheck} / 和上確認 ${wajoCheck} / ${formatCurtailmentCompactLabel(draft.curtailmentScenario, draft.curtailmentRate)}`,
+	];
 }
 
 function buildProposalPdfRubricMetricsLine(rubric: BalanceSheetSalesRubric): string {
@@ -21253,24 +22473,18 @@ function formatProposalMwhForPdf(value: number): string {
 }
 
 function buildProposalInsightLines(draft: ProposalSimulationDraft): string[] {
-	const timingLine = draft.financeSimulation
-		? `投資判断: ${draft.financeSimulation.timingRank}判定 / ${draft.financeSimulation.timingHeadline}`
-		: "投資判断: ファイナンス前提が未入力のため、税効果と返済余力は暫定表示です。";
-	const bsLine = draft.financeSimulation
-		? `B/S提案: ${formatBalanceSheetSalesRubricSummary(draft.financeSimulation.salesRubric)} / ${draft.financeSimulation.salesRubric.recommendedModel}`
-		: "B/S提案: 決算書3指標が未入力のため、提案ルートは仮置きです。";
 	const incomeLine = draft.proposalKind === "gridBattery"
 		? `収益見通し: 年間総売上 ${formatOptionalYen(draft.annualIncome)} / 年間純利益 ${formatOptionalYen(draft.annualNetIncome)} / 想定回収 ${draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"}`
 		: `収益見通し: 残存FIT総手残り ${draft.fitTotalNetCashflow !== null ? formatYen(draft.fitTotalNetCashflow) : "算出不可"} / 年間手残り ${formatOptionalYen(draft.annualNetIncome)} / 想定回収 ${draft.paybackYears !== null ? `${trimTrailingZeros(draft.paybackYears)}年` : "算出不可"}`;
-	const taxLine = draft.financeSimulation
-		? `税務と返済: 年間償却 ${formatYen(draft.financeSimulation.annualDepreciation)} / 税効果 ${formatYen(draft.financeSimulation.taxBenefit)} / DSCR ${draft.financeSimulation.dscr !== null ? trimTrailingZeros(draft.financeSimulation.dscr) : "未入力"}`
-		: "税務と返済: 借入条件、税率、償却前提を入れると税引後キャッシュフローまで出力できます。";
+	const equipmentLine = draft.solarDetails
+		? `設備条件: ${draft.solarDetails.panelMaker} ${draft.solarDetails.panelModel} / PCS ${draft.solarDetails.powerConditionerMaker} ${draft.solarDetails.powerConditionerModel}`
+		: "設備条件: パネル・PCS情報を確認中です。";
 	const wajoLine = `和上確認: ${buildProposalWajoCompactLine(draft.wajoSupport)} / 残リスク ${draft.wajoSupport.remainingRisk || "未入力"}`;
 	const nextActionLine =
 		draft.proposalKind === "gridBattery"
 			? "次アクション: 系統・補助金・運用条件を詰めて、事業化可否を人間が最終判定します。"
-			: "次アクション: 決算書3指標、融資条件、設備資料を揃えて、社内決裁と金融機関説明に耐える最終版へ進めます。";
-	return [timingLine, bsLine, incomeLine, taxLine, wajoLine, nextActionLine];
+			: "次アクション: 設備資料、現場写真、抑制条件を揃えて、提案精度を上げます。";
+	return [incomeLine, equipmentLine, wajoLine, nextActionLine];
 }
 
 async function buildResidentDocumentPdfBytes(
@@ -21510,10 +22724,12 @@ function buildProposalPdfPageTwoLines(draft: ProposalSimulationDraft): string[] 
 			? `出力抑制前提: ${formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)} / 年間売電収入 ${formatYenForPdf(draft.annualIncome)}`
 			: `出力抑制前提: ${formatCurtailmentAssumptionLabel(draft.curtailmentScenario, draft.curtailmentRate)} / 年間売電収入 ${formatYenForPdf(draft.annualIncome)}`;
 	const financeLine = draft.financeSimulation
-		? `財務前提: 税効果 ${formatYenForPdf(draft.financeSimulation.taxBenefit)} / 税引後キャッシュフロー ${formatYenForPdf(draft.financeSimulation.afterTaxCashflow)} / DSCR ${draft.financeSimulation.dscr !== null ? trimTrailingZeros(draft.financeSimulation.dscr) : "未入力"}`
+		? `財務前提: 税効果 ${formatFinanceDerivedLabel(formatYenForPdf(draft.financeSimulation.taxBenefit), draft.financeSimulation)} / 税引後キャッシュフロー ${formatFinanceDerivedLabel(formatYenForPdf(draft.financeSimulation.afterTaxCashflow), draft.financeSimulation)} / DSCR ${draft.financeSimulation.dscr !== null ? trimTrailingZeros(draft.financeSimulation.dscr) : "未入力"}`
 		: "財務前提: 借入条件、実効税率、償却前提を入れるとDSCRまで算出できます。";
 	const timingLine = draft.financeSimulation
-		? `今回の投資判定: ${draft.financeSimulation.timingRank} / ${draft.financeSimulation.timingHeadline}`
+		? isFinalFinanceJudgmentReady(draft.financeSimulation)
+			? `今回の投資判定: ${draft.financeSimulation.timingRank} / ${draft.financeSimulation.timingHeadline}`
+			: `今回の投資判定: 保留 / ${getFinalFinanceHoldReason(draft.financeSimulation)}`
 		: "今回の投資判定: 決算書3指標が未入力のため保留";
 	const timingReasonLine = draft.financeSimulation
 		? `判定理由: ${draft.financeSimulation.timingReason}`
@@ -22283,14 +23499,7 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 	const curtailmentRate = curtailmentScenario === "抑制あり"
 		? readCurtailmentRate(properties)
 		: 0;
-	const annualIncome =
-		baseAnnualIncome !== null
-			? roundTo(
-				baseAnnualIncome
-				* (1 - Math.max(0, Math.min(curtailmentRate, 100)) / 100),
-				0,
-			)
-			: null;
+	const annualIncome = baseAnnualIncome !== null ? roundTo(baseAnnualIncome, 0) : null;
 	const panelDegradationRate = readFirstNumberByAliases(properties, [
 		"パネル劣化率",
 		"パネル経年劣化率",
@@ -22303,6 +23512,7 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 		? null
 		: buildSolarProposalDetails(properties, unitPrice);
 	const wajoSupport = readProposalWajoSupport(properties);
+	const improvementPlan = readProposalImprovementPlan(properties);
 	const fitRemainingYears = isGridBattery
 		? readFirstNumberByAliases(properties, [
 				"残存FIT年数",
@@ -22404,6 +23614,7 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 			annualNetIncome: null,
 			solarDetails,
 			wajoSupport,
+			improvementPlan,
 			sitePhotos,
 			runningCostBreakdown: runningCostInput.breakdown,
 			annualReductionAmount: null,
@@ -22498,6 +23709,7 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 		subsidyAmount,
 		solarDetails,
 		wajoSupport,
+		improvementPlan,
 		runningCostBreakdown: runningCostInput.breakdown,
 	});
 
@@ -22520,6 +23732,7 @@ function evaluateProposalSimulationDraft(page: Page): ProposalSimulationDraft {
 		annualNetIncome,
 		solarDetails,
 		wajoSupport,
+		improvementPlan,
 		sitePhotos,
 		runningCostBreakdown: runningCostInput.breakdown,
 		annualReductionAmount,
@@ -22568,12 +23781,18 @@ function readCurtailmentRate(properties: Record<string, unknown>): number {
 
 function formatCurtailmentAssumptionLabel(scenario: CurtailmentScenario, rate: number): string {
 	if (scenario === "抑制あり" && rate > 0) {
-		return `抑制データあり / ${trimTrailingZeros(rate)}%（収支反映は次のバージョンで対応予定）`;
+		return `抑制データあり / ${trimTrailingZeros(rate)}%（通常試算には未反映・条件提示のみ）`;
 	}
 	if (scenario === "抑制あり") {
-		return "抑制前提あり / 率未設定（収支反映は次のバージョンで対応予定）";
+		return "抑制前提あり / 率未設定（通常試算には未反映・条件提示のみ）";
 	}
-	return "抑制データ未設定（地域・FIT条件を確認し、次のバージョンで収支反映予定）";
+	return "抑制データ未設定（地域・FIT条件を確認の上、条件提示のみ）";
+}
+
+function formatCurtailmentCompactLabel(scenario: CurtailmentScenario, rate: number): string {
+	if (scenario === "抑制あり" && rate > 0) return `抑制 ${trimTrailingZeros(rate)}% / 条件提示`;
+	if (scenario === "抑制あり") return "抑制あり / 率確認";
+	return "抑制 未設定 / 条件確認";
 }
 
 function buildFinanceSimulation(input: {
@@ -22586,11 +23805,13 @@ function buildFinanceSimulation(input: {
 	const composition = buildProductComposition(input.properties, input.salePrice);
 	const { landPrice, systemPrice, rightsPrice } = composition;
 	const investmentBase = Math.max(0, input.salePrice);
-	const effectiveTaxRate = readFirstNumberByAliases(input.properties, [
+	const effectiveTaxRateInput = readFirstNumberByAliases(input.properties, [
 		"実効税率",
 		"法人実効税率",
 		"税率",
-	]) ?? 30;
+	]);
+	const effectiveTaxRate = effectiveTaxRateInput ?? 30;
+	const effectiveTaxRateSource = effectiveTaxRateInput !== null ? "input" : "default";
 	const pretaxProfit = readFirstNumberByAliases(input.properties, [
 		"今期利益見込",
 		"税引前利益",
@@ -22598,6 +23819,7 @@ function buildFinanceSimulation(input: {
 		"償却前利益",
 		"営業利益見込",
 	]);
+	const pretaxProfitSource = pretaxProfit !== null ? "input" : "missing";
 	const loanRatio = Math.max(0, Math.min(
 		readFirstNumberByAliases(input.properties, [
 			"借入比率",
@@ -22667,6 +23889,10 @@ function buildFinanceSimulation(input: {
 		? Math.min(annualDepreciation, Math.max(pretaxProfit, 0))
 		: annualDepreciation;
 	const taxBenefit = roundTo(depreciationBase * (effectiveTaxRate / 100), 0);
+	const taxBenefitBasis =
+		effectiveTaxRateSource === "input" && pretaxProfitSource === "input"
+			? "input-derived"
+			: "provisional";
 	const cashflowAfterDebt = roundTo(input.annualNetIncome - annualDebtService, 0);
 	const afterTaxCashflow = roundTo(cashflowAfterDebt + taxBenefit, 0);
 	const loanYearsForCalc = loanYears && loanYears > 0 ? loanYears : 20;
@@ -22734,7 +23960,7 @@ function buildFinanceSimulation(input: {
 	].filter(Boolean).join(" / ");
 	const pretaxProfitLine = pretaxProfit !== null
 		? `BS/利益前提: 今期利益見込 ${formatYen(pretaxProfit)} に対し、年間償却額 ${formatYen(annualDepreciation)} を当て込む。`
-		: "BS/利益前提: 今期利益見込が未入力のため、年間償却額を全額使える前提で税効果を表示します。";
+		: "BS/利益前提: 今期利益見込が未入力のため、税効果は仮置き前提の参考試算として表示します。";
 	const debtLine = loanAmount > 0
 		? `融資前提: 借入額 ${formatYen(loanAmount)} / 金利 ${trimTrailingZeros(interestRate)}% / 返済期間 ${loanYears ?? 0}年 / 年間返済額 ${formatYen(annualDebtService)}`
 		: "融資前提: 借入なし。返済負担なしで判定します。";
@@ -22756,8 +23982,11 @@ function buildFinanceSimulation(input: {
 		economicBenefit: totalEconomicalBenefit,
 		totalEconomicalBenefit,
 		effectiveTaxRate,
+		effectiveTaxRateSource,
 		pretaxProfit,
+		pretaxProfitSource,
 		taxBenefit,
+		taxBenefitBasis,
 		projectNpv,
 		projectIrr,
 		equityNpv,
@@ -22793,18 +24022,24 @@ function buildFinanceSimulation(input: {
 			`システム本体: ${formatYen(systemPrice)} / 17年償却 / 年間償却額 ${formatYen(annualSystemDepreciation)}`,
 			`権利代: ${formatYen(rightsPrice)} / 5年償却 / 年間償却額 ${formatYen(annualRightsDepreciation)}`,
 			`年間償却額合計: ${formatYen(annualDepreciation)}`,
-			`実効税率: ${trimTrailingZeros(effectiveTaxRate)}%`,
-			`年間税効果: ${formatYen(taxBenefit)}`,
+			`実効税率: ${trimTrailingZeros(effectiveTaxRate)}%（${effectiveTaxRateSource === "input" ? "入力値" : "標準仮置き"}）`,
+			`年間税効果: ${formatYen(taxBenefit)}（${taxBenefitBasis === "input-derived" ? "入力値由来" : "参考試算・仮置き前提"}）`,
 			debtLine,
 			financeAssumptionLine ? `補完前提: ${financeAssumptionLine}` : "補完前提: 入力値を優先して計算しています。",
-			`NPV: ${projectNpv !== null ? formatYen(projectNpv) : "算出不可"} / IRR: ${projectIrr !== null ? `${trimTrailingZeros(projectIrr)}%` : "算出不可"}`,
+			`NPV: ${projectNpv !== null ? formatFinanceDerivedLabel(formatYen(projectNpv), {
+				taxBenefitBasis,
+			} as FinanceSimulation) : "算出不可"} / IRR: ${projectIrr !== null ? formatFinanceDerivedLabel(`${trimTrailingZeros(projectIrr)}%`, {
+				taxBenefitBasis,
+			} as FinanceSimulation) : "算出不可"}`,
 			`返済分解: 年間元本 ${formatYen(debtRepayBreakdown.annualPrincipalRepayment)} / 年間利息 ${formatYen(debtRepayBreakdown.annualInterestExpense)}`,
 			`経済メリット概算: ${formatYen(totalEconomicalBenefit)} / 減価償却年数 ${trimTrailingZeros(depreciationYears)}年`,
 			`金利換算: 実質金利 ${effectiveInterestRate !== null ? `${trimTrailingZeros(effectiveInterestRate)}%` : "未計算"} / アドオン金利 ${addOnInterestRate !== null ? `${trimTrailingZeros(addOnInterestRate)}%` : "未計算"}`,
 			pretaxProfitLine,
-			`税効果後キャッシュフロー: ${formatYen(afterTaxCashflow)}`,
+			`税効果後キャッシュフロー: ${taxBenefitBasis === "input-derived" ? formatYen(afterTaxCashflow) : `${formatYen(afterTaxCashflow)} / 参考試算（仮置き前提）`}`,
 			`DSCR: ${dscr !== null ? trimTrailingZeros(dscr) : "借入なし"}`,
-			`今回の投資判定: ${timing.rank} / ${timing.headline}`,
+			taxBenefitBasis === "input-derived" && salesRubric.totalScore !== null
+				? `今回の投資判定: ${timing.rank} / ${timing.headline}`
+				: `今回の投資判定: 保留 / ${taxBenefitBasis === "input-derived" ? "財務情報確認中" : "税務前提確認中"}`,
 			`判定理由: ${timing.reason}`,
 			`上位判断へ進むための確認事項: ${timing.whyNotUpper}`,
 			`現時点で前向きに検討できる材料: ${timing.whyNotLower}`,
@@ -23687,7 +24922,7 @@ function buildProposalTitle(proposalKind: ProposalKind, titleLabel: string): str
 	if (proposalKind === "gridBattery") {
 		return `【次世代エネルギー投資】系統用蓄電池 事業シミュレーション 御提案書${suffix}`;
 	}
-	return `【法人オーナー様向け】黒字対策・即時償却検討型 太陽光発電投資 御提案書${suffix}`;
+	return `【法人オーナー様向け】太陽光発電所 提案シミュレーション${suffix}`;
 }
 
 function buildProposalTypeGuideLines(currentKind: ProposalKind): string[] {
@@ -23788,6 +25023,7 @@ function buildTwoPageProposalLines(input: {
 	subsidyAmount: number | null;
 	solarDetails: SolarProposalDetails | null;
 	wajoSupport: ProposalWajoSupport;
+	improvementPlan: ProposalImprovementPlan;
 	runningCostBreakdown: RunningCostBreakdownItem[];
 }): { pageOneLines: string[]; pageTwoLines: string[] } {
 	const yieldText = input.expectedYield !== null ? `${input.expectedYield}%` : "算出不可";
@@ -23817,6 +25053,7 @@ function buildTwoPageProposalLines(input: {
 	const maintenanceLine = buildMaintenanceBreakdownLine(input.runningCostBreakdown);
 	const wajoLine = `和上確認: ${buildProposalWajoCompactLine(input.wajoSupport)}`;
 	const wajoRiskLine = input.wajoSupport.remainingRisk ? `残リスク: ${input.wajoSupport.remainingRisk}` : "";
+	const improvementLine = buildProposalImprovementCompactLine(input.improvementPlan);
 	const mainMetricsLine =
 		`通常営業シミュレーション: 販売価格 ${formatYen(input.salePrice)} / 残存FIT年数 ${input.fitRemainingYears !== null ? `${trimTrailingZeros(input.fitRemainingYears)}年` : "未入力"} / ` +
 		`出力抑制前提 ${formatCurtailmentAssumptionLabel(input.curtailmentScenario, input.curtailmentRate)} / ` +
@@ -23840,6 +25077,7 @@ function buildTwoPageProposalLines(input: {
 				revenueLine,
 				maintenanceLine,
 				wajoLine,
+				improvementLine,
 				wajoRiskLine,
 				`実質収支: 年間維持費（ランニングコスト） ${formatYen(input.runningCost)} を控除後、年間手残りは ${formatYen(input.annualNetIncome)}、回収年数は ${paybackText} です。`,
 				...financeLines,
@@ -23865,6 +25103,7 @@ function buildTwoPageProposalLines(input: {
 				revenueLine,
 				maintenanceLine,
 				wajoLine,
+				improvementLine,
 				wajoRiskLine,
 				`経済効果: 年間手残り ${formatYen(input.annualNetIncome)} / 回収年数 ${paybackText}`,
 				...financeLines,
@@ -23888,6 +25127,7 @@ function buildTwoPageProposalLines(input: {
 			revenueLine,
 			maintenanceLine,
 			wajoLine,
+			improvementLine,
 			wajoRiskLine,
 			`実質収支: 年間維持費（ランニングコスト） ${formatYen(input.runningCost)} を控除後、年間手残りは ${formatYen(input.annualNetIncome)}、回収年数は ${paybackText} です。`,
 			...financeLines,
@@ -23935,6 +25175,112 @@ function buildSolarRevenueLine(details: SolarProposalDetails | null): string {
 function buildMaintenanceBreakdownLine(items: RunningCostBreakdownItem[]): string {
 	if (items.length === 0) return "";
 	return `維持費内訳: ${items.map((item) => `${item.label} ${formatYen(item.value)}`).join(" / ")}`;
+}
+
+function buildProposalImprovementCompactLine(plan: ProposalImprovementPlan): string {
+	if (!plan.hasConcretePlan) {
+		return "WAJOリボン: 現状条件での提案を正本とし、整備付き購入は追加見積として切り分けます。";
+	}
+	const parts = ["WAJOリボン: 整備付き購入を選択肢として提示"];
+	if (plan.cost !== null) parts.push(`整備費 ${formatYen(plan.cost)}`);
+	if (plan.annualRevenueLift !== null) parts.push(`年間改善 ${formatYen(plan.annualRevenueLift)}`);
+	if (plan.paybackYears !== null) parts.push(`回収 約${trimTrailingZeros(plan.paybackYears)}年`);
+	if (plan.items) parts.push(`内容 ${plan.items}`);
+	return parts.join(" / ");
+}
+
+function buildProposalGenerationTrace(input: {
+	draft: ProposalSimulationDraft;
+	dryRun: boolean;
+	equipmentPage: Page | null;
+	financeInputPage: Page | null;
+	htmlMessage?: string;
+	pdfMessage?: string;
+	caseDocumentMessage?: string;
+}): ProposalGenerationTrace {
+	const draft = input.draft;
+	const unconfirmedItems: string[] = [];
+	if (draft.missingField) unconfirmedItems.push(`不足項目: ${draft.missingField}`);
+	if (draft.sitePhotos.length === 0) unconfirmedItems.push("現場写真: 未入力");
+	if (!draft.wajoSupport.hasConcreteCheck) unconfirmedItems.push("和上確認: 根拠未入力");
+	if (!draft.improvementPlan.hasConcretePlan) unconfirmedItems.push("WAJOリボン: 整備付き購入の具体条件未入力");
+	if (draft.curtailmentScenario === "抑制あり") {
+		unconfirmedItems.push("出力抑制: 情報提示のみ（収支計算には未反映）");
+	}
+
+	const gates: ProposalGenerationTrace["gates"] = [
+		{
+			label: "A 提案思想",
+			status: "未確認",
+			note: "顧客向け本文と社内向け判断を分離する方針を適用。S審査は未完了。",
+		},
+		{
+			label: "B 数値・プロパティ",
+			status: draft.missingField ? "停止" : "通過",
+			note: draft.missingField ? `必須入力待ち: ${draft.missingField}` : "必須入力チェック通過。",
+		},
+		{
+			label: "C 出力デザイン",
+			status: "未確認",
+			note: "社内用トレースは顧客向けHTML提案書本文へ混入させない方針。HTML非混入テストで確認します。",
+		},
+		{
+			label: "D 生成実行",
+			status: input.dryRun ? "未確認" : draft.missingField ? "対象外" : "通過",
+			note: input.dryRun
+				? "dry-runのため保存未実行。"
+				: [
+						input.htmlMessage ?? "HTML提案書保存処理未確認。",
+						input.pdfMessage ? `参考PDF: ${input.pdfMessage}` : "参考PDF保存処理未確認。",
+				  ].join(" / "),
+		},
+		{
+			label: "E 検証",
+			status: "未確認",
+			note: "大ちゃんのNotion UI目視、または生成物レビュー待ち。",
+		},
+		{
+			label: "S 審査担当",
+			status: "未確認",
+			note: "Stopper審査前。ここが通るまで統合・デプロイ・完成宣言に進みません。",
+		},
+	];
+
+	const outputDestinations = input.dryRun
+		? ["dry-run: HTML提案書・参考PDF・資料台帳は保存しません"]
+		: [
+				input.htmlMessage ?? "HTML提案書保存先未確認",
+				input.pdfMessage ?? "参考PDF保存先未確認",
+				input.caseDocumentMessage ?? "案件資料DB台帳未確認",
+		  ];
+
+	return {
+		runMode: input.dryRun ? "dry-run" : "write",
+		status: draft.missingField ? "入力待ち" : "シミュレーション準備完了",
+		gates,
+		inputSources: [
+			"提案シミュレーションページ",
+			input.equipmentPage ? "設備詳細ページ" : "設備詳細ページ: 未取得",
+			input.financeInputPage ? "投資条件ページ" : "投資条件ページ: 未取得",
+		],
+		unconfirmedItems: unconfirmedItems.length > 0 ? unconfirmedItems : ["主要未確認なし（UI目視は別途必要）"],
+		outputDestinations,
+	};
+}
+
+function formatProposalGenerationTrace(trace: ProposalGenerationTrace): string[] {
+	return [
+		"【社内用｜WAJO Sales OS 実行記録】",
+		`実行モード: ${trace.runMode}`,
+		`生成ステータス: ${trace.status}`,
+		"ゲート:",
+		...trace.gates.map((gate) => `- ${gate.label}: ${gate.status}｜${gate.note}`),
+		`入力元: ${trace.inputSources.join(" / ")}`,
+		"未確認・注意:",
+		...trace.unconfirmedItems.map((item) => `- ${item}`),
+		`出力先: ${trace.outputDestinations.join(" / ")}`,
+		"注記: この実行記録は社内確認用です。顧客向け提案本文・PDF本文には混ぜません。",
+	];
 }
 
 function formatNumberWithUnit(value: number | null, unit: string): string {
@@ -24057,9 +25403,9 @@ function buildInvestmentConditionProposalMissingMessage(
 	const remaining = nextFields.length > 0 ? `\n次に確認する項目: ${nextFields.join(" / ")}` : "";
 	const location =
 		missingField === "販売価格" || missingField === "仕入れ価格"
-			? "案件ページ（詳細）の該当プロパティです。入力後、この投資条件ページに戻ってPDFを再実行してください。"
-			: "シミュレーションの元ページ、または設備詳細ページの該当プロパティです。入力後、この投資条件ページに戻ってPDFを再実行してください。";
-	return `投資条件PDFを実行する前に「${missingField}」を入力してください。\n入力場所: ${location}${remaining}`;
+			? "案件ページ（詳細）の該当プロパティです。入力後、この投資条件ページに戻って投資条件シミュレーションを再実行してください。"
+			: "シミュレーションの元ページ、または設備詳細ページの該当プロパティです。入力後、この投資条件ページに戻って投資条件シミュレーションを再実行してください。";
+	return `投資条件シミュレーションを実行する前に「${missingField}」を入力してください。\n入力場所: ${location}${remaining}`;
 }
 
 function hasFieldValue(value: string | number | null): boolean {
@@ -36112,6 +37458,7 @@ export {
 	buildFinanceSimulation as buildFinanceSimulationForTest,
 };
 export {
+	buildProposalSimulationHtml as buildProposalSimulationHtmlForTest,
 	buildProposalSimulationPdfBytes as buildProposalSimulationPdfBytesForTest,
 	buildResidentDocumentPdfBytes as buildResidentDocumentPdfBytesForTest,
 	createDealFeedbackLearningLog as createDealFeedbackLearningLogForTest,

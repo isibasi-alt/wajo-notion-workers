@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PDFDocument } from "pdf-lib";
 import {
+	buildProposalSimulationHtmlForTest,
 	buildProposalSimulationPdfBytesForTest,
 	evaluateProposalSimulationDraftForTest,
 } from "./index";
@@ -149,13 +150,37 @@ async function main() {
 	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /稼働年数/);
 	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /残存FIT年数: 14年/);
 	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /出力抑制前提: 抑制データ未設定/);
-	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /次のバージョンで収支反映/);
+	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /条件提示のみ/);
+	assert.doesNotMatch(readyWithDerivedIncome.summaryLines.join("\n"), /次のバージョン/);
 	assert.match(readyWithDerivedIncome.summaryLines.join("\n"), /残存FIT期間内の総手残り: ¥562,800,000/);
 	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /土地は償却対象外です/);
 	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /システム本体は17年で償却します/);
 	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /権利代は5年で償却します/);
 	assert.match(readyWithDerivedIncome.pageTwoLines.join("\n"), /貴社顧問税理士/);
 	assert.match(readyWithDerivedIncome.conclusionText, /20年後の解体・廃棄費用/);
+	const solarHtml = buildProposalSimulationHtmlForTest(readyWithDerivedIncome);
+	assert.match(solarHtml, /HTML Proposal/);
+	assert.match(solarHtml, /この発電所の提案/);
+	assert.match(solarHtml, /数字で見る発電所/);
+	assert.match(solarHtml, /設備・制度・発電量の根拠/);
+	assert.match(solarHtml, /残存FIT・卒FITまでの見通し/);
+	assert.match(solarHtml, /和上確認・整備付き購入の選択肢/);
+	assert.match(solarHtml, /現場写真・追加確認で提案精度を上げる項目/);
+	assert.match(solarHtml, /NEDO・日射量/);
+	assert.match(solarHtml, /PCS交換費/);
+	assert.match(solarHtml, /条件として提示します/);
+	assert.match(solarHtml, /正式提案ページ/);
+	assert.match(solarHtml, /V1では参考出力/);
+	assert.match(solarHtml, /Jinko Solar/);
+	assert.match(solarHtml, /HUAWEI/);
+	assert.match(solarHtml, /残存FIT総手残り/);
+	assert.doesNotMatch(solarHtml, /WAJO Sales OS 実行記録/);
+	assert.doesNotMatch(solarHtml, /社内用/);
+	assert.doesNotMatch(solarHtml, /ゲート:/);
+	assert.doesNotMatch(solarHtml, /S 審査担当/);
+	if (process.env.PROPOSAL_HTML_TEST_OUTPUT) {
+		await writeFile(process.env.PROPOSAL_HTML_TEST_OUTPUT, solarHtml);
+	}
 
 	// CO2-001: 年間CO2削減量が未入力でも、年間発電量(年間売電収入÷売電単価)から自動算出し、
 	// 顧客文「御社への結論」に "○○トン" のプレースホルダーを出さない。
@@ -187,11 +212,66 @@ async function main() {
 		});
 		assert.match(extractedPdfText, /総枚数 420枚/);
 		assert.doesNotMatch(extractedPdfText, /総枚数 ４２０枚/);
+		assert.doesNotMatch(extractedPdfText, /NPV/);
+		assert.doesNotMatch(extractedPdfText, /IRR/);
+		assert.doesNotMatch(extractedPdfText, /DSCR/);
+		assert.doesNotMatch(extractedPdfText, /B\/S提案/);
+		assert.doesNotMatch(extractedPdfText, /ファイナンス詳細/);
+		assert.doesNotMatch(extractedPdfText, /WAJO Sales OS 実行記録/);
+		assert.doesNotMatch(extractedPdfText, /社内用/);
+		assert.doesNotMatch(extractedPdfText, /ゲート:/);
+		assert.doesNotMatch(extractedPdfText, /A 提案思想/);
+		assert.doesNotMatch(extractedPdfText, /B 数値・プロパティ/);
+		assert.doesNotMatch(extractedPdfText, /C 出力デザイン/);
+		assert.doesNotMatch(extractedPdfText, /S 審査担当/);
+		assert.match(extractedPdfText, /現場写真/);
+		assert.match(extractedPdfText, /この発電所の見立て/);
+		assert.match(extractedPdfText, /残存FIT総手残り/);
+		assert.match(extractedPdfText, /設備・制度:/);
+		assert.match(extractedPdfText, /現場感:/);
+		assert.match(extractedPdfText, /安心材料/);
+		assert.match(extractedPdfText, /NEDO・ハザード・PCS交換費・卒FIT単価/);
+		assert.match(extractedPdfText, /ファイナンスシミュレーションでは/);
+		assert.match(extractedPdfText, /現地・法令・環境チェック/);
+		assert.match(extractedPdfText, /B\/S3指標/);
 	} finally {
 		await rm(pdfCheckDirectory, { recursive: true, force: true });
 	}
 	if (process.env.PROPOSAL_PDF_TEST_OUTPUT) {
 		await writeFile(process.env.PROPOSAL_PDF_TEST_OUTPUT, solarPdfBytes);
+	}
+
+	const wajoRankWithoutEvidence = evaluateProposalSimulationDraftForTest({
+		id: "proposal-wajo-rank-only",
+		properties: solarRequiredProps({
+			和上整備判定: selectProp("整備済"),
+			保証判定: selectProp("保証対象"),
+		}),
+	});
+	assert.match(wajoRankWithoutEvidence.pageTwoLines.join("\n"), /和上確認: 和上確認 要確認 \/ 整備 要確認 \/ 保証 要確認/);
+	const wajoRankOnlyHtml = buildProposalSimulationHtmlForTest(wajoRankWithoutEvidence);
+	assert.match(wajoRankOnlyHtml, /和上確認 要確認/);
+	assert.match(wajoRankOnlyHtml, /要確認 \/ 和上確認日・確認資料・実施チェックが未入力/);
+	assert.doesNotMatch(wajoRankOnlyHtml, /保証対象/);
+	assert.doesNotMatch(wajoRankOnlyHtml, /整備済/);
+	const wajoRankOnlyPdfBytes = await buildProposalSimulationPdfBytesForTest(
+		wajoRankWithoutEvidence,
+		"proposal-wajo-rank-only",
+	);
+	const wajoRankOnlyDirectory = await mkdtemp(join(tmpdir(), "wajo-proposal-wajo-rank-only-"));
+	const wajoRankOnlyPdfPath = join(wajoRankOnlyDirectory, "proposal.pdf");
+	try {
+		await writeFile(wajoRankOnlyPdfPath, wajoRankOnlyPdfBytes);
+		const extractedWajoRankOnlyText = execFileSync("pdftotext", ["-layout", wajoRankOnlyPdfPath, "-"], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		});
+		assert.match(extractedWajoRankOnlyText, /和上確認\s+要確認/);
+		assert.match(extractedWajoRankOnlyText, /要確認 \/ 和上確認日・確認資料・実施チェックが未入力/);
+		assert.doesNotMatch(extractedWajoRankOnlyText, /保証対象/);
+		assert.doesNotMatch(extractedWajoRankOnlyText, /整備済/);
+	} finally {
+		await rm(wajoRankOnlyDirectory, { recursive: true, force: true });
 	}
 
 	const missingPanelMaker = evaluateProposalSimulationDraftForTest({
@@ -280,12 +360,13 @@ async function main() {
 		}),
 	});
 
-	assert.equal(readyWithCurtailment.annualIncome, 38880000);
-	assert.equal(readyWithCurtailment.annualNetIncome, 35880000);
-	assert.equal(readyWithCurtailment.expectedYield, 29.9);
-	assert.equal(readyWithCurtailment.fitTotalNetCashflow, 502320000);
+	assert.equal(readyWithCurtailment.annualIncome, 43200000);
+	assert.equal(readyWithCurtailment.annualNetIncome, 40200000);
+	assert.equal(readyWithCurtailment.expectedYield, 33.5);
+	assert.equal(readyWithCurtailment.fitTotalNetCashflow, 562800000);
 	assert.match(readyWithCurtailment.summaryLines.join("\n"), /出力抑制前提: 抑制データあり \/ 10%/);
-	assert.match(readyWithCurtailment.summaryLines.join("\n"), /次のバージョンで対応予定/);
+	assert.match(readyWithCurtailment.summaryLines.join("\n"), /通常試算には未反映/);
+	assert.doesNotMatch(readyWithCurtailment.summaryLines.join("\n"), /次のバージョン/);
 	assert.match(readyWithCurtailment.summaryLines.join("\n"), /出力抑制率: 10%/);
 
 	const readyWithFinance = evaluateProposalSimulationDraftForTest({
