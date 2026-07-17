@@ -15902,6 +15902,31 @@ async function processProposalSimulation(
 		"発電所設備詳細",
 		"設備詳細",
 	]);
+	if (relatedEquipmentIds.length > 1) {
+		return {
+			pageId: page.id,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			status: "入力待ち",
+			missingField: "関連設備詳細",
+			grossProfit: null,
+			expectedYield: null,
+			paybackYears: null,
+			message: "提案シミュレーションは、関連設備詳細が1件だけ紐づいたページから実行してください。複数候補を先頭採用しません。",
+		};
+	}
+	const relatedProjectIds = relationIdsFromProperty(page.properties?.["関連案件"]);
+	if (relatedProjectIds.length > 1) {
+		return {
+			pageId: page.id,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			status: "入力待ち",
+			missingField: "関連案件",
+			grossProfit: null,
+			expectedYield: null,
+			paybackYears: null,
+			message: "提案シミュレーションは、関連案件が1件だけ紐づいたページから実行してください。複数候補を先頭採用しません。",
+		};
+	}
 	let equipmentPage: Page | null = null;
 	if (relatedEquipmentIds.length > 0) {
 		try {
@@ -15915,12 +15940,12 @@ async function processProposalSimulation(
 		}
 	}
 	if (!equipmentPage) {
-		const relatedProjectIds = relationIdsFromProperty(page.properties?.["関連案件"]);
 		if (relatedProjectIds.length > 0) {
 			try {
 				const projectPage = await notion.pages.retrieve({ page_id: relatedProjectIds[0]! });
 				equipmentPage = await retrieveProjectEquipmentDetailPage(notion, projectPage);
 			} catch (error) {
+				if (String(error).includes("複数") || String(error).includes("先頭採用を停止")) throw error;
 				console.log("proposal simulation equipment project fallback skipped", {
 					proposalPageId: page.id,
 					projectPageId: relatedProjectIds[0],
@@ -15928,6 +15953,35 @@ async function processProposalSimulation(
 				});
 			}
 		}
+	}
+	const equipmentProjectIds = relationIdsFromProperty(equipmentPage?.properties?.["関連案件"]);
+	if (equipmentProjectIds.length > 1) {
+		return {
+			pageId: page.id,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			status: "入力待ち",
+			missingField: "設備詳細の関連案件",
+			grossProfit: null,
+			expectedYield: null,
+			paybackYears: null,
+			message: "設備詳細の関連案件が複数あります。対象案件を1件に絞ってから提案シミュレーションを実行してください。",
+		};
+	}
+	if (
+		relatedProjectIds.length === 1 &&
+		equipmentProjectIds.length === 1 &&
+		relatedProjectIds[0] !== equipmentProjectIds[0]
+	) {
+		return {
+			pageId: page.id,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			status: "入力待ち",
+			missingField: "関連案件",
+			grossProfit: null,
+			expectedYield: null,
+			paybackYears: null,
+			message: "提案シミュレーションと設備詳細の関連案件が一致していません。対象案件を確認してください。",
+		};
 	}
 	const sourcePage = mergeProjectWithEquipmentDetail(page, equipmentPage);
 	// 投資条件ページで入力した借入・税率・B/S値は、提案シミュレーションの計算時に優先する。
@@ -16133,6 +16187,7 @@ async function processProposalSimulation(
 			{ kind: "number", value: panelDegradationRate },
 		);
 		if (draft.financeSimulation) {
+			const financeInputDerived = draft.financeSimulation.taxBenefitBasis === "input-derived";
 			setAliasPatch(
 				patches,
 				["借入額", "融資額", "借入金額", "ローン金額"],
@@ -16165,16 +16220,18 @@ async function processProposalSimulation(
 				["年間償却額", "シミュレーション年間償却額"],
 				{ kind: "number", value: draft.financeSimulation.annualDepreciation },
 			);
-			setAliasPatch(
-				patches,
-				["税効果", "年間税効果", "償却税効果"],
-				{ kind: "number", value: draft.financeSimulation.taxBenefit },
-			);
-			setAliasPatch(
-				patches,
-				["税引後キャッシュフロー", "税効果後CF"],
-				{ kind: "number", value: draft.financeSimulation.afterTaxCashflow },
-			);
+			if (financeInputDerived) {
+				setAliasPatch(
+					patches,
+					["税効果", "年間税効果", "償却税効果"],
+					{ kind: "number", value: draft.financeSimulation.taxBenefit },
+				);
+				setAliasPatch(
+					patches,
+					["税引後キャッシュフロー", "税効果後CF"],
+					{ kind: "number", value: draft.financeSimulation.afterTaxCashflow },
+				);
+			}
 			if (draft.financeSimulation.dscr !== null) {
 				setAliasPatch(
 					patches,
@@ -16182,30 +16239,45 @@ async function processProposalSimulation(
 					{ kind: "number", value: draft.financeSimulation.dscr },
 				);
 			}
-			if (draft.financeSimulation.projectNpv !== null) {
+			if (financeInputDerived && draft.financeSimulation.projectNpv !== null) {
 				setAliasPatch(
 					patches,
 					["NPV", "プロジェクトNPV"],
 					{ kind: "number", value: draft.financeSimulation.projectNpv },
 				);
 			}
-			if (draft.financeSimulation.projectIrr !== null) {
+			if (financeInputDerived && draft.financeSimulation.projectIrr !== null) {
 				setAliasPatch(
 					patches,
 					["IRR", "プロジェクトIRR"],
 					{ kind: "number", value: draft.financeSimulation.projectIrr },
 				);
 			}
-			setAliasPatch(
-				patches,
-				["経済メリット", "総経済メリット", "税効果込み経済メリット"],
-				{ kind: "number", value: draft.financeSimulation.economicBenefit },
-			);
-			setAliasPatch(
-				patches,
-				["購入タイミング判定", "BS判定", "投資判定"],
-				{ kind: "select", value: draft.financeSimulation.timingRank },
-			);
+			if (financeInputDerived) {
+				setAliasPatch(
+					patches,
+					["経済メリット", "総経済メリット", "税効果込み経済メリット"],
+					{ kind: "number", value: draft.financeSimulation.economicBenefit },
+				);
+				setAliasPatch(
+					patches,
+					["購入タイミング判定", "BS判定", "投資判定"],
+					{ kind: "select", value: draft.financeSimulation.timingRank },
+				);
+			} else {
+				// provisional値を新しく書かないだけでは、過去の確定値が残る。
+				// 実入力由来へ戻るまで、同じ通常欄の古い値も明示的に消す。
+				for (const aliases of [
+					["税効果", "年間税効果", "償却税効果"],
+					["税引後キャッシュフロー", "税効果後CF"],
+					["NPV", "プロジェクトNPV"],
+					["IRR", "プロジェクトIRR"],
+					["経済メリット", "総経済メリット", "税効果込み経済メリット"],
+					["購入タイミング判定", "BS判定", "投資判定"],
+				]) {
+					setAliasPatch(patches, aliases, { kind: "clear" });
+				}
+			}
 		}
 		await safeUpdateExistingProperties(notion, page, patches);
 		await syncProposalSimulationEquipmentSnapshot(notion, equipmentPage, draft);
@@ -16257,10 +16329,16 @@ async function retrieveProposalFinanceInputPage(
 		"関連ファイナンスシミュレーション",
 		"ファイナンスシミュレーションDB",
 	]);
+	if (directIds.length > 1) {
+		throw new Error("提案シミュレーションに関連するFinanceページが複数あります。先頭採用を停止しました。");
+	}
 	if (directIds.length === 1) {
 		try {
-			return await notion.pages.retrieve({ page_id: directIds[0]! });
+			const financePage = await notion.pages.retrieve({ page_id: directIds[0]! });
+			assertFinancePageMatchesProposal(financePage as Page, proposalPage);
+			return financePage as Page;
 		} catch (error) {
+			if (isFinanceIdentityOrCardinalityError(error)) throw error;
 			console.log("proposal finance input direct retrieve skipped", {
 				proposalPageId: proposalPage.id,
 				financePageId: directIds[0],
@@ -16278,14 +16356,54 @@ async function retrieveProposalFinanceInputPage(
 			},
 			page_size: 2,
 		});
-		if (byProposal.results.length === 1) return byProposal.results[0] as Page;
+		if (byProposal.results.length > 1) {
+			throw new Error("提案シミュレーションに紐づくFinanceページが複数あります。先頭採用を停止しました。");
+		}
+		if (byProposal.results.length === 1) {
+			const financePage = byProposal.results[0] as Page;
+			assertFinancePageMatchesProposal(financePage, proposalPage);
+			return financePage;
+		}
 	} catch (error) {
+			if (isFinanceIdentityOrCardinalityError(error)) throw error;
 		console.log("proposal finance input lookup skipped", {
 			proposalPageId: proposalPage.id,
 			error: String(error),
 		});
 	}
 	return null;
+}
+
+function isFinanceIdentityOrCardinalityError(error: unknown): boolean {
+	const message = String(error);
+	return message.includes("Finance") &&
+		(message.includes("複数") || message.includes("先頭採用を停止") || message.includes("一致していません"));
+}
+
+function assertFinancePageMatchesProposal(financePage: Page, proposalPage: Page): void {
+	const financeProjectIds = relationIdsFromProperty(financePage.properties?.["関連案件"]);
+	if (financeProjectIds.length > 1) {
+		throw new Error("Financeページの関連案件が複数あります。先頭採用を停止しました。");
+	}
+	const proposalProjectIds = relationIdsFromProperty(proposalPage.properties?.["関連案件"]);
+	if (
+		proposalProjectIds.length === 1 &&
+		financeProjectIds.length === 1 &&
+		proposalProjectIds[0] !== financeProjectIds[0]
+	) {
+		throw new Error("提案シミュレーションとFinanceページの関連案件が一致していません。");
+	}
+	const financeProposalIds = relationIdsFromAliases(financePage.properties ?? {}, [
+		"関連提案シミュレーション",
+		"関連提案シミュレーション依頼",
+		"提案シミュレーション",
+	]);
+	if (financeProposalIds.length > 1) {
+		throw new Error("Financeページの関連提案シミュレーションが複数あります。先頭採用を停止しました。");
+	}
+	if (financeProposalIds.length === 1 && financeProposalIds[0] !== proposalPage.id) {
+		throw new Error("提案シミュレーションとFinanceページの関連提案が一致していません。");
+	}
 }
 
 function mergeProposalWithFinanceInput(
@@ -16710,6 +16828,9 @@ async function ensureFinanceInputRecord(
 			"関連ファイナンスシミュレーション",
 			"ファイナンスシミュレーションDB",
 		]);
+		if (linkedFinanceIds.length > 1) {
+			throw new Error("入力依頼ページに関連するFinanceページが複数あります。先頭採用を停止しました。");
+		}
 		let existingPage: Page | null = null;
 		if (linkedFinanceIds.length > 0) {
 			try {
@@ -16732,8 +16853,11 @@ async function ensureFinanceInputRecord(
 					property: "関連案件",
 					relation: { contains: projectPage.id },
 				},
-				page_size: 1,
+				page_size: 10,
 			});
+			if (existing.results.length > 1) {
+				throw new Error("同一案件に紐づくFinanceページが複数あります。対象Financeを明示してください。");
+			}
 			existingPage = (existing.results[0] ?? null) as Page | null;
 		}
 		const recordName = `${readGenericPageTitle(projectPage) || projectPage.id}｜投資条件`;
@@ -17844,8 +17968,11 @@ async function findExistingProjectDocumentRequest(
 				{ property: "資料種別", select: { equals: documentType } },
 			],
 		},
-		page_size: 1,
+		page_size: 10,
 	});
+	if (existing.results.length > 1) {
+		throw new Error("同一案件・同一資料種別の依頼ページが複数あります。先頭採用を停止しました。");
+	}
 	return existing.results[0] ?? null;
 }
 
@@ -17864,6 +17991,9 @@ async function retrieveProjectEquipmentDetailPage(
 		projectPage.properties ?? {},
 		PROJECT_EQUIPMENT_DETAIL_RELATION_ALIASES,
 	);
+	if (equipmentIds.length > 1) {
+		throw new Error("案件に関連する設備詳細が複数あります。先頭採用を停止しました。");
+	}
 	if (equipmentIds.length === 0) return null;
 	try {
 		return await notion.pages.retrieve({ page_id: equipmentIds[0]! });
@@ -17881,11 +18011,7 @@ function relationIdsFromAliases(
 	properties: Record<string, unknown>,
 	aliases: string[],
 ): string[] {
-	for (const alias of aliases) {
-		const ids = relationIdsFromProperty(properties[alias]);
-		if (ids.length > 0) return ids;
-	}
-	return [];
+	return uniqueIds(aliases.flatMap((alias) => relationIdsFromProperty(properties[alias])));
 }
 
 function mergeProjectWithEquipmentDetail(projectPage: Page, equipmentPage: Page | null): Page {
@@ -18253,6 +18379,7 @@ async function syncFinanceSimulationRecord(
 	proposalPage: Page,
 	draft: ProposalSimulationDraft,
 	projectIdHint?: string | null,
+	targetFinancePageId?: string | null,
 ): Promise<{ pageId: string; action: "created" | "updated" } | null> {
 	if (!draft.financeSimulation) return null;
 	try {
@@ -18260,33 +18387,50 @@ async function syncFinanceSimulationRecord(
 			projectIdHint ??
 			relationIdsFromProperty(proposalPage.properties?.["関連案件"])[0] ??
 			null;
-		const byProposal = await notion.dataSources.query({
-			data_source_id: FINANCE_SIMULATION_DATA_SOURCE_ID,
-			filter: {
-				property: "関連提案シミュレーション",
-				relation: { contains: proposalPage.id },
-			},
-			page_size: 1,
-		});
-		let existingPage = byProposal.results[0] ?? null;
-		// 提案シミュレーション紐づけで見つからない場合は、同一案件に既にある入力箱へ
-		// フォールバックして書き込む（投資条件ボタンで作られた入力待ちの箱との二重化を防ぐ）。
-		if (!existingPage && projectId) {
-			const byProject = await notion.dataSources.query({
+		let existingPage: Page | null = null;
+		if (targetFinancePageId) {
+			existingPage = await notion.pages.retrieve({ page_id: targetFinancePageId });
+			assertFinancePageMatchesProposal(existingPage, proposalPage);
+			const targetProjectIds = relationIdsFromProperty(existingPage.properties?.["関連案件"]);
+			if (targetProjectIds.length > 1) {
+				throw new Error("指定されたFinanceページの関連案件が複数あります。");
+			}
+			if (projectId && targetProjectIds.length === 1 && targetProjectIds[0] !== projectId) {
+				throw new Error("指定されたFinanceページと対象案件が一致していません。");
+			}
+		} else {
+			const byProposal = await notion.dataSources.query({
 				data_source_id: FINANCE_SIMULATION_DATA_SOURCE_ID,
 				filter: {
-					property: "関連案件",
-					relation: { contains: projectId },
+					property: "関連提案シミュレーション",
+					relation: { contains: proposalPage.id },
 				},
 				page_size: 10,
 			});
-			const candidates = byProject.results ?? [];
-			existingPage =
-				candidates.find(
-					(candidate) => text(candidate.properties?.["ファイナンス状態"]) === "入力待ち",
-				) ??
-				candidates[0] ??
-				null;
+			if (byProposal.results.length > 1) {
+				throw new Error("提案シミュレーションに紐づくFinanceページが複数あります。先頭採用を停止しました。");
+			}
+			existingPage = byProposal.results[0] ?? null;
+			// 提案シミュレーション紐づけで見つからない場合は、同一案件に既にある入力箱へ
+			// フォールバックして書き込む。候補が複数なら、入力待ちでも先頭採用しない。
+			if (!existingPage && projectId) {
+				const byProject = await notion.dataSources.query({
+					data_source_id: FINANCE_SIMULATION_DATA_SOURCE_ID,
+					filter: {
+						property: "関連案件",
+						relation: { contains: projectId },
+					},
+					page_size: 10,
+				});
+				const candidates = byProject.results ?? [];
+				if (candidates.length > 1) {
+					throw new Error("同一案件に紐づくFinanceページが複数あります。対象Financeを明示してください。");
+				}
+				existingPage = candidates[0] ?? null;
+			}
+			if (existingPage) {
+				assertFinancePageMatchesProposal(existingPage, proposalPage);
+			}
 		}
 		const properties = buildFinanceSimulationRecordProperties(proposalPage, draft, projectId);
 		if (existingPage) {
@@ -18306,7 +18450,7 @@ async function syncFinanceSimulationRecord(
 			proposalPageId: proposalPage.id,
 			error: String(error),
 		});
-		return null;
+		throw error;
 	}
 }
 
@@ -18325,8 +18469,11 @@ async function syncSalesProposalRecord(
 				property: "関連提案シミュレーション依頼",
 				relation: { contains: proposalPage.id },
 			},
-			page_size: 1,
+			page_size: 10,
 		});
+		if (existing.results.length > 1) {
+			throw new Error("同一提案シミュレーションに紐づく営業提案レコードが複数あります。先頭採用を停止しました。");
+		}
 		const existingPage = existing.results[0] ?? null;
 		const patches = buildSalesProposalRecordPatches(
 			proposalPage,
@@ -18353,6 +18500,7 @@ async function syncSalesProposalRecord(
 			proposalPageId: proposalPage.id,
 			error: String(error),
 		});
+		if (String(error).includes("複数") || String(error).includes("先頭採用を停止")) throw error;
 		return null;
 	}
 }
@@ -18885,19 +19033,19 @@ function buildFinanceSimulationRecordProperties(
 			年間利息額: { number: finance.annualInterestExpense },
 			返済期間: finance.loanYears !== null ? { number: finance.loanYears } : undefined,
 			自己資金: { number: selfFunding },
-			実効税率: finance.effectiveTaxRateSource === "input" ? { number: finance.effectiveTaxRate } : undefined,
+			実効税率: finance.effectiveTaxRateSource === "input" ? { number: finance.effectiveTaxRate } : { number: null },
 			減価償却年数: { number: finance.depreciationYears },
-			NPV: taxInputReady ? { number: finance.projectNpv } : undefined,
-			IRR: taxInputReady ? { number: finance.projectIrr } : undefined,
-			経済メリット: taxInputReady ? { number: finance.economicBenefit } : undefined,
+			NPV: taxInputReady ? { number: finance.projectNpv } : { number: null },
+			IRR: taxInputReady ? { number: finance.projectIrr } : { number: null },
+			経済メリット: taxInputReady ? { number: finance.economicBenefit } : { number: null },
 			今期利益見込: finance.pretaxProfit !== null ? { number: finance.pretaxProfit } : undefined,
 		土地代: compositionItemConfirmed("土地代") ? { number: finance.landPrice } : undefined,
 		システム本体価格: compositionItemConfirmed("システム本体価格") ? { number: finance.systemPrice } : undefined,
 		権利代: compositionItemConfirmed("権利代") ? { number: finance.rightsPrice } : undefined,
 		年間返済額: { number: finance.annualDebtService },
 		年間償却額: { number: finance.annualDepreciation },
-		税効果: taxInputReady ? { number: finance.taxBenefit } : undefined,
-		税引後キャッシュフロー: taxInputReady ? { number: finance.afterTaxCashflow } : undefined,
+		税効果: taxInputReady ? { number: finance.taxBenefit } : { number: null },
+		税引後キャッシュフロー: taxInputReady ? { number: finance.afterTaxCashflow } : { number: null },
 		投資構成確認: richText(
 			finance.composition.verificationStatus === "確認済み"
 				? "土地代・システム本体価格・権利代の構成を確認済み"
@@ -18915,22 +19063,22 @@ function buildFinanceSimulationRecordProperties(
 			: undefined,
 		出口手取り: taxInputReady && finance.exitScenario.netExitProceeds !== null
 			? { number: finance.exitScenario.netExitProceeds }
-			: undefined,
+			: { number: null },
 		出口エクイティNPV: taxInputReady && finance.exitScenario.equityNpv !== null
 			? { number: finance.exitScenario.equityNpv }
-			: undefined,
+			: { number: null },
 		出口エクイティIRR: taxInputReady && finance.exitScenario.equityIrr !== null
 			? { number: finance.exitScenario.equityIrr }
-			: undefined,
+			: { number: null },
 		"3年累計運用手取り": taxInputReady && finance.exitScenario.cumulativeOperatingCashflow !== null
 			? { number: finance.exitScenario.cumulativeOperatingCashflow }
-			: undefined,
+			: { number: null },
 		"3年総受取額": taxInputReady && finance.exitScenario.totalCashReceived !== null
 			? { number: finance.exitScenario.totalCashReceived }
-			: undefined,
+			: { number: null },
 		"3年投資差益": taxInputReady && finance.exitScenario.netInvestmentGain !== null
 			? { number: finance.exitScenario.netInvestmentGain }
-			: undefined,
+			: { number: null },
 		出口価格根拠: richText(
 			finance.exitScenario.priceSource === "和上買取コミット"
 				? `和上買取コミット（${finance.exitScenario.commitmentStatus}）`
@@ -18941,7 +19089,7 @@ function buildFinanceSimulationRecordProperties(
 		DSCR: finance.dscr !== null ? { number: finance.dscr } : undefined,
 		実質金利: finance.effectiveInterestRate !== null ? { number: finance.effectiveInterestRate } : undefined,
 		アドオン金利: finance.addOnInterestRate !== null ? { number: finance.addOnInterestRate } : undefined,
-		購入タイミング判定: finalJudgmentReady ? select(finance.timingRank) : undefined,
+		購入タイミング判定: finalJudgmentReady ? select(finance.timingRank) : { select: null },
 		購入タイミング理由: richText(
 			finalJudgmentReady
 				? finance.timingReason
@@ -20060,6 +20208,18 @@ async function processInvestmentConditionPdf(
 			message: "投資条件シミュレーションは、関連案件が1件だけ紐づいたファイナンスページから実行してください。",
 		};
 	}
+	const financeProposalIds = relationIdsFromAliases(financePage.properties ?? {}, [
+		"関連提案シミュレーション",
+		"元提案シミュレーション",
+	]);
+	if (financeProposalIds.length > 1) {
+		return {
+			financePageId: financePage.id,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			missingField: "関連提案シミュレーション",
+			message: "投資条件シミュレーションは、関連提案シミュレーションが1件だけ紐づいたFinanceページから実行してください。複数候補を先頭採用しません。",
+		};
+	}
 	const proposalPage = await resolveInvestmentConditionProposalPage(notion, financePage);
 	if (!proposalPage) {
 		return {
@@ -20097,6 +20257,14 @@ async function processInvestmentConditionPdf(
 		"発電所設備詳細",
 		"設備詳細",
 	]);
+	if (equipmentIds.length > 1) {
+		return {
+			financePageId: financePage.id,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			missingField: "関連設備詳細",
+			message: "投資条件シミュレーションは、関連設備詳細が1件だけ紐づいた提案から実行してください。複数候補を先頭採用しません。",
+		};
+	}
 	if (equipmentIds.length > 0) {
 		try {
 			equipmentPage = await notion.pages.retrieve({ page_id: equipmentIds[0]! });
@@ -20108,6 +20276,27 @@ async function processInvestmentConditionPdf(
 			});
 		}
 	}
+	const equipmentProjectIds = relationIdsFromProperty(equipmentPage?.properties?.["関連案件"]);
+	if (equipmentProjectIds.length > 1) {
+		return {
+			financePageId: financePage.id,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			missingField: "設備詳細の関連案件",
+			message: "設備詳細の関連案件が複数あります。対象案件を1件に絞ってから実行してください。",
+		};
+	}
+	if (
+		proposalProjectIds.length === 1 &&
+		equipmentProjectIds.length === 1 &&
+		proposalProjectIds[0] !== equipmentProjectIds[0]
+	) {
+		return {
+			financePageId: financePage.id,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			missingField: "関連案件",
+			message: "提案シミュレーションと設備詳細の関連案件が一致していません。対象案件を確認してください。",
+		};
+	}
 	if (!equipmentPage) {
 		const projectIds = relationIdsFromProperty(proposalPage.properties?.["関連案件"]);
 		if (projectIds.length === 1) {
@@ -20115,6 +20304,7 @@ async function processInvestmentConditionPdf(
 				const projectPage = await notion.pages.retrieve({ page_id: projectIds[0]! });
 				equipmentPage = await retrieveProjectEquipmentDetailPage(notion, projectPage);
 			} catch (error) {
+				if (String(error).includes("複数") || String(error).includes("先頭採用を停止")) throw error;
 				console.log("investment condition equipment project fallback skipped", {
 					financePageId: financePage.id,
 					error: String(error),
@@ -20183,7 +20373,7 @@ async function processInvestmentConditionPdf(
 	}
 
 	const projectId = financeProjectIds[0] ?? proposalProjectIds[0] ?? null;
-	await syncFinanceSimulationRecord(notion, simulationSourcePage, draft, projectId);
+	await syncFinanceSimulationRecord(notion, simulationSourcePage, draft, projectId, financePage.id);
 	const refreshedFinancePage = await notion.pages.retrieve({ page_id: financePage.id });
 	const htmlExport = await exportInvestmentConditionHtml(notion, refreshedFinancePage, draft);
 	if (!htmlExport.attached) {

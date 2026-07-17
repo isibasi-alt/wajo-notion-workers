@@ -1022,7 +1022,20 @@ async function main() {
 			今期利益見込: numberProp(null),
 		},
 		existingByDocumentType: {
-			提案書: [completedProposalRequestPage()],
+			提案書: [
+				{
+					...completedProposalRequestPage(),
+					properties: {
+						...completedProposalRequestPage().properties,
+						税効果: numberProp(999999),
+						税引後キャッシュフロー: numberProp(888888),
+						NPV: numberProp(777777),
+						IRR: numberProp(6.6),
+						経済メリット: numberProp(666666),
+						購入タイミング判定: selectProp("S"),
+					},
+				},
+			],
 		},
 	});
 	await processProposalSimulationForTest(
@@ -1049,10 +1062,186 @@ async function main() {
 	assert.match(JSON.stringify(taxPendingSalesProps["営業トーク下書き"]), /営業提案ランクは保留/);
 	assert.doesNotMatch(JSON.stringify(taxPendingSalesProps["営業説明サマリー"]), /やるべき案件/);
 	assert.doesNotMatch(JSON.stringify(taxPendingSalesProps["営業説明サマリー"]), /投資判定: S/);
+	const taxPendingProposalUpdate = taxPendingSalesCase.updates.find(
+		(update) => update.page_id === "request-ready-1" &&
+			Boolean((update.properties as Record<string, unknown>).資料作成メモ),
+	);
+	assert.ok(taxPendingProposalUpdate, "税務前提保留でも提案ページの状態メモは更新すること");
+	const taxPendingProposalProps = taxPendingProposalUpdate!.properties as Record<string, unknown>;
+	for (const propertyName of [
+		"税効果",
+		"税引後キャッシュフロー",
+		"NPV",
+		"IRR",
+		"経済メリット",
+		"購入タイミング判定",
+	]) {
+		assert.deepEqual(
+			taxPendingProposalProps[propertyName],
+			propertyName === "購入タイミング判定" ? { select: null } : { number: null },
+			`税務前提provisional時は提案ページの${propertyName}を古い確定値のまま残さないこと`,
+		);
+	}
 
-	// 二重化しない: 同一案件に既存 finance 入力箱があり、その 関連提案シミュレーション が
-	// 今回の提案ページ(request-ready-1)と不一致でも、新規作成せず既存箱を update し、
-	// 計算値(年間返済額等)が書かれ、関連案件が保持されること。
+	// 入力値由来のFinanceなら、提案ページ側の派生値書戻しは従来どおり許可する。
+	const inputDerivedFinancePage = {
+		...financeSimulationPage("finance-input-derived"),
+		properties: {
+			...financeSimulationPage("finance-input-derived").properties,
+			関連案件: relationProp(["project-1"]),
+			借入額: numberProp(15000000),
+			金利: numberProp(1),
+			返済期間: numberProp(15),
+			実効税率: numberProp(30),
+			今期利益見込: numberProp(8000000),
+			流動比率: numberProp(180),
+			利益剰余金: numberProp(70000000),
+			自己資本比率: numberProp(42),
+			土地代: numberProp(3000000),
+			システム本体価格: numberProp(17000000),
+			権利代: numberProp(2000000),
+		},
+	};
+	const inputDerivedProposalPage = completedProposalRequestPage();
+	inputDerivedProposalPage.properties = {
+		...inputDerivedProposalPage.properties,
+		関連ファイナンスシミュレーション: relationProp(["finance-input-derived"]),
+	};
+	const inputDerivedCase = makeNotion({
+		existingByDocumentType: { 提案書: [inputDerivedProposalPage] },
+		existingByDataSource: {
+		"7e4d0168-6e54-4071-bd55-f9730202225c": [inputDerivedFinancePage],
+	},
+	});
+	await processProposalSimulationForTest(
+		{ pageId: "request-ready-1", dryRun: false },
+		inputDerivedCase.notion as never,
+	);
+	const inputDerivedUpdate = inputDerivedCase.updates.find((update) => {
+		if (update.page_id !== "request-ready-1") return false;
+		const properties = update.properties as Record<string, unknown>;
+		return properties.NPV !== undefined || properties.IRR !== undefined || properties.税効果 !== undefined;
+	});
+	assert.ok(inputDerivedUpdate, "入力値由来のFinanceでは提案ページへ派生値を書き戻すこと");
+
+	// 関係先を先頭採用しない。提案ページの関連案件/設備が複数なら生成・書戻しを止める。
+	for (const [label, overrides, expectedField] of [
+		[
+			"提案の関連案件複数",
+			{ 関連案件: relationProp(["project-1", "project-foreign"]) },
+			"関連案件",
+		],
+		[
+			"提案の関連設備複数",
+			{ 関連設備詳細: relationProp(["equipment-1", "equipment-foreign"]) },
+			"関連設備詳細",
+		],
+	] as const) {
+		const proposal = completedProposalRequestPage();
+		proposal.id = `request-${label}`;
+		proposal.properties = { ...proposal.properties, ...overrides };
+		const cardinalityCase = makeNotion({
+			existingByDocumentType: { 提案書: [proposal] },
+		});
+		const result = await processProposalSimulationForTest(
+			{ pageId: proposal.id, dryRun: false },
+			cardinalityCase.notion as never,
+		);
+		assert.equal(result.action, "needs-input", label);
+		assert.equal(result.missingField, expectedField, label);
+		assert.equal(cardinalityCase.creates.length, 0, `${label}では出力レコードを作らない`);
+	}
+
+	// 設備詳細側の関連案件複数・提案/設備の案件不一致も停止する。
+	for (const [label, equipmentProjectIds, expectedMessage] of [
+		["設備の関連案件複数", ["project-1", "project-foreign"], /設備詳細の関連案件が複数/],
+		["提案と設備の案件不一致", ["project-foreign"], /提案シミュレーションと設備詳細の関連案件が一致/],
+	] as const) {
+		const proposal = completedProposalRequestPage();
+		proposal.id = `request-${label}`;
+		const cardinalityCase = makeNotion({
+			equipmentPageOverride: {
+				...equipmentPage(),
+				properties: { ...equipmentPage().properties, 関連案件: relationProp(equipmentProjectIds) },
+			},
+			existingByDocumentType: { 提案書: [proposal] },
+		});
+		const result = await processProposalSimulationForTest(
+			{ pageId: proposal.id, dryRun: false },
+			cardinalityCase.notion as never,
+		);
+		assert.equal(result.action, "needs-input", label);
+		assert.match(result.message, expectedMessage, label);
+		assert.equal(cardinalityCase.creates.length, 0, `${label}では出力レコードを作らない`);
+	}
+
+	// Finance候補が複数なら、案件に紐づく先頭レコードを勝手に選ばず停止する。
+	const financeCandidateA = {
+		...financeSimulationPage("finance-candidate-a"),
+		properties: {
+			...financeSimulationPage("finance-candidate-a").properties,
+			関連案件: relationProp(["project-1"]),
+			関連提案シミュレーション: relationProp(["request-ready-1"]),
+		},
+	};
+	const financeCandidateB = {
+		...financeSimulationPage("finance-candidate-b"),
+		properties: {
+			...financeSimulationPage("finance-candidate-b").properties,
+			関連案件: relationProp(["project-1"]),
+			関連提案シミュレーション: relationProp(["request-ready-1"]),
+		},
+	};
+	const multipleFinanceCase = makeNotion({
+		existingByDocumentType: { 提案書: [completedProposalRequestPage()] },
+		existingByDataSource: {
+			"7e4d0168-6e54-4071-bd55-f9730202225c": [financeCandidateA, financeCandidateB],
+		},
+	});
+	await assert.rejects(
+		() =>
+			processProposalSimulationForTest(
+				{ pageId: "request-ready-1", dryRun: false },
+				multipleFinanceCase.notion as never,
+			),
+		/Financeページが複数|先頭採用を停止/,
+		"Finance候補が複数のときは先頭採用せず停止すること",
+	);
+	assert.equal(multipleFinanceCase.creates.length, 0);
+
+	// 提案ページから直接Financeを辿る場合も、Finance側の案件/提案が別物なら停止する。
+	const foreignFinanceProposal = completedProposalRequestPage();
+	foreignFinanceProposal.id = "request-foreign-finance";
+	foreignFinanceProposal.properties = {
+		...foreignFinanceProposal.properties,
+		関連ファイナンスシミュレーション: relationProp(["finance-foreign-direct"]),
+	};
+	const foreignDirectFinance = {
+		...financeSimulationPage("finance-foreign-direct"),
+		properties: {
+			...financeSimulationPage("finance-foreign-direct").properties,
+			関連案件: relationProp(["project-foreign"]),
+			関連提案シミュレーション: relationProp(["request-foreign-finance"]),
+		},
+	};
+	const foreignDirectCase = makeNotion({
+		existingByDocumentType: { 提案書: [foreignFinanceProposal] },
+		existingByDataSource: {
+			"7e4d0168-6e54-4071-bd55-f9730202225c": [foreignDirectFinance],
+		},
+	});
+	await assert.rejects(
+		() =>
+			processProposalSimulationForTest(
+				{ pageId: "request-foreign-finance", dryRun: false },
+				foreignDirectCase.notion as never,
+			),
+		/一致していません/,
+		"別案件のFinanceを直接relationした場合は生成を止めること",
+	);
+	assert.equal(foreignDirectCase.creates.length, 0);
+
+	// 同一案件でも関連Proposalが別物のFinance入力箱は再利用しない。
 	const dedupExistingBox = {
 		id: "finance-existing-1",
 		url: "https://www.notion.so/finance-existing-1",
@@ -1071,43 +1260,22 @@ async function main() {
 			"7e4d0168-6e54-4071-bd55-f9730202225c": [dedupExistingBox],
 		},
 	});
-	await processProposalSimulationForTest(
-		{ pageId: "request-ready-1", dryRun: false },
-		dedupCase.notion as never,
-	);
-	const dedupFinanceCreates = dedupCase.creates.filter(
-		(create) =>
-			(create.parent as { data_source_id?: string })?.data_source_id ===
-			"7e4d0168-6e54-4071-bd55-f9730202225c",
+	await assert.rejects(
+		() => processProposalSimulationForTest({ pageId: "request-ready-1", dryRun: false }, dedupCase.notion as never),
+		/一致していません/,
+		"同一案件でも関連Proposalが別物のFinance箱は再利用せず停止すること",
 	);
 	assert.equal(
-		dedupFinanceCreates.length,
-		0,
-		"既存の finance 入力箱があるときは新規作成せず update すること",
+		dedupCase.creates.some(
+			(create) =>
+				(create.parent as { data_source_id?: string })?.data_source_id ===
+				"7e4d0168-6e54-4071-bd55-f9730202225c",
+		),
+		false,
 	);
-	const dedupUpdate = dedupCase.updates.find(
-		(update) =>
-			update.page_id === "finance-existing-1" &&
-			(update.properties as Record<string, unknown>).年間返済額 !== undefined,
-	);
-	assert.ok(dedupUpdate, "既存 finance 箱へ計算値の update が行われること");
-	const dedupProps = dedupUpdate!.properties as Record<string, unknown>;
-	assert.deepEqual(
-		(dedupProps.関連案件 as { relation: Array<{ id: string }> }).relation,
-		[{ id: "project-1" }],
-		"関連案件が必ず保持/設定されること",
-	);
-	assert.equal(
-		(dedupProps.ファイナンス状態 as { select: { name: string } }).select.name,
-		"要確認",
-	);
-	assert.equal(
-		typeof (dedupProps.年間返済額 as { number: number }).number,
-		"number",
-	);
+	assert.equal(dedupCase.updates.some((update) => update.page_id === "finance-existing-1"), false);
 
-	// 実機再現: 提案ページ自身の 関連案件 が空でも、紐づく設備詳細ページの 関連案件 から
-	// 案件idを解決してフォールバックを発動し、既存の入力待ち箱へ update・関連案件を保持すること。
+	// 提案ページ自身の案件が空でも、別ProposalのFinance箱を案件だけで再利用しない。
 	const noProjectProposalPage = {
 		id: "request-ready-noproject",
 		url: "https://www.notion.so/request-ready-noproject",
@@ -1135,32 +1303,20 @@ async function main() {
 			"7e4d0168-6e54-4071-bd55-f9730202225c": [noProjectExistingBox],
 		},
 	});
-	await processProposalSimulationForTest(
-		{ pageId: "request-ready-noproject", dryRun: false },
-		noProjectCase.notion as never,
-	);
-	const noProjectFinanceCreates = noProjectCase.creates.filter(
-		(create) =>
-			(create.parent as { data_source_id?: string })?.data_source_id ===
-			"7e4d0168-6e54-4071-bd55-f9730202225c",
+	await assert.rejects(
+		() => processProposalSimulationForTest({ pageId: "request-ready-noproject", dryRun: false }, noProjectCase.notion as never),
+		/一致していません/,
+		"設備詳細経由で案件を解決しても、別ProposalのFinance箱は再利用せず停止すること",
 	);
 	assert.equal(
-		noProjectFinanceCreates.length,
-		0,
-		"提案ページの関連案件が空でも設備詳細経由で案件を解決し、新規作成せず既存箱へ集約すること",
+		noProjectCase.creates.some(
+			(create) =>
+				(create.parent as { data_source_id?: string })?.data_source_id ===
+				"7e4d0168-6e54-4071-bd55-f9730202225c",
+		),
+		false,
 	);
-	const noProjectUpdate = noProjectCase.updates.find(
-		(update) =>
-			update.page_id === "finance-box-noproject" &&
-			(update.properties as Record<string, unknown>).年間返済額 !== undefined,
-	);
-	assert.ok(noProjectUpdate, "既存 finance 箱へ計算値の update が行われること");
-	const noProjectProps = noProjectUpdate!.properties as Record<string, unknown>;
-	assert.deepEqual(
-		(noProjectProps.関連案件 as { relation: Array<{ id: string }> }).relation,
-		[{ id: "project-1" }],
-		"設備詳細経由で解決した関連案件が必ず入ること",
-	);
+	assert.equal(noProjectCase.updates.some((update) => update.page_id === "finance-box-noproject"), false);
 
 	const existingCase = makeNotion({
 		projectRequestIds: ["request-existing"],

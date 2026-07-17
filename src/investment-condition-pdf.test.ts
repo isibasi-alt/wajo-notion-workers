@@ -183,6 +183,11 @@ async function main() {
 			販売価格: numberProp(20_000_000),
 		},
 	};
+	const unrelatedFinancePage = {
+		...financePage,
+		id: "finance-unrelated",
+		properties: { ...financePage.properties, Name: titleProp("対象外Finance") },
+	};
 	const updates: Array<Record<string, unknown>> = [];
 	const blockUpdates: Array<Record<string, unknown>> = [];
 	const appends: Array<Record<string, unknown>> = [];
@@ -207,7 +212,7 @@ async function main() {
 			},
 		},
 		dataSources: {
-			query: async () => ({ results: [financePage] }),
+			query: async () => ({ results: [unrelatedFinancePage] }),
 		},
 		fileUploads: {
 			create: async () => ({ id: "upload-new" }),
@@ -257,6 +262,7 @@ async function main() {
 	);
 	assert.equal(appends.length, 0, "既存HTMLリンクがある場合は本文ブロックを重複させない");
 	assert.ok(updates.some((update) => update.page_id === "finance-1"));
+	assert.ok(updates.every((update) => update.page_id === "finance-1"), "入力Financeページ以外へ同期しないこと");
 	assert.equal(comments.length, 1);
 	assert.ok(generatedHtml, "投資条件HTMLが生成される");
 	assert.match(generatedHtml.type, /^text\/html; ?charset=utf-8$/);
@@ -355,9 +361,9 @@ async function main() {
 		(pendingBsFinanceUpdate!.properties as Record<string, { select?: { name?: string } }>).ファイナンス状態.select?.name,
 		"要確認",
 	);
-	assert.equal(
+	assert.deepEqual(
 		(pendingBsFinanceUpdate!.properties as Record<string, unknown>).購入タイミング判定,
-		undefined,
+		{ select: null },
 	);
 	if (process.env.INVESTMENT_PDF_PENDING_TEST_OUTPUT && pendingBsHtml) {
 		await writeFile(
@@ -445,16 +451,16 @@ async function main() {
 	assert.ok(taxProvisionalFinanceUpdate);
 	const taxProvisionalProps = taxProvisionalFinanceUpdate!.properties as Record<string, { select?: { name?: string } } | unknown>;
 	assert.equal((taxProvisionalProps.ファイナンス状態 as { select?: { name?: string } }).select?.name, "要確認");
-	assert.equal(taxProvisionalProps.購入タイミング判定, undefined);
-	assert.equal(taxProvisionalProps.実効税率, undefined);
-	assert.equal(taxProvisionalProps.税効果, undefined);
-	assert.equal(taxProvisionalProps.税引後キャッシュフロー, undefined);
-	assert.equal(taxProvisionalProps.NPV, undefined);
-	assert.equal(taxProvisionalProps.IRR, undefined);
-	assert.equal(taxProvisionalProps.経済メリット, undefined);
-	assert.equal(taxProvisionalProps.出口手取り, undefined);
-	assert.equal(taxProvisionalProps.出口エクイティNPV, undefined);
-	assert.equal(taxProvisionalProps.出口エクイティIRR, undefined);
+	assert.deepEqual(taxProvisionalProps.購入タイミング判定, { select: null });
+	assert.deepEqual(taxProvisionalProps.実効税率, { number: null });
+	assert.deepEqual(taxProvisionalProps.税効果, { number: null });
+	assert.deepEqual(taxProvisionalProps.税引後キャッシュフロー, { number: null });
+	assert.deepEqual(taxProvisionalProps.NPV, { number: null });
+	assert.deepEqual(taxProvisionalProps.IRR, { number: null });
+	assert.deepEqual(taxProvisionalProps.経済メリット, { number: null });
+	assert.deepEqual(taxProvisionalProps.出口手取り, { number: null });
+	assert.deepEqual(taxProvisionalProps.出口エクイティNPV, { number: null });
+	assert.deepEqual(taxProvisionalProps.出口エクイティIRR, { number: null });
 	if (process.env.INVESTMENT_PDF_TAX_PROVISIONAL_TEST_OUTPUT && taxProvisionalHtml) {
 		await writeFile(
 			process.env.INVESTMENT_PDF_TAX_PROVISIONAL_TEST_OUTPUT,
