@@ -2567,6 +2567,9 @@ type LandResult = {
 	aZoneScore: LandAZoneScore;
 	sourceSummary: string;
 	humanCollectionItems: string;
+	bZoneHandoff: string;
+	cZoneReadiness: string;
+	cZoneReady: boolean;
 	requiresInvestigation: boolean;
 	investigationGaps: string[];
 	message: string;
@@ -2605,6 +2608,10 @@ type LandInfo = {
 	longitude: number | null;
 	caseStatus: string;
 	relatedProjectIds: string[];
+	targetUniqueness: string;
+	salesTargetKind: string;
+	processingStatus: string;
+	canonicalPageStatus: string;
 };
 
 type ProjectInfo = {
@@ -2641,6 +2648,9 @@ type LandEvaluation = {
 	aZoneScore: LandAZoneScore;
 	sourceSummary: string;
 	humanCollectionItems: string;
+	bZoneHandoff: string;
+	cZoneReadiness: string;
+	cZoneReady: boolean;
 	requiresInvestigation?: boolean;
 	investigationGaps?: string[];
 	actionBucket: string;
@@ -4446,6 +4456,9 @@ worker.tool("processLandEvaluationById", {
 		}),
 		sourceSummary: j.string(),
 		humanCollectionItems: j.string(),
+		bZoneHandoff: j.string(),
+		cZoneReadiness: j.string(),
+		cZoneReady: j.boolean(),
 		requiresInvestigation: j.boolean(),
 		investigationGaps: j.array(j.string()),
 		message: j.string(),
@@ -26434,6 +26447,10 @@ async function processLandEvaluation(
 	const land = readLand(page);
 	const evaluation = await buildLandEvaluation(land);
 	const publicInvestigationGaps = landReviewHoldGaps(land, evaluation);
+	const publicRequiredInputGaps = landRequiredInputGaps(land);
+	const publicCZoneInvestigationGaps = publicInvestigationGaps.filter(
+		(gap) => !publicRequiredInputGaps.includes(gap),
+	);
 	const publicHold = evaluation.requiresInvestigation === true || publicInvestigationGaps.length > 0;
 	const publicHoldReason = landReviewHoldReason(publicInvestigationGaps);
 	const result = (
@@ -26455,6 +26472,15 @@ async function processLandEvaluation(
 			: evaluation.aZoneScore,
 		sourceSummary: evaluation.sourceSummary,
 		humanCollectionItems: evaluation.humanCollectionItems,
+		bZoneHandoff: evaluation.bZoneHandoff,
+		cZoneReadiness: publicHold
+			? buildLandCZoneReadiness({
+				land,
+				missing: publicRequiredInputGaps,
+				investigationGaps: publicCZoneInvestigationGaps,
+			}).text
+			: evaluation.cZoneReadiness,
+		cZoneReady: publicHold ? false : evaluation.cZoneReady,
 		requiresInvestigation: publicHold,
 		investigationGaps: publicInvestigationGaps,
 		message: publicHold ? `${action}: 未評価 / 採点保留。${publicHoldReason}` : message,
@@ -29058,6 +29084,19 @@ function readLand(page: Page): LandInfo {
 			numberFromText(text(properties["経度"]) || text(properties["longitude"])),
 		caseStatus: relationIdsFromProperty(properties["関連案件"]).length > 0 ? "案件化済" : "未案件化",
 		relatedProjectIds: relationIdsFromProperty(properties["関連案件"]),
+		targetUniqueness:
+			text(properties["対象一意性"]) ||
+			text(properties["対象土地一意性"]) ||
+			text(properties["一意性確認"]) ||
+			text(properties["対象土地確認"]) ||
+			"",
+		salesTargetKind: text(properties["営業対象区分"]) || "",
+		processingStatus: text(properties["処理ステータス"]) || "",
+		canonicalPageStatus:
+			text(properties["正本ページ"]) ||
+			text(properties["正本ページ状態"]) ||
+			text(properties["正本候補"]) ||
+			"",
 	};
 }
 
@@ -29090,6 +29129,7 @@ function landReviewHoldGaps(land: LandInfo, evaluation: LandEvaluation): string[
 	return uniqueStrings([
 		...(evaluation.investigationGaps ?? []),
 		...landRequiredInputGaps(land),
+		...landTargetIdentityGaps(land),
 	]);
 }
 
@@ -31099,10 +31139,12 @@ function buildLandHumanCollectionItems(input: {
 }): string {
 	const missing = input.missing ?? [];
 	const gaps = input.investigationGaps ?? [];
+	const bZoneHandoff = buildLandBZoneHandoff(input);
 	const lines = [
 		missing.length > 0 ? `Aゾーン未入力: ${missing.join(" / ")}` : "",
 		gaps.length > 0 ? `Bゾーンで人間回収: ${gaps.join(" / ")}` : "",
 		input.nextAction ? `作業指示: ${input.nextAction}` : "",
+		bZoneHandoff,
 	].filter(Boolean);
 	return lines.length > 0 ? lines.join("\n") : "人間回収項目: 現時点では追加なし。原本確認は別途必要。";
 }
@@ -31169,6 +31211,7 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			...(mapContext.geocodeCandidateRequiresReview ? ["所在地・地番確認"] : []),
 			...landInvestigationGaps(treasure.blockers),
 			...landInputEvidenceGaps(land),
+			...landTargetIdentityGaps(land),
 		]);
 		const sourceSummary = buildLandAZoneSourceSummary({
 			land,
@@ -31188,6 +31231,11 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 				aZoneDecision: aZone.decision,
 				aZoneReason: aZone.reason,
 			});
+			const bZoneHandoff = buildLandBZoneHandoff({
+				investigationGaps,
+				nextAction: scout.nextAction,
+			});
+			const cZone = buildLandCZoneReadiness({ land, investigationGaps });
 			return {
 				overallGrade: "C",
 				score: Math.min(treasure.score, 45),
@@ -31200,6 +31248,9 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 					investigationGaps,
 					nextAction: scout.nextAction,
 				}),
+				bZoneHandoff,
+				cZoneReadiness: cZone.text,
+				cZoneReady: cZone.ready,
 				requiresInvestigation: true,
 				investigationGaps,
 				actionBucket: "継続監視",
@@ -31239,6 +31290,10 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			};
 		}
 		const aZone = decideLandAZone({ land, score: aZoneScore, blockers: treasure.blockers });
+		const bZoneHandoff = buildLandBZoneHandoff({
+			nextAction: treasure.nextAction,
+		});
+		const cZone = buildLandCZoneReadiness({ land });
 		return {
 			overallGrade: treasure.overallGrade,
 			score: treasure.score,
@@ -31250,6 +31305,9 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			humanCollectionItems: buildLandHumanCollectionItems({
 				nextAction: treasure.nextAction,
 			}),
+			bZoneHandoff,
+			cZoneReadiness: cZone.text,
+			cZoneReady: cZone.ready,
 			actionBucket: treasure.actionBucket,
 			caseStatus: treasure.caseStatus,
 			projectType: treasure.projectType,
@@ -31318,6 +31376,20 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 		"- 外部サイト/API｜取得元=未実行｜証拠区分=未確認｜見ている値=所在地・面積が揃ってから実行｜Notion反映先=なし｜人間に渡す確認=まず必須入力を埋める",
 		`人間回収に渡す不足: ${missing.join(" / ")}`,
 	].join("\n");
+	const missingGaps = uniqueStrings([...missing, ...landTargetIdentityGaps(land)]);
+	const bZoneHandoff = buildLandBZoneHandoff({
+		missing,
+		investigationGaps: landTargetIdentityGaps(land),
+		nextAction:
+			missing.length > 0
+				? `まず${missing.join("、")}を入力し、再度「土地評価を開始」してください。`
+				: undefined,
+	});
+	const cZone = buildLandCZoneReadiness({
+		land,
+		missing,
+		investigationGaps: landTargetIdentityGaps(land),
+	});
 
 	return {
 		overallGrade,
@@ -31329,11 +31401,16 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 		sourceSummary,
 		humanCollectionItems: buildLandHumanCollectionItems({
 			missing,
+			investigationGaps: landTargetIdentityGaps(land),
 			nextAction:
 				missing.length > 0
 					? `まず${missing.join("、")}を入力し、再度「土地評価を開始」してください。`
 					: undefined,
 		}),
+		bZoneHandoff,
+		cZoneReadiness: cZone.text,
+		cZoneReady: cZone.ready,
+		investigationGaps: missingGaps,
 		actionBucket,
 		caseStatus,
 		projectType,
@@ -31418,6 +31495,184 @@ function landInputEvidenceGaps(land: LandInfo): string[] {
 	].filter(([isPositive]) => isPositive).map(([, label]) => label);
 	if (positiveInputs.length === 0) return [];
 	return [`${positiveInputs.join("・")}は入力済みだが根拠区分=${land.inputEvidenceState}のため原本待ち`];
+}
+
+function landTargetIdentityGaps(land: LandInfo): string[] {
+	const gaps: string[] = [];
+	const identitySignals = [
+		land.targetUniqueness,
+		land.salesTargetKind,
+		land.processingStatus,
+		land.canonicalPageStatus,
+	].filter(Boolean);
+	if (
+		identitySignals.some((signal) =>
+			/候補複数|複数候補|重複|対象不一致|一意.*未|未確定|正本.*未|正本候補/.test(signal),
+		)
+	) {
+		gaps.push("対象土地一意性");
+	}
+	if (/テスト/.test(land.salesTargetKind) || /テスト|下書き/.test(land.processingStatus)) {
+		gaps.push("対象土地一意性（テスト/下書き表示）");
+	}
+	return uniqueStrings(gaps);
+}
+
+type LandBZoneTask = {
+	owner: string;
+	item: string;
+	source: string;
+	returnTo: string;
+	evidenceState: string;
+	completion: string;
+};
+
+function buildLandBZoneTaskForGap(gap: string): LandBZoneTask {
+	if (/所在地|面積/.test(gap)) {
+		return {
+			owner: "営業担当",
+			item: `${gap}の入力値と入力元資料`,
+			source: "売主資料、登記、公図、既存問い合わせ資料",
+			returnTo: "土地DB「所在地」「面積（坪）」「入力根拠区分」",
+			evidenceState: "未確認→原本/二次資料へ区分",
+			completion: "空欄をなくし、値・単位・入力元・確認日を残す",
+		};
+	}
+	if (/対象土地一意性/.test(gap)) {
+		return {
+			owner: "営業担当または原本保有部署",
+			item: "本番候補/旧データ/テストの区分、正本ページ、対象面積、地番・筆構成",
+			source: "正本ページ、元資料、登記、公図、社内原本",
+			returnTo: "土地DB「対象一意性」「営業対象区分」「正本ページ」または確認メモ",
+			evidenceState: "原本または社内正本。テスト表示は本番候補へ昇格しない",
+			completion: "対象土地が1件に特定され、他候補・テストページと分離済み",
+		};
+	}
+	if (/接道|道路|大型車/.test(gap)) {
+		return {
+			owner: "営業担当",
+			item: "道路名、幅員、道路種別、大型車搬入可否",
+			source: "道路台帳、指定道路図、公図、道路管理課/建築指導課の正式回答",
+			returnTo: "土地DB「接道状況」「入力根拠区分」",
+			evidenceState: "原本/行政正式書面。Google Mapsや現地写真のみは二次資料",
+			completion: "公的根拠でOK/NG/要確認を区分し、地図だけで確定しない",
+		};
+	}
+	if (/農地|農転|農振/.test(gap)) {
+		return {
+			owner: "営業担当",
+			item: "地目、農振区分、農転ステータス、所管農業委員会",
+			source: "WAGRI/eMAFF農地ナビ、農地台帳、農政課/農業委員会の正式回答、許可書",
+			returnTo: "土地DB「農地種別」「農地転用可否」「入力根拠区分」",
+			evidenceState: "原本/行政正式書面。担当者メール・電話メモは二次資料/口頭メモ",
+			completion: "許可済/不要/不可を原本なしで確定しない。未確認なら未確認のまま戻す",
+		};
+	}
+	if (/登記|所有者|権利/.test(gap)) {
+		return {
+			owner: "営業担当または管理担当",
+			item: "登記確認状況、地目、地積、甲区/乙区の権利リスク種別",
+			source: "登記事項証明書、登記情報提供サービス、法務局資料",
+			returnTo: "土地DB「登記確認状況」「入力根拠区分」",
+			evidenceState: "原本。個人名は公開メモに入れず、リスク種別だけ返す",
+			completion: "3か月以内の登記または取得日付き原本で権利リスクを区分",
+		};
+	}
+	if (/近隣住宅/.test(gap)) {
+		return {
+			owner: "営業担当",
+			item: "最短住宅距離、住宅密集/説明会リスク、現地確認要否",
+			source: "地図実測、航空写真、現地写真、現地確認",
+			returnTo: "土地DB「近隣住宅距離（m）」「近隣住宅確認」",
+			evidenceState: "二次資料または現地確認。公式原本がない場合はAI注記と分離",
+			completion: "距離と確認方法を残し、30m未満/30-50m等の懸念を明記",
+		};
+	}
+	if (/変電所|系統|空き/.test(gap)) {
+		return {
+			owner: "営業担当または系統担当",
+			item: "最寄り変電所、距離、送配電会社、空容量公表値、接続検討要否",
+			source: "資源エネルギー庁リンク、OCCTO、送配電会社公開マップ、接続検討回答",
+			returnTo: "土地DB「変電所距離（km）」「最寄り変電所」「電力評価」または確認メモ",
+			evidenceState: "公開マップは二次資料/AI注記。送配電会社回答は行政正式書面相当で区分",
+			completion: "変電所マップ単独で接続可としない。空容量/接続検討の根拠を分ける",
+		};
+	}
+	return {
+		owner: "営業担当",
+		item: gap,
+		source: "該当する原本、公的資料、既存社内資料",
+		returnTo: "土地DBの該当列と「入力根拠区分」",
+		evidenceState: "原本/行政正式書面/二次資料/未確認を明示",
+		completion: "値・根拠区分・確認日・確認者を揃える",
+	};
+}
+
+function buildLandBZoneHandoff(input: {
+	missing?: string[];
+	investigationGaps?: string[];
+	nextAction?: string;
+}): string {
+	const items = uniqueStrings([...(input.missing ?? []), ...(input.investigationGaps ?? [])]);
+	if (items.length === 0) {
+		return [
+			"Bゾーン引き渡し: 追加の人間回収なし。",
+			"戻し先: Cゾーン再評価。",
+			"注意: ISSUED/案件化はCゾーンで対象一意性と原本採用可否を再確認してから。",
+		].join("\n");
+	}
+	const tasks = items.map(buildLandBZoneTaskForGap);
+	return [
+		"Bゾーン引き渡し（人間回収伝票）",
+		...tasks.map((task, index) =>
+			[
+				`${index + 1}. 担当=${task.owner}`,
+				`回収物=${task.item}`,
+				`取得元=${task.source}`,
+				`戻し先=${task.returnTo}`,
+				`根拠区分=${task.evidenceState}`,
+				`完了条件=${task.completion}`,
+			].join("｜"),
+		),
+		input.nextAction ? `作業指示原文: ${input.nextAction}` : "",
+	].filter(Boolean).join("\n");
+}
+
+function buildLandCZoneReadiness(input: {
+	land: LandInfo;
+	missing?: string[];
+	investigationGaps?: string[];
+}): { ready: boolean; text: string } {
+	const missing = input.missing ?? [];
+	const gaps = uniqueStrings([...(input.investigationGaps ?? []), ...landTargetIdentityGaps(input.land)]);
+	const evidence = input.land.inputEvidenceState || "未確認";
+	const weakEvidence = !/原本|行政正式書面/.test(evidence);
+	const blockers = [
+		...missing.map((item) => `必須入力不足=${item}`),
+		...gaps.map((item) => `Bゾーン未回収=${item}`),
+		weakEvidence ? `入力根拠区分=${evidence}` : "",
+	].filter(Boolean);
+	if (blockers.length > 0) {
+		return {
+			ready: false,
+			text: [
+				"Cゾーン再評価: 不可",
+				`理由=${blockers.join(" / ")}`,
+				"条件=対象土地一意性、面積原本、地番・筆構成、登記/農地/接道/系統の根拠区分が揃ってから再評価",
+				"停止線=採点、行く/行かない、A完了、ISSUEDへ進めない",
+			].join("\n"),
+		};
+	}
+	return {
+		ready: true,
+		text: [
+			"Cゾーン再評価: 可",
+			`対象一意性=${input.land.targetUniqueness || "入力上は候補複数表示なし"}`,
+			`原本採用可否=可（入力根拠区分=${evidence}）`,
+			"次処理=採点、行く/行かない、根拠、次アクションを一貫して返す",
+			"注意=ISSUEDは証明書発行ゲートで別途最終確認",
+		].join("\n"),
+	};
 }
 
 function scoreLandAZoneV0(land: LandInfo, blockers: string[] = []): LandAZoneScore {
@@ -31890,13 +32145,25 @@ async function markLandNeedsReview(
 		AI接道評価: { kind: "select", value: evaluation.roadRating },
 		AI補助金評価: { kind: "select", value: evaluation.subsidyRating },
 		需要評価: { kind: "select", value: evaluation.demandRating },
-		案件化メモ: { kind: "text", value: suspendLandDecisionText(evaluation.landEvaluation, holdReason) },
-		次アクション: { kind: "text", value: suspendLandDecisionText(evaluation.nextAction, holdReason) },
-		一次AI受付メモ: { kind: "text", value: `${holdReason}\n${aZoneScoreText}` },
+		案件化メモ: {
+			kind: "text",
+			value: suspendLandDecisionText(
+				[evaluation.landEvaluation, evaluation.cZoneReadiness].filter(Boolean).join("\n\n"),
+				holdReason,
+			),
+		},
+		次アクション: {
+			kind: "text",
+			value: suspendLandDecisionText(
+				[evaluation.nextAction, evaluation.bZoneHandoff, evaluation.cZoneReadiness].filter(Boolean).join("\n\n"),
+				holdReason,
+			),
+		},
+		一次AI受付メモ: { kind: "text", value: `${holdReason}\n${aZoneScoreText}\n\n${evaluation.bZoneHandoff}\n\n${evaluation.cZoneReadiness}` },
 		AI更新日時: { kind: "date", value: new Date().toISOString() },
-		設計上の弱点: { kind: "text", value: `${holdReason}\n${aZoneScoreText}` },
+		設計上の弱点: { kind: "text", value: `${holdReason}\n${aZoneScoreText}\n\n${evaluation.cZoneReadiness}` },
 		Webhook引き継ぎステータス: { kind: "select", value: "要確認で停止" },
-		Webhook引き継ぎメモ: { kind: "text", value: `${holdReason}\n${aZoneScoreText}` },
+		Webhook引き継ぎメモ: { kind: "text", value: `${holdReason}\n${aZoneScoreText}\n\n${evaluation.bZoneHandoff}\n\n${evaluation.cZoneReadiness}` },
 		...buildLandAZoneVisiblePatches(land, evaluation),
 	};
 	if (
@@ -32008,15 +32275,15 @@ async function writeLandEvaluation(
 				`需要: ${evaluation.demandEvaluation}`,
 			].join("\n"),
 		},
-		一次AI受付メモ: { kind: "text", value: `${evaluation.reviewMemo}\n${aZoneScoreText}` },
-		次アクション: { kind: "text", value: evaluation.nextAction },
+		一次AI受付メモ: { kind: "text", value: `${evaluation.reviewMemo}\n${aZoneScoreText}\n\n${evaluation.cZoneReadiness}` },
+		次アクション: { kind: "text", value: [evaluation.nextAction, evaluation.bZoneHandoff, evaluation.cZoneReadiness].filter(Boolean).join("\n\n") },
 		AI更新日時: { kind: "date", value: new Date().toISOString() },
 		Webhook引き継ぎステータス: { kind: "select", value: "引き継ぎ済" },
 		Webhook引き継ぎメモ: {
 			kind: "text",
-			value: "Notion Workerが土地詳細評価を返却。案件化判断は人間確認前提。",
+			value: `Notion Workerが土地詳細評価を返却。案件化判断は人間確認前提。\n${evaluation.cZoneReadiness}`,
 		},
-		設計上の弱点: { kind: "text", value: `${evaluation.reviewMemo}\n${aZoneScoreText}` },
+		設計上の弱点: { kind: "text", value: `${evaluation.reviewMemo}\n${aZoneScoreText}\n\n${evaluation.cZoneReadiness}` },
 		...buildLandAZoneVisiblePatches(land, evaluation),
 	};
 	const farmlandStatus = land.farmland.trim();

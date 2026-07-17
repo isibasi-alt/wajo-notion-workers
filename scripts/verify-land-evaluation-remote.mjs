@@ -58,6 +58,9 @@ for (const testCase of cases) {
 		investigationGaps: result.investigationGaps,
 		sourceSummaryHasEvidenceState: /証拠区分=/.test(result.sourceSummary || ""),
 		humanCollectionItemsPresent: Boolean(result.humanCollectionItems),
+		bZoneHandoffPresent: Boolean(result.bZoneHandoff),
+		cZoneReady: result.cZoneReady,
+		cZoneReadiness: result.cZoneReadiness,
 		message: result.message,
 	});
 	if (result.action !== "dry-run") {
@@ -89,6 +92,12 @@ for (const testCase of cases) {
 	if (!result.humanCollectionItems) {
 		failures.push(`${testCase.name}: expected humanCollectionItems in dry-run result`);
 	}
+	if (!result.bZoneHandoff) {
+		failures.push(`${testCase.name}: expected bZoneHandoff in dry-run result`);
+	}
+	if (!result.cZoneReadiness) {
+		failures.push(`${testCase.name}: expected cZoneReadiness in dry-run result`);
+	}
 	if (result.aZoneScore?.version !== "v0") {
 		failures.push(`${testCase.name}: expected aZoneScore version v0`);
 	}
@@ -107,6 +116,15 @@ for (const testCase of cases) {
 		}
 		if (!/採点保留/.test(result.message || "")) {
 			failures.push(`${testCase.name}: requiresInvestigation message must state 採点保留`);
+		}
+		if (result.cZoneReady !== false) {
+			failures.push(`${testCase.name}: requiresInvestigation must return cZoneReady=false`);
+		}
+		if (!/Cゾーン再評価: 不可/.test(result.cZoneReadiness || "")) {
+			failures.push(`${testCase.name}: requiresInvestigation must return Cゾーン再評価: 不可`);
+		}
+		if (!/Bゾーン引き渡し/.test(result.bZoneHandoff || "")) {
+			failures.push(`${testCase.name}: requiresInvestigation must include Bゾーン引き渡し`);
 		}
 	}
 }
