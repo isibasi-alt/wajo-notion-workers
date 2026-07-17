@@ -49,7 +49,7 @@ const fallbackEntries = parseDotEnvEntries([
 	"GOOGLE_API_KEY=google-fallback",
 	"WAGRI_API_TOKEN=wagri-fallback",
 	"MLIT_REINFOLIB_API_KEY=mlit-fallback",
-	"MOJ_CHIZU_GEOJSON_URL=https://example.invalid/moj.geojson",
+	"MOJ_CHIZU_GEOJSON_INLINE_BASE64=eyJ0eXBlIjoiRmVhdHVyZUNvbGxlY3Rpb24ifQ==",
 	"GRID_CAPACITY_PUBLIC_JSON=https://example.invalid/grid.json",
 ].join("\n"));
 
@@ -57,7 +57,7 @@ assert.deepEqual(landEvaluationEnvAssignments(fallbackEntries).map((assignment) 
 	"GOOGLE_API_KEY",
 	"WAGRI_API_TOKEN",
 	"MLIT_REINFOLIB_API_KEY",
-	"MOJ_CHIZU_GEOJSON_URL",
+	"MOJ_CHIZU_GEOJSON_INLINE_BASE64",
 	"GRID_CAPACITY_PUBLIC_JSON",
 ]);
 
@@ -67,5 +67,6 @@ assert.match(template, /GOOGLE_MAPS_API_KEY=/);
 assert.match(template, /WAGRI_ACCESS_TOKEN=/);
 assert.match(template, /REINFOLIB_API_KEY=/);
 assert.match(template, /MOJ_CHIZU_GEOJSON_URLS=/);
+assert.match(template, /MOJ_CHIZU_GEOJSON_INLINE_BASE64=/);
 assert.match(template, /GRID_CAPACITY_PUBLIC_JSON_URLS=/);
 assert.equal(/secret|token-value|AIza|sk-/.test(template), false);

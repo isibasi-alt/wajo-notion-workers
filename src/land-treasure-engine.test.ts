@@ -431,6 +431,7 @@ async function main() {
 	const originalReinfolibKey = process.env.REINFOLIB_API_KEY;
 	const originalMojChizuGeoJsonUrls = process.env.MOJ_CHIZU_GEOJSON_URLS;
 	const originalMojChizuGeoJsonUrl = process.env.MOJ_CHIZU_GEOJSON_URL;
+	const originalMojChizuGeoJsonInlineBase64 = process.env.MOJ_CHIZU_GEOJSON_INLINE_BASE64;
 	const originalGsiRoadTileEnabled = process.env.GSI_ROAD_TILE_ENABLED;
 	const originalGridCapacityPublicUrls = process.env.GRID_CAPACITY_PUBLIC_JSON_URLS;
 	const originalGridCapacityPublicUrl = process.env.GRID_CAPACITY_PUBLIC_JSON_URL;
@@ -687,7 +688,58 @@ async function main() {
 	process.env.REINFOLIB_API_KEY = "test-reinfolib-key";
 	process.env.REINFOLIB_LAND_PRICE_YEAR = "2025";
 	process.env.REINFOLIB_TRANSACTION_YEAR = "2025";
-	process.env.MOJ_CHIZU_GEOJSON_URLS = "https://mock.local/moj-chizu-toki.geojson,https://mock.local/moj-chizu-kushimoto-626.geojson";
+	process.env.MOJ_CHIZU_GEOJSON_URLS = "https://mock.local/moj-chizu-toki.geojson";
+	process.env.MOJ_CHIZU_GEOJSON_INLINE_BASE64 = Buffer.from(JSON.stringify({
+		type: "FeatureCollection",
+		features: [
+			{
+				type: "Feature",
+				geometry: {
+					type: "Polygon",
+					coordinates: [
+						[
+							[-75.363, -2057.817],
+							[-61.951, -2046.284],
+							[-64.369, -2043.749],
+							[-75.363, -2057.817],
+						],
+					],
+				},
+				properties: {
+					市区町村名: "東牟婁郡串本町",
+					大字名: "二色",
+					地番: "626-1",
+					lotNumber: "626-1",
+					地図種類: "登記所備付地図",
+					座標値種別: "図上測量",
+					座標系: "任意座標系",
+				},
+			},
+			{
+				type: "Feature",
+				geometry: {
+					type: "Polygon",
+					coordinates: [
+						[
+							[-61.951, -2046.284],
+							[-58.0, -2044.0],
+							[-64.369, -2043.749],
+							[-61.951, -2046.284],
+						],
+					],
+				},
+				properties: {
+					市区町村名: "東牟婁郡串本町",
+					大字名: "二色",
+					地番: "626-2",
+					lotNumber: "626-2",
+					地図種類: "登記所備付地図",
+					座標値種別: "図上測量",
+					座標系: "任意座標系",
+				},
+			},
+		],
+	}), "utf8").toString("base64");
 	process.env.GSI_ROAD_TILE_ENABLED = "1";
 	process.env.GRID_CAPACITY_PUBLIC_JSON_URLS = "https://mock.local/grid-capacity-chubu.json";
 	const fetchedUrls: string[] = [];
@@ -1508,6 +1560,8 @@ async function main() {
 	else process.env.MOJ_CHIZU_GEOJSON_URLS = originalMojChizuGeoJsonUrls;
 	if (originalMojChizuGeoJsonUrl === undefined) delete process.env.MOJ_CHIZU_GEOJSON_URL;
 	else process.env.MOJ_CHIZU_GEOJSON_URL = originalMojChizuGeoJsonUrl;
+	if (originalMojChizuGeoJsonInlineBase64 === undefined) delete process.env.MOJ_CHIZU_GEOJSON_INLINE_BASE64;
+	else process.env.MOJ_CHIZU_GEOJSON_INLINE_BASE64 = originalMojChizuGeoJsonInlineBase64;
 	if (originalGsiRoadTileEnabled === undefined) delete process.env.GSI_ROAD_TILE_ENABLED;
 	else process.env.GSI_ROAD_TILE_ENABLED = originalGsiRoadTileEnabled;
 	if (originalGridCapacityPublicUrls === undefined) delete process.env.GRID_CAPACITY_PUBLIC_JSON_URLS;

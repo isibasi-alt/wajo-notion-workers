@@ -7,7 +7,12 @@ const recognizedGroups = [
 	["GOOGLE_MAPS_API_KEY", "GOOGLE_API_KEY"],
 	["WAGRI_ACCESS_TOKEN", "WAGRI_API_TOKEN", "WAGRI_TOKEN"],
 	["REINFOLIB_API_KEY", "MLIT_REINFOLIB_API_KEY", "LAND_REINFOLIB_API_KEY"],
-	["MOJ_CHIZU_GEOJSON_URLS", "MOJ_CHIZU_GEOJSON_URL"],
+	[
+		"MOJ_CHIZU_GEOJSON_URLS",
+		"MOJ_CHIZU_GEOJSON_URL",
+		"MOJ_CHIZU_GEOJSON_INLINE_BASE64",
+		"MOJ_CHIZU_GEOJSON_INLINE_JSON",
+	],
 	["GRID_CAPACITY_PUBLIC_JSON_URLS", "GRID_CAPACITY_PUBLIC_JSON_URL", "GRID_CAPACITY_PUBLIC_JSON"],
 ];
 
@@ -74,6 +79,8 @@ export function landEvaluationEnvTemplate() {
 		"",
 		"# Pre-hosted MOJ cadastral GeoJSON URLs. Comma-separated if multiple. Public data input, not an API key.",
 		"MOJ_CHIZU_GEOJSON_URLS=",
+		"# Or, for small generated GeoJSON fixtures, base64-encoded inline GeoJSON.",
+		"MOJ_CHIZU_GEOJSON_INLINE_BASE64=",
 		"",
 		"# Pre-hosted grid capacity public JSON URLs. Comma-separated if multiple. Public data input, not an API key.",
 		"GRID_CAPACITY_PUBLIC_JSON_URLS=",

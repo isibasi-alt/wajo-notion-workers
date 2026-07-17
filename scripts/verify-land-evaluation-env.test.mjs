@@ -23,7 +23,7 @@ const googleFallbackKeys = new Set([
 	"GOOGLE_API_KEY",
 	"WAGRI_API_TOKEN",
 	"REINFOLIB_API_KEY",
-	"MOJ_CHIZU_GEOJSON_URLS",
+	"MOJ_CHIZU_GEOJSON_INLINE_BASE64",
 	"GRID_CAPACITY_PUBLIC_JSON_URLS",
 ]);
 
@@ -55,7 +55,7 @@ const localEnvKeys = parseDotEnvKeys([
 	"GOOGLE_MAPS_API_KEY=secret-google-value",
 	"WAGRI_ACCESS_TOKEN=\"secret-wagri-value\"",
 	"REINFOLIB_API_KEY='secret-reinfolib-value'",
-	"MOJ_CHIZU_GEOJSON_URLS=https://example.invalid/moj.geojson",
+	"MOJ_CHIZU_GEOJSON_INLINE_BASE64=eyJ0eXBlIjoiRmVhdHVyZUNvbGxlY3Rpb24ifQ==",
 	"GRID_CAPACITY_PUBLIC_JSON_URLS=https://example.invalid/grid.json",
 ].join("\n"));
 

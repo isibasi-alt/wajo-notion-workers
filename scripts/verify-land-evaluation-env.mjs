@@ -23,9 +23,14 @@ const requiredGroups = [
 	},
 	{
 		label: "法務省 登記所備付地図データ（公開データ配置）",
-		purpose: "G空間情報センター公開データを取得・変換したGeoJSON URL。APIキーではない",
+		purpose: "G空間情報センター公開データを取得・変換したGeoJSON URLまたはinline GeoJSON。APIキーではない",
 		inputType: "public-data-url",
-		anyOf: ["MOJ_CHIZU_GEOJSON_URLS", "MOJ_CHIZU_GEOJSON_URL"],
+		anyOf: [
+			"MOJ_CHIZU_GEOJSON_URLS",
+			"MOJ_CHIZU_GEOJSON_URL",
+			"MOJ_CHIZU_GEOJSON_INLINE_BASE64",
+			"MOJ_CHIZU_GEOJSON_INLINE_JSON",
+		],
 	},
 	{
 		label: "系統空容量 公表値JSON（公開データ配置）",

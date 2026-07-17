@@ -29775,12 +29775,13 @@ async function fetchParcelCadastreContext(
 			.map((value) => value.trim())
 			.filter(Boolean),
 	);
-	if (urlTexts.length === 0) {
+	const inlineSources = mojChizuInlineGeoJsonSources();
+	if (urlTexts.length === 0 && inlineSources.length === 0) {
 		return {
 			status: "no-url",
 			source,
 			message:
-				"登記所備付地図データ接続: 公開データ未配置（MOJ_CHIZU_GEOJSON_URLS未設定）。APIキー不要。G空間情報センターの公開データを取得・変換し、Workerが読めるGeoJSON URLとして配置する。",
+				"登記所備付地図データ接続: 公開データ未配置（MOJ_CHIZU_GEOJSON_URLS/MOJ_CHIZU_GEOJSON_INLINE_BASE64未設定）。APIキー不要。G空間情報センターの公開データを取得・変換し、Workerが読めるGeoJSON URLまたはinline GeoJSONとして配置する。",
 			candidates: [],
 		};
 	}
@@ -29795,6 +29796,23 @@ async function fetchParcelCadastreContext(
 
 	let readableSourceCount = 0;
 	const candidates: LandParcelCadastreCandidate[] = [];
+	for (const inlineSource of inlineSources.slice(0, 12)) {
+		readableSourceCount += 1;
+		for (const feature of geoJsonFeatures(inlineSource.body)) {
+			const candidate = readParcelCadastreCandidate(feature.properties, inlineSource.sourceUrl);
+			if (!candidate) continue;
+			const addressMatched = parcelCadastreCandidateMatchesAddress(candidate, address);
+			const canUseGeometry =
+				latitude !== null &&
+				longitude !== null &&
+				!/任意/.test(candidate.coordinateSystem) &&
+				pointInGeoJsonGeometry(feature.geometry, longitude, latitude);
+			if (!addressMatched && !canUseGeometry) continue;
+			candidates.push(candidate);
+			if (candidates.length >= 20) break;
+		}
+		if (candidates.length >= 20) break;
+	}
 	for (const urlText of urlTexts.slice(0, 12)) {
 		let url: URL;
 		try {
@@ -29839,6 +29857,33 @@ async function fetchParcelCadastreContext(
 				: "登記所備付地図データ接続: 取得失敗（配置済みGeoJSONを読み取れません）",
 		candidates: [],
 	};
+}
+
+function mojChizuInlineGeoJsonSources(): Array<{ body: unknown; sourceUrl: string }> {
+	const sources: Array<{ body: unknown; sourceUrl: string }> = [];
+	const inlineJson = process.env.MOJ_CHIZU_GEOJSON_INLINE_JSON || "";
+	if (inlineJson.trim()) {
+		try {
+			sources.push({
+				body: JSON.parse(inlineJson),
+				sourceUrl: "env:MOJ_CHIZU_GEOJSON_INLINE_JSON",
+			});
+		} catch {
+			// Keep source unavailable; the evidence summary will remain no-result/error.
+		}
+	}
+	const inlineBase64 = process.env.MOJ_CHIZU_GEOJSON_INLINE_BASE64 || "";
+	if (inlineBase64.trim()) {
+		try {
+			sources.push({
+				body: JSON.parse(Buffer.from(inlineBase64.trim(), "base64").toString("utf8")),
+				sourceUrl: "env:MOJ_CHIZU_GEOJSON_INLINE_BASE64",
+			});
+		} catch {
+			// Keep source unavailable; the evidence summary will remain no-result/error.
+		}
+	}
+	return sources;
 }
 
 function normalizeParcelText(value: string): string {
@@ -37292,6 +37337,13 @@ type InquiryProjectCreationWithInputs = {
 	dryRun: boolean;
 };
 
+const INQUIRY_PROJECT_CREATION_GROSS_BASIS_OPTIONS = new Set([
+	"価格あり",
+	"相場見込み",
+	"案件多数見込み",
+	"仮置き",
+]);
+
 function validateInquiryProjectCreationWithInputs(
 	input: InquiryProjectCreationWithInputs,
 ): void {
@@ -37299,7 +37351,9 @@ function validateInquiryProjectCreationWithInputs(
 	if (!Number.isFinite(input.plannedGrossProfit) || input.plannedGrossProfit <= 0) {
 		throw new Error("plannedGrossProfit must be greater than 0");
 	}
-	if (!input.plannedGrossBasis.trim()) throw new Error("plannedGrossBasis is required");
+	if (!INQUIRY_PROJECT_CREATION_GROSS_BASIS_OPTIONS.has(input.plannedGrossBasis.trim())) {
+		throw new Error("plannedGrossBasis must be one of: 価格あり, 相場見込み, 案件多数見込み, 仮置き");
+	}
 }
 
 async function processInquiryProjectCreationWithInputs(
@@ -37327,7 +37381,7 @@ async function processInquiryProjectCreationWithInputs(
 		予定粗利額: { kind: "number", value: input.plannedGrossProfit },
 		予定粗利の根拠: {
 			kind: "select",
-			value: projectGrossBasisFromInquiry(input.plannedGrossBasis),
+			value: input.plannedGrossBasis.trim(),
 		},
 	});
 	const result = await processInquiryProjectCreation(
