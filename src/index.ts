@@ -38063,12 +38063,23 @@ async function processProjectDealStart(
 		input.projectPageId,
 		"✅ 商談管理DBへ商談を作成しました。案件・関連企業・担当を引き継いでいます。",
 	);
+	// 商談を作ったら案件ステータスを自動で前進させる（2026-07-17 大ちゃん決定）。
+	// 成約・失注からは格下げしない。前進のみ。
+	const currentStatus = text(properties["ステータス"]);
+	const shouldAdvanceStatus = !/成約|失注/.test(currentStatus) && currentStatus !== "📋 提案中";
+	if (shouldAdvanceStatus) {
+		await safeUpdateExistingProperties(notion, projectPage, {
+			ステータス: { kind: "select", value: "📋 提案中" },
+		});
+	}
 	return {
 		projectPageId: input.projectPageId,
 		dealPageId: created.id,
 		dealUrl: (created as { url?: string }).url ?? null,
 		action: "created",
-		message: "商談管理DBへ商談を1件作成し、案件と相互リンクしました。",
+		message: shouldAdvanceStatus
+			? "商談管理DBへ商談を1件作成し、案件と相互リンクしました。案件ステータスを「📋 提案中」へ更新しました。"
+			: "商談管理DBへ商談を1件作成し、案件と相互リンクしました。",
 	};
 }
 

@@ -195,6 +195,61 @@ async function main() {
 	).text.content;
 	assert.match(promoDealName, /^株式会社テスト商事｜\d{4}-\d{2}-\d{2}$/);
 
+	// ステータス自動前進：商談作成で「🔴 情報収集中」→「📋 提案中」へ自動更新（2026-07-17 大ちゃん決定）。
+	function statusNotion(status: string) {
+		const updates: Array<Record<string, unknown>> = [];
+		const notion = {
+			dataSources: { query: async () => ({ results: [] }) },
+			pages: {
+				retrieve: async ({ page_id }: { page_id: string }) => {
+					if (page_id === "company-1") {
+						return {
+							id: "company-1",
+							properties: { 企業名: titleProp("株式会社テスト商事") },
+						};
+					}
+					const page = projectPage();
+					(page.properties as Record<string, unknown>).ステータス = selectProp(status);
+					return page;
+				},
+				create: async () => ({
+					id: "deal-created",
+					url: "https://www.notion.so/deal-created",
+					properties: {},
+				}),
+				update: async (args: Record<string, unknown>) => {
+					updates.push(args);
+					return {};
+				},
+			},
+			comments: { create: async () => ({}) },
+		};
+		return { notion, updates };
+	}
+
+	const advanceCase = statusNotion("🔴 情報収集中");
+	const advanced = await processProjectDealStartForTest(
+		{ projectPageId: "project-1", dryRun: false },
+		advanceCase.notion as never,
+	);
+	assert.equal(advanced.action, "created");
+	assert.equal(advanceCase.updates.length, 1);
+	assert.deepEqual(
+		(advanceCase.updates[0]!.properties as Record<string, unknown>).ステータス,
+		{ select: { name: "📋 提案中" } },
+	);
+	assert.match(advanced.message, /提案中/);
+
+	// 成約・失注の案件は商談を作っても格下げしない。
+	const closedCase = statusNotion("🏆 成約");
+	const closed = await processProjectDealStartForTest(
+		{ projectPageId: "project-1", dryRun: false },
+		closedCase.notion as never,
+	);
+	assert.equal(closed.action, "created");
+	assert.equal(closedCase.updates.length, 0);
+	assert.doesNotMatch(closed.message, /提案中/);
+
 	const dryRunCase = makeNotion();
 
 	const dryRun = await processProjectDealStartForTest(
