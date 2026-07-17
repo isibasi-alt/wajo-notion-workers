@@ -29158,6 +29158,7 @@ type LandMapContext = {
 	parcelCadastre: LandParcelCadastreContext;
 	gsiRoad: LandGsiRoadContext;
 	gridCapacity: LandGridCapacityContext;
+	terrain: LandTerrainContext;
 };
 
 type LandFarmlandNaviRecord = {
@@ -29271,6 +29272,14 @@ type LandGridCapacityContext = {
 	records: LandGridCapacityRecord[];
 };
 
+type LandTerrainContext = {
+	status: "connected" | "no-coordinate" | "no-result" | "error";
+	source: string;
+	message: string;
+	elevationM: number | null;
+	elevationSource: string;
+};
+
 type LandReinfolibPricePoint = {
 	cityCode: string;
 	targetYear: string;
@@ -29346,6 +29355,7 @@ async function resolveLandMapContext(land: LandInfo): Promise<LandMapContext> {
 	const gsiRoad = await fetchGsiRoadContext(latitude, longitude);
 	const powerArea = land.powerArea || inferPowerAreaFromAddress(land.address) || "未確認";
 	const gridCapacity = await fetchGridCapacityContext(powerArea);
+	const terrain = await fetchGsiTerrainContext(latitude, longitude);
 
 	return {
 		latitude,
@@ -29363,6 +29373,7 @@ async function resolveLandMapContext(land: LandInfo): Promise<LandMapContext> {
 		parcelCadastre,
 		gsiRoad,
 		gridCapacity,
+		terrain,
 	};
 }
 
@@ -30246,6 +30257,61 @@ function gridCapacityEvidence(context: LandGridCapacityContext): string {
 	return lines.filter(Boolean).join("\n");
 }
 
+async function fetchGsiTerrainContext(
+	latitude: number | null,
+	longitude: number | null,
+): Promise<LandTerrainContext> {
+	const source = "国土地理院 標高取得プログラム";
+	if (latitude === null || longitude === null) {
+		return {
+			status: "no-coordinate",
+			source,
+			message: "標高・造成一次確認: 未実行（緯度経度なし）",
+			elevationM: null,
+			elevationSource: "",
+		};
+	}
+	const url = new URL("https://cyberjapandata2.gsi.go.jp/general/dem/scripts/getelevation.php");
+	url.searchParams.set("lon", String(longitude));
+	url.searchParams.set("lat", String(latitude));
+	url.searchParams.set("outtype", "JSON");
+	const body = readObject(await fetchJson(url));
+	const elevation = numberFromUnknown(body.elevation);
+	const elevationSource = firstNonBlank(body.hsrc);
+	if (elevation === null) {
+		return {
+			status: "no-result",
+			source,
+			message: "標高・造成一次確認: 標高値未取得",
+			elevationM: null,
+			elevationSource,
+		};
+	}
+	return {
+		status: "connected",
+		source,
+		message: `標高・造成一次確認: 標高 ${elevation.toLocaleString("ja-JP", { maximumFractionDigits: 1 })}m${elevationSource ? `（${elevationSource}）` : ""}`,
+		elevationM: elevation,
+		elevationSource,
+	};
+}
+
+function terrainEvidence(context: LandTerrainContext): string {
+	if (context.status !== "connected") {
+		return [
+			context.message,
+			`標高確認元: ${context.source}`,
+			"注意: 傾斜・造成難易度は未判定。地形図、航空写真、現地写真、造成計画で確認。",
+		].join("\n");
+	}
+	return [
+		context.message,
+		`標高確認元: ${context.source}`,
+		context.elevationSource ? `標高データソース: ${context.elevationSource}` : "",
+		"注意: 1点標高の一次確認であり、傾斜、造成土量、搬入路、排水、擁壁要否の確定ではありません。",
+	].filter(Boolean).join("\n");
+}
+
 function estimateRoadWidthM(value: string): number | null {
 	const text = normalizeDigits(value);
 	if (!text) return null;
@@ -30964,6 +31030,19 @@ function buildLandQuickEvidence(mapContext: LandMapContext, address = ""): strin
 			].filter(Boolean).join(" / "),
 		);
 	}
+	if (mapContext.terrain.status === "connected") {
+		parts.push(
+			[
+				"標高・造成一次確認",
+				"国土地理院 標高取得プログラム",
+				mapContext.terrain.elevationM !== null
+					? `標高: ${mapContext.terrain.elevationM.toLocaleString("ja-JP", { maximumFractionDigits: 1 })}m`
+					: "",
+				mapContext.terrain.elevationSource ? `データソース: ${mapContext.terrain.elevationSource}` : "",
+				"傾斜・造成難易度は未確認",
+			].filter(Boolean).join(" / "),
+		);
+	}
 	const road = mapContext.gsiRoad.candidates[0] ?? null;
 	if (road) {
 		parts.push(
@@ -31170,6 +31249,7 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 		const gsiRoadText = gsiRoadEvidence(mapContext.gsiRoad, land.address);
 		const gridCapacityText = gridCapacityEvidence(mapContext.gridCapacity);
 		const surroundingPlacesText = surroundingPlacesEvidence(mapContext.surroundingPlaces);
+		const terrainText = terrainEvidence(mapContext.terrain);
 		const quickEvidence = buildLandQuickEvidence(mapContext, land.address);
 		const farmland = land.farmland || nearestFarmland?.agriculturalClassification || "";
 		const farmlandType = land.farmlandType || nearestFarmland?.landCategory || "";
@@ -31203,6 +31283,7 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 			surroundingPlacesText,
 			gridCapacityText,
 			gsiRoadText,
+			terrainText,
 			parcelCadastreText,
 			reinfolibText,
 			farmlandNaviText,
