@@ -22,6 +22,7 @@ function queryPage(startCursor) {
 		encoding: "utf8",
 		env: { ...process.env, NOTION_KEYRING: "0" },
 		stdio: ["ignore", "pipe", "pipe"],
+		maxBuffer: 50 * 1024 * 1024,
 	});
 	return parseJsonOutput(output);
 }

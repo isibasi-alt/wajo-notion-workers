@@ -2,18 +2,21 @@ import { execFileSync } from "node:child_process";
 
 const cases = [
 	{
-		name: "high-value",
+		name: "primary",
 		pageId: process.env.LAND_EVAL_HIGH_PAGE_ID || "3784d017-81e7-81c3-b484-c18128975ce0",
-		expectedGrade: "S",
-		expectedScore: 100,
-		expectedBucket: "即アタック",
+		expectedRequiresInvestigation: true,
 	},
 	{
 		name: "blocked",
 		pageId: process.env.LAND_EVAL_BLOCKED_PAGE_ID || "3784d017-81e7-81b1-be81-c6e81b4cd982",
-		expectedGrade: "C",
-		maxScore: 45,
 		expectedBucket: "要確認",
+		expectedRequiresInvestigation: true,
+	},
+	{
+		name: "missing-input",
+		pageId: process.env.LAND_EVAL_MISSING_INPUT_PAGE_ID || "3774d017-81e7-81c6-b400-ee86cdc94eca",
+		expectedBucket: "要確認",
+		expectedRequiresInvestigation: true,
 	},
 ];
 
@@ -48,22 +51,63 @@ for (const testCase of cases) {
 		bucket: result.bucket,
 		overallGrade: result.overallGrade,
 		score: result.score,
+		aZoneDecision: result.aZoneDecision,
+		aZoneScoreVersion: result.aZoneScore?.version,
+		aZoneScoreTotal100: result.aZoneScore?.total100,
+		requiresInvestigation: result.requiresInvestigation,
+		investigationGaps: result.investigationGaps,
+		sourceSummaryHasEvidenceState: /証拠区分=/.test(result.sourceSummary || ""),
+		humanCollectionItemsPresent: Boolean(result.humanCollectionItems),
 		message: result.message,
 	});
 	if (result.action !== "dry-run") {
 		failures.push(`${testCase.name}: expected dry-run action, got ${result.action}`);
 	}
-	if (result.overallGrade !== testCase.expectedGrade) {
+	if (testCase.expectedGrade && result.overallGrade !== testCase.expectedGrade) {
 		failures.push(`${testCase.name}: expected grade ${testCase.expectedGrade}, got ${result.overallGrade}`);
 	}
 	if (typeof testCase.expectedScore === "number" && result.score !== testCase.expectedScore) {
 		failures.push(`${testCase.name}: expected score ${testCase.expectedScore}, got ${result.score}`);
 	}
-	if (typeof testCase.maxScore === "number" && result.score > testCase.maxScore) {
-		failures.push(`${testCase.name}: expected score <= ${testCase.maxScore}, got ${result.score}`);
-	}
-	if (result.bucket !== testCase.expectedBucket) {
+	if (testCase.expectedBucket && result.bucket !== testCase.expectedBucket) {
 		failures.push(`${testCase.name}: expected bucket ${testCase.expectedBucket}, got ${result.bucket}`);
+	}
+	if (
+		typeof testCase.expectedRequiresInvestigation === "boolean" &&
+		result.requiresInvestigation !== testCase.expectedRequiresInvestigation
+	) {
+		failures.push(
+			`${testCase.name}: expected requiresInvestigation ${testCase.expectedRequiresInvestigation}, got ${result.requiresInvestigation}`,
+		);
+	}
+	if (!/Aゾーン取得元サマリー/.test(result.sourceSummary || "")) {
+		failures.push(`${testCase.name}: expected sourceSummary in dry-run result`);
+	}
+	if (!/証拠区分=/.test(result.sourceSummary || "")) {
+		failures.push(`${testCase.name}: expected evidence state in sourceSummary`);
+	}
+	if (!result.humanCollectionItems) {
+		failures.push(`${testCase.name}: expected humanCollectionItems in dry-run result`);
+	}
+	if (result.aZoneScore?.version !== "v0") {
+		failures.push(`${testCase.name}: expected aZoneScore version v0`);
+	}
+	if (result.requiresInvestigation === true) {
+		if (result.overallGrade !== "未評価") {
+			failures.push(`${testCase.name}: requiresInvestigation must return overallGrade=未評価, got ${result.overallGrade}`);
+		}
+		if (result.score !== null) {
+			failures.push(`${testCase.name}: requiresInvestigation must return score=null, got ${result.score}`);
+		}
+		if (result.aZoneDecision !== "未確認") {
+			failures.push(`${testCase.name}: requiresInvestigation must return aZoneDecision=未確認, got ${result.aZoneDecision}`);
+		}
+		if ((result.aZoneScore?.total100 ?? 0) !== 0 || (result.aZoneScore?.total60 ?? 0) !== 0) {
+			failures.push(`${testCase.name}: requiresInvestigation must suspend aZoneScore totals, got ${result.aZoneScore?.total100}/${result.aZoneScore?.total60}`);
+		}
+		if (!/採点保留/.test(result.message || "")) {
+			failures.push(`${testCase.name}: requiresInvestigation message must state 採点保留`);
+		}
 	}
 }
 

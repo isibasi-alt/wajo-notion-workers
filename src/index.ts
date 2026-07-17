@@ -2547,11 +2547,18 @@ type LandResult = {
 	pageId: string;
 	action: "evaluated" | "needs-review" | "dry-run";
 	overallGrade: string;
-	score: number;
+	score: number | null;
 	bucket: string;
 	scaleDistanceGate: string;
 	scaleDistanceEvidenceState: string;
 	scaleDistanceSource: string;
+	aZoneDecision: "行く" | "行かない" | "未確認";
+	aZoneReason: string;
+	aZoneScore: LandAZoneScore;
+	sourceSummary: string;
+	humanCollectionItems: string;
+	requiresInvestigation: boolean;
+	investigationGaps: string[];
 	message: string;
 };
 
@@ -4404,11 +4411,33 @@ worker.tool("processLandEvaluationById", {
 		pageId: j.string(),
 		action: j.string(),
 		overallGrade: j.string(),
-		score: j.number(),
+		score: j.number().nullable(),
 		bucket: j.string(),
 		scaleDistanceGate: j.string(),
 		scaleDistanceEvidenceState: j.string(),
 		scaleDistanceSource: j.string(),
+		aZoneDecision: j.string(),
+		aZoneReason: j.string(),
+		aZoneScore: j.object({
+			version: j.string(),
+			total100: j.number(),
+			total60: j.number(),
+			categories: j.array(
+				j.object({
+					key: j.string(),
+					label: j.string(),
+					points100: j.number(),
+					max100: j.number(),
+					points60: j.number(),
+					max60: j.number(),
+					note: j.string(),
+				}),
+			),
+		}),
+		sourceSummary: j.string(),
+		humanCollectionItems: j.string(),
+		requiresInvestigation: j.boolean(),
+		investigationGaps: j.array(j.string()),
 		message: j.string(),
 	}),
 	execute: async ({ pageId, dryRun }, { notion }) => {
@@ -26272,52 +26301,51 @@ async function processLandEvaluation(
 		input.pageData ??
 		(await notion.pages.retrieve({
 			page_id: input.pageId,
-		}));
+	}));
 	const land = readLand(page);
 	const evaluation = await buildLandEvaluation(land);
+	const publicInvestigationGaps = landReviewHoldGaps(land, evaluation);
+	const publicHold = evaluation.requiresInvestigation === true || publicInvestigationGaps.length > 0;
+	const publicHoldReason = landReviewHoldReason(publicInvestigationGaps);
+	const result = (
+		action: LandResult["action"],
+		message: string,
+	): LandResult => ({
+		pageId: input.pageId,
+		action,
+		overallGrade: publicHold ? "未評価" : evaluation.overallGrade,
+		score: publicHold ? null : evaluation.score,
+		bucket: evaluation.bucket,
+		scaleDistanceGate: evaluation.scaleDistanceGate,
+		scaleDistanceEvidenceState: evaluation.scaleDistanceEvidenceState,
+		scaleDistanceSource: evaluation.scaleDistanceSource,
+		aZoneDecision: publicHold ? "未確認" : evaluation.aZoneDecision,
+		aZoneReason: publicHold ? publicHoldReason : evaluation.aZoneReason,
+		aZoneScore: publicHold
+			? suspendLandAZoneScore(evaluation.aZoneScore, publicHoldReason)
+			: evaluation.aZoneScore,
+		sourceSummary: evaluation.sourceSummary,
+		humanCollectionItems: evaluation.humanCollectionItems,
+		requiresInvestigation: publicHold,
+		investigationGaps: publicInvestigationGaps,
+		message: publicHold ? `${action}: 未評価 / 採点保留。${publicHoldReason}` : message,
+	});
 
 	if (input.dryRun) {
-		return {
-			pageId: input.pageId,
-			action: "dry-run",
-			overallGrade: evaluation.overallGrade,
-			score: evaluation.score,
-			bucket: evaluation.bucket,
-			scaleDistanceGate: evaluation.scaleDistanceGate,
-			scaleDistanceEvidenceState: evaluation.scaleDistanceEvidenceState,
-			scaleDistanceSource: evaluation.scaleDistanceSource,
-			message: `dry-run: ${evaluation.bucket} / ${evaluation.overallGrade} / ${evaluation.score}点。`,
-		};
+		return result("dry-run", `dry-run: ${evaluation.bucket} / ${evaluation.overallGrade} / ${evaluation.score}点。`);
 	}
 
 	if (!shouldProcessLand(land)) {
 		await markLandNeedsReview(notion, land, evaluation);
-		return {
-			pageId: input.pageId,
-			action: "needs-review",
-			overallGrade: evaluation.overallGrade,
-			score: evaluation.score,
-			bucket: evaluation.bucket,
-			scaleDistanceGate: evaluation.scaleDistanceGate,
-			scaleDistanceEvidenceState: evaluation.scaleDistanceEvidenceState,
-			scaleDistanceSource: evaluation.scaleDistanceSource,
-			message: "所在地または面積が不足しているため、詳細評価前の要確認にしました。",
-		};
+		return result("needs-review", "所在地または面積が不足しているため、詳細評価前の要確認にしました。");
 	}
 
 	if (evaluation.requiresInvestigation) {
 		await markLandNeedsReview(notion, land, evaluation);
-		return {
-			pageId: input.pageId,
-			action: "needs-review",
-			overallGrade: evaluation.overallGrade,
-			score: evaluation.score,
-			bucket: evaluation.bucket,
-			scaleDistanceGate: evaluation.scaleDistanceGate,
-			scaleDistanceEvidenceState: evaluation.scaleDistanceEvidenceState,
-			scaleDistanceSource: evaluation.scaleDistanceSource,
-			message: `本評価に必要な確認が不足しているため、要確認にしました: ${evaluation.investigationGaps?.join("、") ?? "確認事項あり"}`,
-		};
+		return result(
+			"needs-review",
+			`本評価に必要な確認が不足しているため、要確認にしました: ${evaluation.investigationGaps?.join("、") ?? "確認事項あり"}`,
+		);
 	}
 
 	await markLandProcessing(notion, land);
@@ -26327,17 +26355,7 @@ async function processLandEvaluation(
 		await createLandEvaluationLearningLog(notion, land, evaluation).catch((error) => {
 			console.log("land evaluation learning log skipped", String(error));
 		});
-		return {
-			pageId: input.pageId,
-			action: "evaluated",
-			overallGrade: evaluation.overallGrade,
-			score: evaluation.score,
-			bucket: evaluation.bucket,
-			scaleDistanceGate: evaluation.scaleDistanceGate,
-			scaleDistanceEvidenceState: evaluation.scaleDistanceEvidenceState,
-			scaleDistanceSource: evaluation.scaleDistanceSource,
-			message: "土地詳細評価を返却しました。案件化判断は人間確認前提です。",
-		};
+		return result("evaluated", "土地詳細評価を返却しました。案件化判断は人間確認前提です。");
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		await markLandFailure(notion, land, message);
@@ -28883,7 +28901,7 @@ function readLand(page: Page): LandInfo {
 			text(properties["登記確認状況"]) ||
 			text(properties["登記確認"]) ||
 			text(properties["農転/登記/近隣確認"]),
-		inputEvidenceState: text(properties["入力根拠区分"]) || "未区分",
+		inputEvidenceState: text(properties["入力根拠区分"]) || "未確認",
 		nearbyResidentialDistanceM:
 			numberValue(properties["近隣住宅距離（m）"]) ??
 			numberValue(properties["近隣住宅距離"]) ??
@@ -28916,6 +28934,46 @@ function readLand(page: Page): LandInfo {
 
 function shouldProcessLand(land: LandInfo): boolean {
 	return Boolean(land.address && land.areaTsubo && land.areaTsubo > 0);
+}
+
+function landRequiredInputGaps(land: LandInfo): string[] {
+	const gaps: string[] = [];
+	if (!land.address) gaps.push("所在地");
+	if (!land.areaTsubo || land.areaTsubo <= 0) gaps.push("面積（坪）");
+	return gaps;
+}
+
+function suspendLandAZoneScore(score: LandAZoneScore, reason: string): LandAZoneScore {
+	return {
+		version: score.version,
+		total100: 0,
+		total60: 0,
+		categories: score.categories.map((category) => ({
+			...category,
+			points100: 0,
+			points60: 0,
+			note: `採点保留: ${reason}${category.note ? ` / ${category.note}` : ""}`,
+		})),
+	};
+}
+
+function landReviewHoldGaps(land: LandInfo, evaluation: LandEvaluation): string[] {
+	return uniqueStrings([
+		...(evaluation.investigationGaps ?? []),
+		...landRequiredInputGaps(land),
+	]);
+}
+
+function landReviewHoldReason(gaps: string[]): string {
+	return gaps.length > 0
+		? `未確認理由: ${gaps.join("、")}。原本または必須入力が揃うまで採点・行く/行かない判定は保留。`
+		: "未確認理由: 原本または必須入力が揃うまで採点・行く/行かない判定は保留。";
+}
+
+function suspendLandDecisionText(value: string, reason: string): string {
+	return value
+		.replace(/Aゾーン判断: (行く|行かない)/g, "Aゾーン判断: 未確認")
+		.replace(/(?:行く|行かない)理由: [^\n]+/g, reason);
 }
 
 type LandMapContext = {
@@ -30794,17 +30852,22 @@ function buildLandAZoneSourceSummary(input: {
 }): string {
 	const { land, mapContext, treasure } = input;
 	const notWritten = "個別確定列へは自動昇格しない";
+	const inputEvidenceState = land.inputEvidenceState || "未確認";
+	const connectedEvidenceState = (connected: boolean, state: "原本" | "二次資料" | "AI注記") =>
+		connected ? state : "未確認";
 	const rows = [
 		[
 			"入力起点",
 			"Notion土地DB",
-			`所在地=${land.address || "未入力"} / 面積=${land.areaTsubo ? `${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪` : "未入力"} / 根拠区分=${land.inputEvidenceState || "未区分"}`,
+			inputEvidenceState,
+			`所在地=${land.address || "未入力"} / 面積=${land.areaTsubo ? `${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪` : "未入力"} / 根拠区分=${inputEvidenceState}`,
 			"Aゾーン判断 / Aゾーン判断理由 / Aゾーン内部採点内訳",
 			"所在地・面積・原本区分が空ならBゾーンへ渡さない",
 		],
 		[
 			"座標化",
 			mapContext.geocodeSource || "未実行",
+			connectedEvidenceState(Boolean(mapContext.geocodeSource || mapContext.googleMapsUrl), "AI注記"),
 			`所在地→緯度経度 / Google Maps確認リンク=${mapContext.googleMapsUrl || "未取得"}`,
 			"案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー / 以後のAPI照会起点",
 			"地番・筆界は登記所備付地図/登記で確認",
@@ -30812,6 +30875,7 @@ function buildLandAZoneSourceSummary(input: {
 		[
 			"道路候補",
 			"Google Roads API / 国土地理院道路中心線",
+			connectedEvidenceState(Boolean(mapContext.roadAccess || mapContext.gsiRoad.status === "connected"), "AI注記"),
 			`${mapContext.roadAccess || mapContext.gsiRoad.message}`,
 			"AI接道評価 / 案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー",
 			"土地DB「接道状況」は道路台帳・指定道路図で人間が確定",
@@ -30819,6 +30883,7 @@ function buildLandAZoneSourceSummary(input: {
 		[
 			"不動産情報",
 			mapContext.reinfolib.source,
+			connectedEvidenceState(mapContext.reinfolib.status === "connected", "原本"),
 			mapContext.reinfolib.status === "connected"
 				? [
 					mapContext.reinfolib.landPrice?.priceYenPerSqm ? `地価=${mapContext.reinfolib.landPrice.priceYenPerSqm.toLocaleString("ja-JP")}円/㎡` : "",
@@ -30833,6 +30898,7 @@ function buildLandAZoneSourceSummary(input: {
 		[
 			"農地・農振",
 			mapContext.farmlandNavi.source,
+			connectedEvidenceState(mapContext.farmlandNavi.status === "connected", "二次資料"),
 			mapContext.farmlandNavi.status === "connected"
 				? [
 					mapContext.farmlandNavi.nearest?.landCategory ? `地目=${mapContext.farmlandNavi.nearest.landCategory}` : "",
@@ -30847,6 +30913,7 @@ function buildLandAZoneSourceSummary(input: {
 		[
 			"地番・筆界候補",
 			mapContext.parcelCadastre.source,
+			connectedEvidenceState(mapContext.parcelCadastre.status === "connected", "二次資料"),
 			mapContext.parcelCadastre.status === "connected"
 				? mapContext.parcelCadastre.candidates
 					.slice(0, 2)
@@ -30861,6 +30928,10 @@ function buildLandAZoneSourceSummary(input: {
 		[
 			"系統・変電所",
 			`${mapContext.gridCapacity.source} / 変電所候補エンジン`,
+			connectedEvidenceState(
+				Boolean(treasure.nearestSubstationName || mapContext.gridCapacity.status === "connected"),
+				"AI注記",
+			),
 			[
 				treasure.nearestSubstationName ? `最寄り変電所=${treasure.nearestSubstationName}` : "最寄り変電所=未特定",
 				treasure.nearestSubstationDistanceKm !== null ? `距離=${Math.round(treasure.nearestSubstationDistanceKm * 100) / 100}km` : "",
@@ -30872,6 +30943,7 @@ function buildLandAZoneSourceSummary(input: {
 		[
 			"周辺条件",
 			mapContext.surroundingPlaces.source,
+			connectedEvidenceState(mapContext.surroundingPlaces.status === "connected", "AI注記"),
 			mapContext.surroundingPlaces.status === "connected"
 				? `周辺施設候補=${mapContext.surroundingPlaces.places.slice(0, 5).map((place) => place.categoryLabel).join(" / ")}`
 				: mapContext.surroundingPlaces.message,
@@ -30883,9 +30955,9 @@ function buildLandAZoneSourceSummary(input: {
 		? `\n人間回収に渡す不足: ${input.investigationGaps.join(" / ")}`
 		: "\n人間回収に渡す不足: AI側一次取得は完了扱い。ただし原本確認は別。";
 	return [
-		"Aゾーン取得元サマリー（サイト/取得内容/Notion反映先/人間回収）",
-		...rows.map(([stage, source, gets, notionTargets, human]) =>
-			`- ${stage}｜取得元=${source}｜見ている値=${gets}｜Notion反映先=${notionTargets}｜人間に渡す確認=${human}`,
+		"Aゾーン取得元サマリー（サイト/証拠区分/取得内容/Notion反映先/人間回収）",
+		...rows.map(([stage, source, evidenceState, gets, notionTargets, human]) =>
+			`- ${stage}｜取得元=${source}｜証拠区分=${evidenceState}｜見ている値=${gets}｜Notion反映先=${notionTargets}｜人間に渡す確認=${human}`,
 		),
 		gapText,
 	].join("\n");
@@ -31112,9 +31184,9 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 	const reviewMemo = `${missing.join("、")}が不足。評価前に入力を確認してください。`;
 	const missingDataRequest = buildLandMissingInputDataRequest(land, missing);
 	const sourceSummary = [
-		"Aゾーン取得元サマリー（サイト/取得内容/Notion反映先/人間回収）",
-		`- 入力起点｜取得元=Notion土地DB｜見ている値=所在地=${land.address || "未入力"} / 面積=${land.areaTsubo ? `${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪` : "未入力"}｜Notion反映先=Aゾーン判断 / Aゾーン判断理由 / Aゾーン取得元サマリー｜人間に渡す確認=${missing.join(" / ")}を入力`,
-		"- 外部サイト/API｜取得元=未実行｜見ている値=所在地・面積が揃ってから実行｜Notion反映先=なし｜人間に渡す確認=まず必須入力を埋める",
+		"Aゾーン取得元サマリー（サイト/証拠区分/取得内容/Notion反映先/人間回収）",
+		`- 入力起点｜取得元=Notion土地DB｜証拠区分=${land.inputEvidenceState || "未確認"}｜見ている値=所在地=${land.address || "未入力"} / 面積=${land.areaTsubo ? `${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪` : "未入力"}｜Notion反映先=Aゾーン判断 / Aゾーン判断理由 / Aゾーン取得元サマリー｜人間に渡す確認=${missing.join(" / ")}を入力`,
+		"- 外部サイト/API｜取得元=未実行｜証拠区分=未確認｜見ている値=所在地・面積が揃ってから実行｜Notion反映先=なし｜人間に渡す確認=まず必須入力を埋める",
 		`人間回収に渡す不足: ${missing.join(" / ")}`,
 	].join("\n");
 
@@ -31663,7 +31735,10 @@ async function markLandNeedsReview(
 	land: LandInfo,
 	evaluation: LandEvaluation,
 ): Promise<void> {
-	const aZoneScoreText = formatLandAZoneScore(evaluation.aZoneScore);
+	const holdGaps = landReviewHoldGaps(land, evaluation);
+	const holdReason = landReviewHoldReason(holdGaps);
+	const suspendedAZoneScore = suspendLandAZoneScore(evaluation.aZoneScore, holdReason);
+	const aZoneScoreText = formatLandAZoneScore(suspendedAZoneScore);
 	const patches: Record<string, SafePatch> = {
 		...buildLandEvidenceCollectionPatches(land, evaluation),
 		処理ステータス: { kind: "select", value: "要確認" },
@@ -31671,11 +31746,11 @@ async function markLandNeedsReview(
 		// Aゾーンの人間回収待ちは点数・SABCで渡さない。旧値が残像になるため明示クリアする。
 		総合評価: { kind: "clear" },
 		AI総合スコア: { kind: "clear" },
-		Aゾーン判断: { kind: "select", value: evaluation.aZoneDecision },
-		Aゾーン判断理由: { kind: "text", value: evaluation.aZoneReason },
-		Aゾーン配点バージョン: { kind: "text", value: evaluation.aZoneScore.version },
-		Aゾーン内部スコア100: { kind: "number", value: evaluation.aZoneScore.total100 },
-		Aゾーン内部スコア60: { kind: "number", value: evaluation.aZoneScore.total60 },
+		Aゾーン判断: { kind: "select", value: "未確認" },
+		Aゾーン判断理由: { kind: "text", value: holdReason },
+		Aゾーン配点バージョン: { kind: "text", value: suspendedAZoneScore.version },
+		Aゾーン内部スコア100: { kind: "number", value: suspendedAZoneScore.total100 },
+		Aゾーン内部スコア60: { kind: "number", value: suspendedAZoneScore.total60 },
 		Aゾーン内部採点内訳: { kind: "text", value: aZoneScoreText },
 		Aゾーン取得元サマリー: { kind: "text", value: evaluation.sourceSummary },
 		Aゾーン人間回収項目: { kind: "text", value: evaluation.humanCollectionItems },
@@ -31686,13 +31761,13 @@ async function markLandNeedsReview(
 		AI接道評価: { kind: "select", value: evaluation.roadRating },
 		AI補助金評価: { kind: "select", value: evaluation.subsidyRating },
 		需要評価: { kind: "select", value: evaluation.demandRating },
-		案件化メモ: { kind: "text", value: evaluation.landEvaluation },
-		次アクション: { kind: "text", value: evaluation.nextAction },
-		一次AI受付メモ: { kind: "text", value: `${evaluation.reviewMemo}\n${aZoneScoreText}` },
+		案件化メモ: { kind: "text", value: suspendLandDecisionText(evaluation.landEvaluation, holdReason) },
+		次アクション: { kind: "text", value: suspendLandDecisionText(evaluation.nextAction, holdReason) },
+		一次AI受付メモ: { kind: "text", value: `${holdReason}\n${aZoneScoreText}` },
 		AI更新日時: { kind: "date", value: new Date().toISOString() },
-		設計上の弱点: { kind: "text", value: `${evaluation.reviewMemo}\n${aZoneScoreText}` },
+		設計上の弱点: { kind: "text", value: `${holdReason}\n${aZoneScoreText}` },
 		Webhook引き継ぎステータス: { kind: "select", value: "要確認で停止" },
-		Webhook引き継ぎメモ: { kind: "text", value: `${evaluation.reviewMemo}\n${aZoneScoreText}` },
+		Webhook引き継ぎメモ: { kind: "text", value: `${holdReason}\n${aZoneScoreText}` },
 		...buildLandAZoneVisiblePatches(land, evaluation),
 	};
 	if (
