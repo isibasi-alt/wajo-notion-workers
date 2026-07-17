@@ -1243,6 +1243,16 @@ const RESIDENT_DOCUMENT_PDF_URL_PROPERTY_ALIASES = [
 	"PDF URL",
 ];
 
+const RESIDENT_DOCUMENT_HTML_FILE_PROPERTY_ALIASES = [
+	"住民説明会資料HTML",
+	"住民説明会HTML",
+	"説明会用資料HTML",
+	"説明会HTML",
+	"住民説明会資料リンク",
+];
+
+const RESIDENT_DOCUMENT_HTML_HEADING = "住民説明会HTML";
+
 const DEFAULT_SOLAR_PANEL_DEGRADATION_RATE = 0.5;
 const DEFAULT_SOLAR_LOAN_RATIO = 80;
 const DEFAULT_SOLAR_INTEREST_RATE = 1;
@@ -15872,15 +15882,15 @@ async function processResidentDocument(
 		"住民説明会資料の必須入力チェックを通過しました。",
 		...draft.summaryLines,
 	].join("\n");
-	const pdfExport = input.dryRun
+	const htmlExport = input.dryRun
 		? {
 				attached: false,
 				destination: "none" as const,
-				message: "dry-runのためPDFは保存していません。",
+				message: "dry-runのためHTMLは保存していません。",
 				fileName: "",
 				fileUrl: null as string | null,
 		  }
-		: await exportResidentDocumentPdf(notion, page, draft);
+		: await exportResidentDocumentHtml(notion, page, draft);
 	const residentProjectId = relationIdsFromProperty(page.properties?.["関連案件"])[0] ?? null;
 	const caseDocumentRegistration = input.dryRun
 		? { action: "skipped" as const, message: "dry-runのため案件資料DBへは登録していません。" }
@@ -15889,25 +15899,25 @@ async function processResidentDocument(
 				requestPageId: page.id,
 				projectPageId: residentProjectId,
 				sourceTitle: draft.documentTitle,
-				fileUploadId: pdfExport.fileUploadId,
-				fileName: pdfExport.fileName,
+				fileUploadId: htmlExport.fileUploadId,
+				fileName: htmlExport.fileName,
 		  });
 	const resultMessage = [
 		readyMessage,
-		`PDF出力: ${pdfExport.message}`,
+		`HTML出力: ${htmlExport.message}`,
 		`資料台帳: ${caseDocumentRegistration.message}`,
-		pdfExport.destination === "property"
-			? "保存先: レコード内のPDFプロパティ（住民説明会資料PDF / 説明会用資料PDF 等）から確認できます。"
-			: pdfExport.destination === "page_block"
-				? "保存先: 同じレコード本文の末尾にPDFを追加しています。"
-				: "PDFが保存されていない場合は、レコードに files 型の「住民説明会資料PDF」プロパティを1つ追加してください。",
+		htmlExport.destination === "property"
+			? "保存先: レコード内のHTMLプロパティ（住民説明会資料HTML / 住民説明会HTML 等）から確認できます。"
+			: htmlExport.destination === "page_block"
+				? "保存先: 同じレコード本文の末尾にHTML資料を追加しています。"
+				: "HTMLが保存されていない場合は、レコードに files 型の「住民説明会資料HTML」プロパティを1つ追加してください。",
 	].join("\n");
 	if (!input.dryRun) {
 		const patches: Record<string, SafePatch> = {};
 		setAliasPatch(
 			patches,
 			["資料作成ステータス", "住民説明会資料ステータス", "生成ステータス"],
-			{ kind: "select", value: pdfExport.attached ? "作成完了" : "作成準備完了" },
+			{ kind: "select", value: htmlExport.attached ? "作成完了" : "作成準備完了" },
 		);
 		setAliasPatch(
 			patches,
@@ -15931,13 +15941,13 @@ async function processResidentDocument(
 		await createPageComment(
 			notion,
 			page.id,
-			`✅ 住民説明会資料を作成しました。\n${draft.documentTitle}\n${pdfExport.message}`,
+				`✅ 住民説明会HTMLを作成しました。\n${draft.documentTitle}\n${htmlExport.message}`,
 		);
 	}
 	return {
 		pageId: page.id,
 		action: input.dryRun ? "dry-run" : "prepared",
-		status: pdfExport.attached ? "作成完了" : "作成準備完了",
+		status: htmlExport.attached ? "作成完了" : "作成準備完了",
 		missingField: null,
 		message: resultMessage,
 	};
@@ -19166,6 +19176,25 @@ type ProposalHtmlExportResult = ProposalPdfExportResult;
 
 type ResidentDocumentPdfExportResult = ProposalPdfExportResult;
 
+function buildResidentHtmlBlocks(fileUploadId: string, fileName: string): Array<Record<string, unknown>> {
+	return [
+		{
+			object: "block",
+			type: "heading_3",
+			heading_3: { rich_text: [{ type: "text", text: { content: RESIDENT_DOCUMENT_HTML_HEADING } }] },
+		},
+		{
+			object: "block",
+			type: "file",
+			file: {
+				type: "file_upload",
+				file_upload: { id: fileUploadId },
+				caption: [{ type: "text", text: { content: fileName } }],
+			},
+		},
+	];
+}
+
 type GeneratedCaseDocumentKind = "proposal" | "proposalHtml" | "finance" | "resident";
 
 type GeneratedCaseDocumentRegistration = {
@@ -19201,7 +19230,7 @@ const GENERATED_CASE_DOCUMENT_CONFIG: Record<
 		documentTypeCandidates: ["投資条件シミュレーション", "ファイナンスシミュレーション"],
 	},
 	resident: {
-		titleSuffix: "住民説明会資料PDF",
+		titleSuffix: "住民説明会資料HTML",
 		documentTypeCandidates: ["住民説明会資料"],
 	},
 };
@@ -20614,6 +20643,63 @@ function buildProposalSimulationHtml(draft: ProposalSimulationDraft): string {
 </html>`;
 }
 
+function buildResidentDocumentHtml(draft: ResidentDocumentDraft): string {
+	const sections = draft.sections.length > 0
+		? draft.sections
+		: [{ title: "住民説明会資料", lines: draft.summaryLines }];
+	const sectionHtml = sections.map((section, index) => {
+		const body = (section.lines.length > 0 ? section.lines : draft.summaryLines)
+			.map((line) => `<p>${escapeHtml(line)}</p>`)
+			.join("\n");
+		const images = (section.images ?? []).map((image) =>
+			`<figure><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.name)}"><figcaption>${escapeHtml(image.name)}</figcaption></figure>`,
+		).join("\n");
+		return `<section class="document-section">
+			<div class="section-kicker">${index + 1} / ${sections.length}</div>
+			<h2>${escapeHtml(section.title)}</h2>
+			<div class="body-copy">${body}</div>
+			${images ? `<div class="images">${images}</div>` : ""}
+		</section>`;
+	}).join("\n");
+	return `<!doctype html>
+<html lang="ja">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>${escapeHtml(draft.documentTitle || "住民説明会資料")}</title>
+	<style>
+		:root { --ink:#17212b; --muted:#66747d; --brand:#006b68; --line:#d7e2e0; --soft:#f3f8f7; }
+		* { box-sizing:border-box; }
+		body { margin:0; background:#edf3f2; color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif; line-height:1.75; }
+		main { width:min(1120px, calc(100% - 32px)); margin:32px auto; background:#fff; box-shadow:0 12px 40px rgba(0,0,0,.08); }
+		header { padding:42px 52px; color:#fff; background:#102d3a; }
+		header p { margin:0 0 10px; color:#d9ecec; }
+		h1 { margin:0; font-size:32px; line-height:1.35; }
+		.document-section { padding:36px 52px; border-bottom:1px solid var(--line); break-inside:avoid; }
+		.section-kicker { color:var(--muted); font-size:13px; text-align:right; }
+		h2 { margin:0 0 18px; color:var(--brand); font-size:24px; border-bottom:2px solid var(--line); padding-bottom:8px; }
+		.body-copy p { margin:8px 0; }
+		.images { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:16px; margin-top:22px; }
+		figure { margin:0; border:1px solid var(--line); background:var(--soft); }
+		figure img { width:100%; height:280px; display:block; object-fit:contain; background:#fff; }
+		figcaption { padding:8px 12px; color:var(--muted); font-size:12px; }
+		.notice { margin:32px 52px; padding:18px 20px; border-left:6px solid var(--brand); background:var(--soft); }
+		footer { padding:24px 52px 34px; color:var(--muted); font-size:12px; }
+		@media (max-width:780px) { main { width:100%; margin:0; } header,.document-section,footer { padding:24px; } .images { grid-template-columns:1fr; } figure img { height:220px; } .notice { margin:24px; } }
+		@media print { body { background:#fff; } main { width:100%; margin:0; box-shadow:none; } }
+	</style>
+</head>
+<body>
+<main>
+	<header><p>WAJO Sales OS | Resident Briefing</p><h1>${escapeHtml(draft.documentTitle || "住民説明会資料")}</h1><p>作成日: ${escapeHtml(todayIsoDateInTokyo())}</p></header>
+	${sectionHtml}
+	<div class="notice"><strong>配布前チェック</strong><br>社名・連絡先・配布先・添付画像の表示状態は、配布前に最終確認してください。</div>
+	<footer>住民説明会HTML | 入力された案件情報・画像をもとに生成した正式資料です。</footer>
+</main>
+</body>
+</html>`;
+}
+
 function buildInvestmentConditionHtml(draft: ProposalSimulationDraft): string {
 	const finance = draft.financeSimulation;
 	if (!finance) throw new Error("投資条件HTMLに必要なファイナンス計算結果がありません。");
@@ -21045,6 +21131,37 @@ async function exportProposalSimulationHtml(
 			fileName,
 			fileUrl: null,
 		};
+	}
+}
+
+async function exportResidentDocumentHtml(
+	notion: NotionClient,
+	page: Page,
+	draft: ResidentDocumentDraft,
+): Promise<ProposalHtmlExportResult> {
+	if (!notion.fileUploads?.create || !notion.fileUploads.send) {
+		return { attached: false, destination: "none", message: "この実行環境ではHTMLアップロード機能を利用できません。", fileName: "", fileUrl: null };
+	}
+	const filePropertyName = findFirstFilesPropertyNameByAliases(page.properties ?? {}, RESIDENT_DOCUMENT_HTML_FILE_PROPERTY_ALIASES);
+	const titleSeed = draft.documentTitle || readGenericPageTitle(page) || "resident-document";
+	const fileName = `${sanitizeFileName(titleSeed)}_${todayIsoDateInTokyo()}.html`;
+	try {
+		const html = buildResidentDocumentHtml(draft);
+		const created = await notion.fileUploads.create({ mode: "single_part", filename: fileName, content_type: "text/html; charset=utf-8" });
+		const fileUploadId = firstString((created as Record<string, unknown>).id, readNestedString(created, ["file_upload", "id"])) ?? "";
+		if (!fileUploadId) return { attached: false, destination: "none", message: "HTMLアップロードIDの取得に失敗しました。", fileName, fileUrl: null };
+		await notion.fileUploads.send({ file_upload_id: fileUploadId, file: { filename: fileName, data: new Blob([html], { type: "text/html; charset=utf-8" }) } });
+		if (filePropertyName) {
+			await notion.pages.update({ page_id: page.id, properties: { [filePropertyName]: { files: [{ type: "file_upload", file_upload: { id: fileUploadId }, name: fileName }] } } });
+			return { attached: true, destination: "property", message: `HTML住民説明会資料を保存しました（${filePropertyName}）。`, fileName, fileUploadId, fileUrl: null };
+		}
+		if (notion.blocks?.children?.append) {
+			await notion.blocks.children.append({ block_id: page.id, children: buildResidentHtmlBlocks(fileUploadId, fileName) });
+			return { attached: true, destination: "page_block", message: "HTML保存先プロパティが無かったため、同じレコード本文の末尾にHTML住民説明会資料を追加しました。", fileName, fileUploadId, fileUrl: null };
+		}
+		return { attached: false, destination: "none", message: "HTMLアップロードは完了しましたが、保存先が未設定です。", fileName, fileUploadId, fileUrl: null };
+	} catch (error) {
+		return { attached: false, destination: "none", message: `HTML保存に失敗しました。${String(error)}`, fileName, fileUrl: null };
 	}
 }
 
@@ -38213,6 +38330,7 @@ export {
 export {
 	buildProposalSimulationHtml as buildProposalSimulationHtmlForTest,
 	buildProposalSimulationPdfBytes as buildProposalSimulationPdfBytesForTest,
+	buildResidentDocumentHtml as buildResidentDocumentHtmlForTest,
 	buildResidentDocumentPdfBytes as buildResidentDocumentPdfBytesForTest,
 	createDealFeedbackLearningLog as createDealFeedbackLearningLogForTest,
 	createMeetingFeedbackLearningLog as createMeetingFeedbackLearningLogForTest,

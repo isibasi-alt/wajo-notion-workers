@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PDFDocument } from "pdf-lib";
 import {
+	buildResidentDocumentHtmlForTest,
 	buildResidentDocumentPdfBytesForTest,
 	evaluateResidentDocumentDraftForTest,
 	processResidentDocumentForTest,
@@ -151,6 +152,15 @@ async function main() {
 		"連絡先・責任者": 0,
 		最終確認: 0,
 	});
+	const residentHtml = buildResidentDocumentHtmlForTest(ready);
+	assert.match(residentHtml, /住民説明会HTML/);
+	assert.match(residentHtml, /北摂発電所/);
+	assert.match(residentHtml, /発電所所在地画像/);
+	assert.match(residentHtml, /hazard\.png/);
+	assert.doesNotMatch(residentHtml, /Record ID:/);
+	if (process.env.RESIDENT_HTML_TEST_OUTPUT) {
+		await writeFile(process.env.RESIDENT_HTML_TEST_OUTPUT, residentHtml, "utf8");
+	}
 
 	const pdfBytes = await buildResidentDocumentPdfBytesForTest(ready, "resident-2");
 	const pdf = await PDFDocument.load(pdfBytes);
@@ -184,7 +194,8 @@ async function main() {
 			資料作成メモ: richTextProp(""),
 			不足項目: richTextProp(""),
 			生成ドキュメント名: richTextProp(""),
-			住民説明会資料PDF: { type: "files", files: [] },
+		住民説明会資料PDF: { type: "files", files: [] },
+		住民説明会資料HTML: { type: "files", files: [] },
 		},
 	};
 	const notion = {
@@ -222,7 +233,7 @@ async function main() {
 	);
 	assert.equal(processed.action, "prepared");
 	assert.equal(processed.status, "作成完了");
-	assert.match(processed.message, /PDFを保存しました/);
+	assert.match(processed.message, /HTML住民説明会資料を保存しました|HTML保存先プロパティが無かった/);
 	assert.ok(
 		updates.some((update) =>
 			JSON.stringify(update.properties ?? {}).includes("file-upload-1"),
