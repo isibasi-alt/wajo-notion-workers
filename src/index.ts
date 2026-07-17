@@ -31103,17 +31103,26 @@ function buildLandAZoneSourceSummary(input: {
 	const inputEvidenceState = land.inputEvidenceState || "未確認";
 	const connectedEvidenceState = (connected: boolean, state: "原本" | "二次資料" | "AI注記") =>
 		connected ? state : "未確認";
+	const reinfolib = mapContext.reinfolib;
+	const farmland = mapContext.farmlandNavi;
+	const parcel = mapContext.parcelCadastre;
+	const terrain = mapContext.terrain;
+	const gridMissing = mapContext.gridCapacity.status === "no-url" ? "系統空容量JSON未設定" : mapContext.gridCapacity.message;
+	const terrainValue =
+		terrain.status === "connected" && terrain.elevationM !== null
+			? `標高=${terrain.elevationM.toLocaleString("ja-JP", { maximumFractionDigits: 1 })}m${terrain.elevationSource ? ` / 標高元=${terrain.elevationSource}` : ""}`
+			: terrain.message;
 	const rows = [
 		[
-			"入力起点",
+			"住所・面積整合",
 			"Notion土地DB",
 			inputEvidenceState,
 			`所在地=${land.address || "未入力"} / 面積=${land.areaTsubo ? `${Math.round(land.areaTsubo).toLocaleString("ja-JP")}坪` : "未入力"} / 根拠区分=${inputEvidenceState}`,
-			"Aゾーン判断 / Aゾーン判断理由 / Aゾーン内部採点内訳",
-			"所在地・面積・原本区分が空ならBゾーンへ渡さない",
+			"Aゾーン判断 / Aゾーン判断理由 / Aゾーン内部採点内訳 / Aゾーン取得元サマリー",
+			"所在地・面積・地番・座標・登記の不一致は対象土地一意性としてBゾーン回収",
 		],
 		[
-			"座標化",
+			"住所正規化・座標",
 			mapContext.geocodeSource || "未実行",
 			connectedEvidenceState(Boolean(mapContext.geocodeSource || mapContext.googleMapsUrl), "AI注記"),
 			`所在地→緯度経度 / Google Maps確認リンク=${mapContext.googleMapsUrl || "未取得"}`,
@@ -31121,57 +31130,79 @@ function buildLandAZoneSourceSummary(input: {
 			"地番・筆界は登記所備付地図/登記で確認",
 		],
 		[
-			"道路候補",
-			"Google Roads API / 国土地理院道路中心線",
-			connectedEvidenceState(Boolean(mapContext.roadAccess || mapContext.gsiRoad.status === "connected"), "AI注記"),
-			`${mapContext.roadAccess || mapContext.gsiRoad.message}`,
-			"AI接道評価 / 案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー",
-			"土地DB「接道状況」は道路台帳・指定道路図で人間が確定",
-		],
-		[
-			"不動産情報",
-			mapContext.reinfolib.source,
-			connectedEvidenceState(mapContext.reinfolib.status === "connected", "原本"),
-			mapContext.reinfolib.status === "connected"
-				? [
-					mapContext.reinfolib.landPrice?.priceYenPerSqm ? `地価=${mapContext.reinfolib.landPrice.priceYenPerSqm.toLocaleString("ja-JP")}円/㎡` : "",
-					mapContext.reinfolib.referencePriceRange ? `参考価格レンジ=${mapContext.reinfolib.referencePriceRange}` : "",
-					mapContext.reinfolib.zoning?.useArea ? `用途地域=${mapContext.reinfolib.zoning.useArea}` : "",
-					mapContext.reinfolib.hazards.length > 0 ? `防災=${mapContext.reinfolib.hazards.map((risk) => risk.label).join("/")}` : "",
-				].filter(Boolean).join(" / ") || mapContext.reinfolib.message
-				: mapContext.reinfolib.message,
-			"土地評価 / 需要評価 / 案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー",
-			"販売予定価格・売買価格確定・建築可否確定には使わない",
-		],
-		[
-			"農地・農振",
-			mapContext.farmlandNavi.source,
-			connectedEvidenceState(mapContext.farmlandNavi.status === "connected", "二次資料"),
-			mapContext.farmlandNavi.status === "connected"
-				? [
-					mapContext.farmlandNavi.nearest?.landCategory ? `地目=${mapContext.farmlandNavi.nearest.landCategory}` : "",
-					mapContext.farmlandNavi.nearest?.agriculturalClassification ? `農振法区分=${mapContext.farmlandNavi.nearest.agriculturalClassification}` : "",
-					mapContext.farmlandNavi.nearest?.cityPlanningClassification ? `都市計画法区分=${mapContext.farmlandNavi.nearest.cityPlanningClassification}` : "",
-					mapContext.farmlandNavi.nearest?.jurisdictionAgricultureCommitteeName ? `農業委員会=${mapContext.farmlandNavi.nearest.jurisdictionAgricultureCommitteeName}` : "",
-				].filter(Boolean).join(" / ") || mapContext.farmlandNavi.message
-				: mapContext.farmlandNavi.message,
-			"農転事前見込み / 案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー",
-			`${notWritten}。土地DB「農地種別」「農地転用可否」は原本・行政確認後に人間入力`,
-		],
-		[
 			"地番・筆界候補",
-			mapContext.parcelCadastre.source,
-			connectedEvidenceState(mapContext.parcelCadastre.status === "connected", "二次資料"),
-			mapContext.parcelCadastre.status === "connected"
-				? mapContext.parcelCadastre.candidates
+			parcel.source,
+			connectedEvidenceState(parcel.status === "connected", "二次資料"),
+			parcel.status === "connected"
+				? parcel.candidates
 					.slice(0, 2)
 					.map((candidate) =>
 						`${[candidate.municipality, candidate.oaza, candidate.koaza].filter(Boolean).join("")}${candidate.lotNumber ? ` ${candidate.lotNumber}` : ""}`.trim(),
 					)
 					.join(" / ")
-				: mapContext.parcelCadastre.message,
-			"案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー",
-			"所有者・地目・地積・権利部は登記情報提供サービス/法務局で人間確認",
+				: parcel.message,
+			"地番候補 / 案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー",
+			"法務省地図GeoJSON未接続または候補なしなら、登記・公図・地積測量図をBゾーンで回収",
+		],
+		[
+			"登記・所有権・地目・地積・権利リスク",
+			"登記情報提供サービス / 法務局資料",
+			"未確認",
+			"Aゾーンでは所有者・甲区・乙区・権利リスク原本を自動取得しない",
+			"登記確認状況 / 入力根拠区分 / Aゾーン人間回収項目",
+			"登記事項証明書または登記情報で、地目・地積・所有権・甲区/乙区リスクをBゾーン回収",
+		],
+		[
+			"農地・農振・農地区分・農転",
+			farmland.source,
+			connectedEvidenceState(farmland.status === "connected", "二次資料"),
+			farmland.status === "connected"
+				? [
+					farmland.nearest?.landCategory ? `地目=${farmland.nearest.landCategory}` : "",
+					farmland.nearest?.agriculturalClassification ? `農振法区分=${farmland.nearest.agriculturalClassification}` : "",
+					farmland.nearest?.cityPlanningClassification ? `都市計画法区分=${farmland.nearest.cityPlanningClassification}` : "",
+					farmland.nearest?.jurisdictionAgricultureCommitteeName ? `農業委員会=${farmland.nearest.jurisdictionAgricultureCommitteeName}` : "",
+				].filter(Boolean).join(" / ") || farmland.message
+				: farmland.message,
+			"農転事前見込み / 案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー",
+			`${notWritten}。土地DB「農地種別」「農地転用可否」は原本・行政確認後に人間入力`,
+		],
+		[
+			"用途地域・都市計画・建蔽率・容積率",
+			reinfolib.source,
+			connectedEvidenceState(reinfolib.status === "connected" && Boolean(reinfolib.zoning), "原本"),
+			reinfolib.zoning
+				? [
+					reinfolib.zoning.useArea ? `用途地域=${reinfolib.zoning.useArea}` : "",
+					reinfolib.zoning.buildingCoverageRatio ? `建蔽率=${reinfolib.zoning.buildingCoverageRatio}` : "",
+					reinfolib.zoning.floorAreaRatio ? `容積率=${reinfolib.zoning.floorAreaRatio}` : "",
+					reinfolib.zoning.cityName ? `自治体=${reinfolib.zoning.cityName}` : "",
+				].filter(Boolean).join(" / ")
+				: reinfolib.message,
+			"用途地域 / 土地評価 / 案件化メモ / Aゾーン取得元サマリー",
+			"開発許可・条例適合・建築可否は自治体資料または正式回答でB/C確認",
+		],
+		[
+			"地価公示・都道府県地価・取引事例",
+			reinfolib.source,
+			connectedEvidenceState(reinfolib.status === "connected" && Boolean(reinfolib.landPrice || reinfolib.transactionSummary), "原本"),
+			reinfolib.status === "connected"
+				? [
+					reinfolib.landPrice?.priceYenPerSqm ? `地価=${reinfolib.landPrice.priceYenPerSqm.toLocaleString("ja-JP")}円/㎡` : "",
+					reinfolib.referencePriceRange ? `参考価格レンジ=${reinfolib.referencePriceRange}` : "",
+					reinfolib.transactionSummary ? `取引事例候補=${reinfolib.transactionSummary.count}件` : "",
+				].filter(Boolean).join(" / ") || reinfolib.message
+				: reinfolib.message,
+			"土地評価 / 需要評価 / 案件化メモ / Aゾーン取得元サマリー",
+			"希望価格・売買価格確定・粗利確定・事業採算確定には使わない",
+		],
+		[
+			"道路種別・幅員・接道・大型車搬入",
+			"Google Roads API / 国土地理院道路中心線 / 道路台帳確認入口",
+			connectedEvidenceState(Boolean(mapContext.roadAccess || mapContext.gsiRoad.status === "connected"), "AI注記"),
+			`${mapContext.roadAccess || mapContext.gsiRoad.message}`,
+			"AI接道評価 / 案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー",
+			"土地DB「接道状況」は道路台帳・指定道路図・公的回答でBゾーン確定",
 		],
 		[
 			"系統・変電所",
@@ -31183,20 +31214,74 @@ function buildLandAZoneSourceSummary(input: {
 			[
 				treasure.nearestSubstationName ? `最寄り変電所=${treasure.nearestSubstationName}` : "最寄り変電所=未特定",
 				treasure.nearestSubstationDistanceKm !== null ? `距離=${Math.round(treasure.nearestSubstationDistanceKm * 100) / 100}km` : "",
-				mapContext.gridCapacity.records[0]?.facilityName ? `空容量公表値候補=${mapContext.gridCapacity.records[0].facilityName}` : mapContext.gridCapacity.message,
+				mapContext.gridCapacity.records[0]?.facilityName ? `空容量公表値候補=${mapContext.gridCapacity.records[0].facilityName}` : gridMissing,
 			].filter(Boolean).join(" / "),
 			"電力評価 / 変電所距離（km） / 最寄り変電所 / 最寄り変電所名 / Aゾーン取得元サマリー",
 			"接続可否は送配電会社の接続検討・回答で人間確認",
 		],
 		[
-			"周辺条件",
+			"洪水・津波・高潮・土砂災害・液状化",
+			reinfolib.source,
+			connectedEvidenceState(reinfolib.status === "connected", "原本"),
+			reinfolib.status === "connected"
+				? [
+					reinfolib.hazards.length > 0 ? `API取得=${reinfolib.hazards.map((risk) => risk.label).join("/")}` : "災害危険区域・洪水・土砂はAPI重なり未検出",
+					"津波・高潮・液状化はAゾーン未接続",
+				].join(" / ")
+				: `${reinfolib.message} / 津波・高潮・液状化はAゾーン未接続`,
+			"土地評価 / 案件化メモ / Aゾーン取得元サマリー",
+			"ハザードマップ、自治体防災資料、現地条件でB/C確認。安全確定には使わない",
+		],
+		[
+			"標高・傾斜・造成難易度",
+			terrain.source,
+			connectedEvidenceState(terrain.status === "connected", "原本"),
+			`${terrainValue} / 傾斜・造成難易度=未確認`,
+			"土地評価 / 案件化メモ / Aゾーン取得元サマリー",
+			"傾斜、造成土量、排水、擁壁、搬入路は地形図・航空写真・現地確認でB/C確認",
+		],
+		[
+			"近隣住宅・学校・病院・駅・集落密度",
 			mapContext.surroundingPlaces.source,
 			connectedEvidenceState(mapContext.surroundingPlaces.status === "connected", "AI注記"),
 			mapContext.surroundingPlaces.status === "connected"
 				? `周辺施設候補=${mapContext.surroundingPlaces.places.slice(0, 5).map((place) => place.categoryLabel).join(" / ")}`
 				: mapContext.surroundingPlaces.message,
 			"需要評価 / 案件化メモ / 一次AI受付メモ / Aゾーン取得元サマリー",
-			"近隣住宅距離・説明会リスクは航空写真/現地確認/人間判断",
+			"近隣住宅最短距離・集落密度・説明会リスクは航空写真/現地確認/人間判断",
+		],
+		[
+			"森林・保安林・自然公園・文化財・景観・自治体条例",
+			"自治体GIS / 環境省・林野庁・文化財・景観条例等の公的資料",
+			"未確認",
+			"Aゾーン未接続。該当有無は公的資料または自治体確認が必要",
+			"案件化メモ / Aゾーン人間回収項目 / Webhook引き継ぎメモ",
+			"保安林、自然公園、文化財、景観条例、開発条例はB/Cで公的資料確認",
+		],
+		[
+			"土地価格・希望価格・事業採算",
+			"Notion土地DB / 不動産情報ライブラリ / 案件情報",
+			connectedEvidenceState(Boolean(reinfolib.referencePriceRange), "AI注記"),
+			[
+				reinfolib.referencePriceRange ? `参考価格レンジ=${reinfolib.referencePriceRange}` : "参考価格レンジ=未算出",
+				"希望価格・粗利・CAPEX・出口価格=未確認",
+			].join(" / "),
+			"土地評価 / 案件化メモ / Aゾーン取得元サマリー",
+			"販売予定価格・粗利・事業採算はB/Cで売主資料、社内採算、見積原本を確認",
+		],
+		[
+			"取得メタデータ・証拠区分・負例",
+			"Worker実行ログ / 各API接続状態 / 環境変数",
+			"AI注記",
+			[
+				`WAGRI/eMAFF=${farmland.status}`,
+				`法務省GeoJSON=${parcel.status}`,
+				`系統空容量JSON=${mapContext.gridCapacity.status}`,
+				`不動産情報ライブラリ=${reinfolib.status}`,
+				"取得失敗・対象外・未接続は未確認として返す",
+			].join(" / "),
+			"Aゾーン取得元サマリー / Aゾーン人間回収項目 / Webhook引き継ぎメモ",
+			"API未接続、取得失敗、対象外を接続済み扱いしない。Bゾーン伝票へ落とす",
 		],
 	];
 	const gapText = input.investigationGaps?.length
@@ -31609,70 +31694,80 @@ type LandBZoneTask = {
 };
 
 function buildLandBZoneTaskForGap(gap: string): LandBZoneTask {
-	if (/所在地|面積/.test(gap)) {
+	if (/地番|筆|地積|面積/.test(gap)) {
 		return {
 			owner: "営業担当",
-			item: `${gap}の入力値と入力元資料`,
+			item: "地番、枝番、地積、筆数、筆ごとの構成、合計面積",
+			source: "登記事項証明書、公図、地積測量図、売主原本",
+			returnTo: "土地DB「所在地」「面積（坪）」「地番候補」「入力根拠区分」、原本URL/添付",
+			evidenceState: "原本",
+			completion: "筆ごとの地積合計と入力面積が照合でき、取得日・取得元を記録",
+		};
+	}
+	if (/所在地|住所/.test(gap)) {
+		return {
+			owner: "営業担当",
+			item: "正式所在地、住居表示ではない地番所在地、入力元資料",
 			source: "売主資料、登記、公図、既存問い合わせ資料",
-			returnTo: "土地DB「所在地」「面積（坪）」「入力根拠区分」",
-			evidenceState: "未確認→原本/二次資料へ区分",
-			completion: "空欄をなくし、値・単位・入力元・確認日を残す",
+			returnTo: "土地DB「所在地」「入力根拠区分」、原本URL/添付",
+			evidenceState: "原本または社内正本。二次資料なら二次資料として明示",
+			completion: "所在地・地番・座標・面積が同じ対象を指すことを確認",
 		};
 	}
 	if (/対象土地一意性/.test(gap)) {
 		return {
 			owner: "営業担当または原本保有部署",
-			item: "本番候補/旧データ/テストの区分、正本ページ、対象面積、地番・筆構成",
-			source: "正本ページ、元資料、登記、公図、社内原本",
+			item: "本番候補/旧データ/テストの区分、正本ページ、正しい面積、地番・枝番、筆数・筆構成",
+			source: "売主資料、社内正本、登記、公図",
 			returnTo: "土地DB「対象一意性」「営業対象区分」「正本ページ」または確認メモ",
-			evidenceState: "原本または社内正本。テスト表示は本番候補へ昇格しない",
-			completion: "対象土地が1件に特定され、他候補・テストページと分離済み",
+			evidenceState: "原本または社内正本",
+			completion: "対象土地が1件に特定され、重複・旧データ・テストページと分離済み",
 		};
 	}
 	if (/接道|道路|大型車/.test(gap)) {
 		return {
 			owner: "営業担当",
-			item: "道路名、幅員、道路種別、大型車搬入可否",
+			item: "道路名、幅員、道路種別、接道長、大型車搬入可否",
 			source: "道路台帳、指定道路図、公図、道路管理課/建築指導課の正式回答",
-			returnTo: "土地DB「接道状況」「入力根拠区分」",
-			evidenceState: "原本/行政正式書面。Google Mapsや現地写真のみは二次資料",
-			completion: "公的根拠でOK/NG/要確認を区分し、地図だけで確定しない",
+			returnTo: "土地DB「接道状況」「入力根拠区分」、回答書URL/添付",
+			evidenceState: "原本または行政正式書面。Google Mapsや現地写真のみは二次資料",
+			completion: "幅員・道路種別・搬入可否を公的根拠でOK/NG/要確認に区分",
 		};
 	}
 	if (/農地|農転|農振/.test(gap)) {
 		return {
 			owner: "営業担当",
-			item: "地目、農振区分、農転ステータス、所管農業委員会",
+			item: "地目、農振区分、農地区分、農転相談状況、所管農業委員会",
 			source: "WAGRI/eMAFF農地ナビ、農地台帳、農政課/農業委員会の正式回答、許可書",
-			returnTo: "土地DB「農地種別」「農地転用可否」「入力根拠区分」",
+			returnTo: "土地DB「農地種別」「農地転用可否」「入力根拠区分」、正式回答URL/添付",
 			evidenceState: "原本/行政正式書面。担当者メール・電話メモは二次資料/口頭メモ",
-			completion: "許可済/不要/不可を原本なしで確定しない。未確認なら未確認のまま戻す",
+			completion: "原本なしで許可済・可能へ昇格しない。未確認なら未確認で返す",
 		};
 	}
 	if (/登記|所有者|権利/.test(gap)) {
 		return {
 			owner: "営業担当または管理担当",
-			item: "登記確認状況、地目、地積、甲区/乙区の権利リスク種別",
+			item: "地目、地積、所有権確認、甲区/乙区の権利リスク種別",
 			source: "登記事項証明書、登記情報提供サービス、法務局資料",
-			returnTo: "土地DB「登記確認状況」「入力根拠区分」",
+			returnTo: "土地DB「登記確認状況」「入力根拠区分」、原本URL/添付",
 			evidenceState: "原本。個人名は公開メモに入れず、リスク種別だけ返す",
-			completion: "3か月以内の登記または取得日付き原本で権利リスクを区分",
+			completion: "取得日付き原本で権利リスクを区分。個人名は公開メモへ書かない",
 		};
 	}
-	if (/近隣住宅/.test(gap)) {
+	if (/近隣住宅|学校|病院|駅|集落|災害|洪水|津波|高潮|土砂|液状化|標高|傾斜|造成/.test(gap)) {
 		return {
 			owner: "営業担当",
-			item: "最短住宅距離、住宅密集/説明会リスク、現地確認要否",
-			source: "地図実測、航空写真、現地写真、現地確認",
-			returnTo: "土地DB「近隣住宅距離（m）」「近隣住宅確認」",
-			evidenceState: "二次資料または現地確認。公式原本がない場合はAI注記と分離",
-			completion: "距離と確認方法を残し、30m未満/30-50m等の懸念を明記",
+			item: "住宅最短距離、学校/病院、洪水/津波/土砂、標高・傾斜、造成上の懸念",
+			source: "公的ハザード、国土地理院、航空写真、現地写真、現地確認",
+			returnTo: "土地DBの該当欄、案件化メモ、入力根拠区分",
+			evidenceState: "公的資料/二次資料/AI注記/現地確認を分離",
+			completion: "距離・災害種別・確認方法・確認日を記録",
 		};
 	}
 	if (/変電所|系統|空き/.test(gap)) {
 		return {
 			owner: "営業担当または系統担当",
-			item: "最寄り変電所、距離、送配電会社、空容量公表値、接続検討要否",
+			item: "最寄り変電所、距離、電力会社、公開空容量、接続検討要否",
 			source: "資源エネルギー庁リンク、OCCTO、送配電会社公開マップ、接続検討回答",
 			returnTo: "土地DB「変電所距離（km）」「最寄り変電所」「電力評価」または確認メモ",
 			evidenceState: "公開マップは二次資料/AI注記。送配電会社回答は行政正式書面相当で区分",
@@ -31709,9 +31804,9 @@ function buildLandBZoneHandoff(input: {
 			[
 				`${index + 1}. 担当=${task.owner}`,
 				`回収物=${task.item}`,
-				`取得元=${task.source}`,
-				`戻し先=${task.returnTo}`,
-				`根拠区分=${task.evidenceState}`,
+				`取得先=${task.source}`,
+				`Notion戻し先=${task.returnTo}`,
+				`証拠区分=${task.evidenceState}`,
 				`完了条件=${task.completion}`,
 			].join("｜"),
 		),

@@ -682,6 +682,12 @@ async function main() {
 				{ status: 200, headers: { "content-type": "application/json" } },
 			);
 		}
+		if (url.includes("cyberjapandata2.gsi.go.jp/general/dem/scripts/getelevation.php")) {
+			return new Response(
+				JSON.stringify({ elevation: 110.5, hsrc: "5m（レーザ）" }),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		}
 		if (url.includes("places.googleapis.com/v1/places:searchNearby")) {
 			return new Response(
 				JSON.stringify({
@@ -992,6 +998,10 @@ async function main() {
 	assert.match(addressOnlyMemo, /学校候補/);
 	assert.match(addressOnlyMemo, /病院候補/);
 	assert.match(addressOnlyMemo, /駅候補/);
+	assert.match(addressOnlyMemo, /標高・造成一次確認/);
+	assert.match(addressOnlyMemo, /標高 110\.5m|標高=110\.5m/);
+	assert.match(addressOnlyMemo, /5m（レーザ）/);
+	assert.match(addressOnlyMemo, /傾斜・造成難易度/);
 	assert.match(addressOnlyMemo, /近隣説明リスク/);
 	assert.match(addressOnlyMemo, /住宅密集判定ではない/);
 	assert.match(addressOnlyMemo, /現地確認/);
@@ -1014,6 +1024,7 @@ async function main() {
 	assert.match(addressOnlyMemo, /建蔽率: 60%/);
 	assert.match(addressOnlyMemo, /容積率: 200%/);
 	assert.match(addressOnlyMemo, /洪水浸水想定区域/);
+	assert.match(addressOnlyMemo, /津波・高潮・液状化/);
 	assert.match(addressOnlyMemo, /同一市区町村の取引事例候補/);
 	assert.match(addressOnlyMemo, /登記所備付地図データ接続/);
 	assert.match(addressOnlyMemo, /地番候補/);
@@ -1051,6 +1062,13 @@ async function main() {
 	assert.match(addressOnlyMemo, /土岐津変電所/);
 	assert.match(addressOnlyMemo, /12\.5MW/);
 	assert.match(addressOnlyMemo, /接続可否確定ではない/);
+	assert.match(addressOnlyMemo, /森林・保安林・自然公園・文化財・景観・自治体条例/);
+	assert.match(addressOnlyMemo, /希望価格・粗利・CAPEX|希望価格・粗利・事業採算/);
+	assert.ok(
+		fetchedUrls.some((url) =>
+			url.startsWith("https://cyberjapandata2.gsi.go.jp/general/dem/scripts/getelevation.php?"),
+		),
+	);
 	assert.match(addressOnlyMemo, /接続検討/);
 	assert.match(addressOnlyMemo, /農転事前判定/);
 	assert.match(addressOnlyMemo, /見込みスコア/);
@@ -1112,10 +1130,21 @@ async function main() {
 	assert.match(sourceSummary, /不動産情報ライブラリ/);
 	assert.match(sourceSummary, /WAGRI農地API|eMAFF/);
 	assert.match(sourceSummary, /資源エネルギー庁|OCCTO/);
+	assert.match(sourceSummary, /住所・面積整合/);
+	assert.match(sourceSummary, /登記・所有権・地目・地積・権利リスク/);
+	assert.match(sourceSummary, /標高・傾斜・造成難易度/);
+	assert.match(sourceSummary, /森林・保安林・自然公園・文化財・景観・自治体条例/);
+	assert.match(sourceSummary, /取得メタデータ・証拠区分・負例/);
 	assert.match(sourceSummary, /人間に渡す確認/);
 	const humanCollectionItems = JSON.stringify(addressOnlyFinalUpdate.Aゾーン人間回収項目 ?? {});
 	assert.match(humanCollectionItems, /Bゾーンで人間回収|作業指示/);
 	assert.match(humanCollectionItems, /登記|農地|接道|系統/);
+	assert.match(humanCollectionItems, /担当=/);
+	assert.match(humanCollectionItems, /回収物=/);
+	assert.match(humanCollectionItems, /取得先=/);
+	assert.match(humanCollectionItems, /Notion戻し先=/);
+	assert.match(humanCollectionItems, /証拠区分=/);
+	assert.match(humanCollectionItems, /完了条件=/);
 	assert.equal(((addressOnlyFinalUpdate.Aゾーン内部スコア100 as { number?: number } | undefined)?.number ?? 0), 0);
 	assert.match(JSON.stringify(addressOnlyFinalUpdate.Aゾーン内部採点内訳 ?? {}), /採点保留/);
 	assert.doesNotMatch(addressOnlyMemo, /この土地、?1億|判定が全部出た|即アタック|農転不可|危険|接道OK(?!確定にはしない)/);
@@ -1298,7 +1327,10 @@ async function main() {
 	assert.equal(missingRequiredInputResult.cZoneReady, false);
 	assert.match(missingRequiredInputResult.bZoneHandoff ?? "", /所在地/);
 	assert.match(missingRequiredInputResult.bZoneHandoff ?? "", /面積/);
-	assert.match(missingRequiredInputResult.bZoneHandoff ?? "", /戻し先=土地DB「所在地」「面積（坪）」「入力根拠区分」/);
+	assert.match(missingRequiredInputResult.bZoneHandoff ?? "", /Notion戻し先=土地DB/);
+	assert.match(missingRequiredInputResult.bZoneHandoff ?? "", /取得先=/);
+	assert.match(missingRequiredInputResult.bZoneHandoff ?? "", /証拠区分=/);
+	assert.match(missingRequiredInputResult.bZoneHandoff ?? "", /完了条件=/);
 	assert.match(missingRequiredInputResult.cZoneReadiness ?? "", /必須入力不足=所在地/);
 	assert.match(missingRequiredInputResult.cZoneReadiness ?? "", /必須入力不足=面積/);
 
