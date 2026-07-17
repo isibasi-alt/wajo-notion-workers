@@ -2563,6 +2563,7 @@ type LandResult = {
 	scaleDistanceEvidenceState: string;
 	scaleDistanceSource: string;
 	aZoneDecision: "行く" | "行かない";
+	salesDecisionLabel: "GO" | "NO-GO";
 	aZoneReason: string;
 	aZoneScore: LandAZoneScore;
 	sourceSummary: string;
@@ -26572,6 +26573,7 @@ async function processLandEvaluation(
 		scaleDistanceEvidenceState: evaluation.scaleDistanceEvidenceState,
 		scaleDistanceSource: evaluation.scaleDistanceSource,
 		aZoneDecision: evaluation.aZoneDecision,
+		salesDecisionLabel: landAZoneDecisionSalesLabel(evaluation.aZoneDecision),
 		aZoneReason: publicHold
 			? `${landAZoneReasonSalesLabel(evaluation.aZoneReason)}\n${publicHoldReason}`
 			: landAZoneReasonSalesLabel(evaluation.aZoneReason),

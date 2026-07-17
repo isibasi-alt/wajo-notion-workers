@@ -174,6 +174,7 @@ async function main() {
 			notion as never,
 		);
 		assert.equal(result.aZoneDecision, "行く");
+		assert.equal(result.salesDecisionLabel, "GO");
 		assert.match(result.aZoneReason, /^GO理由:/);
 		assert.equal(result.requiresInvestigation, true);
 
@@ -212,6 +213,7 @@ async function main() {
 				pageId: page.id,
 				action: result.action,
 				aZoneDecision: result.aZoneDecision,
+				salesDecisionLabel: result.salesDecisionLabel,
 				requiresInvestigation: result.requiresInvestigation,
 				investigationGaps: result.investigationGaps,
 			},
