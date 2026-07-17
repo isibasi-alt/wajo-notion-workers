@@ -1251,7 +1251,7 @@ const RESIDENT_DOCUMENT_HTML_FILE_PROPERTY_ALIASES = [
 	"住民説明会資料リンク",
 ];
 
-const RESIDENT_DOCUMENT_HTML_HEADING = "住民説明会HTML";
+const RESIDENT_DOCUMENT_HTML_HEADING = "住民説明会資料";
 
 const DEFAULT_SOLAR_PANEL_DEGRADATION_RATE = 0.5;
 const DEFAULT_SOLAR_LOAN_RATIO = 80;
@@ -15882,6 +15882,35 @@ async function processResidentDocument(
 		"住民説明会資料の必須入力チェックを通過しました。",
 		...draft.summaryLines,
 	].join("\n");
+	const residentProjectIds = relationIdsFromProperty(page.properties?.["関連案件"]);
+	if (residentProjectIds.length > 1) {
+		const message = "住民説明会資料の関連案件が複数あります。対象案件を1件だけ設定してから実行してください。";
+		if (!input.dryRun) {
+			const patches: Record<string, SafePatch> = {};
+			setAliasPatch(
+				patches,
+				["資料作成ステータス", "住民説明会資料ステータス", "生成ステータス"],
+				{ kind: "select", value: "入力待ち" },
+			);
+			setAliasPatch(patches, ["不足項目", "最終不足項目", "入力エラー項目"], {
+				kind: "text",
+				value: "関連案件",
+			});
+			setAliasPatch(patches, ["資料作成メモ", "住民説明会メモ", "処理結果メモ"], {
+				kind: "text",
+				value: message,
+			});
+			await safeUpdateExistingProperties(notion, page, patches);
+			await createPageComment(notion, page.id, `⚠️ ${message}`);
+		}
+		return {
+			pageId: page.id,
+			action: input.dryRun ? "dry-run" : "needs-input",
+			status: "入力待ち",
+			missingField: "関連案件",
+			message,
+		};
+	}
 	const htmlExport = input.dryRun
 		? {
 				attached: false,
@@ -15891,7 +15920,7 @@ async function processResidentDocument(
 				fileUrl: null as string | null,
 		  }
 		: await exportResidentDocumentHtml(notion, page, draft);
-	const residentProjectId = relationIdsFromProperty(page.properties?.["関連案件"])[0] ?? null;
+	const residentProjectId = residentProjectIds[0] ?? null;
 	const caseDocumentRegistration = input.dryRun
 		? { action: "skipped" as const, message: "dry-runのため案件資料DBへは登録していません。" }
 		: await upsertGeneratedCaseDocument(notion, {
@@ -20694,7 +20723,7 @@ function buildResidentDocumentHtml(draft: ResidentDocumentDraft): string {
 	<header><p>WAJO Sales OS | Resident Briefing</p><h1>${escapeHtml(draft.documentTitle || "住民説明会資料")}</h1><p>作成日: ${escapeHtml(todayIsoDateInTokyo())}</p></header>
 	${sectionHtml}
 	<div class="notice"><strong>配布前チェック</strong><br>社名・連絡先・配布先・添付画像の表示状態は、配布前に最終確認してください。</div>
-	<footer>住民説明会HTML | 入力された案件情報・画像をもとに生成した正式資料です。</footer>
+	<footer>入力された案件情報・画像をもとに生成した正式資料です。</footer>
 </main>
 </body>
 </html>`;

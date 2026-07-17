@@ -153,7 +153,7 @@ async function main() {
 		最終確認: 0,
 	});
 	const residentHtml = buildResidentDocumentHtmlForTest(ready);
-	assert.match(residentHtml, /住民説明会HTML/);
+	assert.doesNotMatch(residentHtml, /住民説明会HTML/);
 	assert.match(residentHtml, /北摂発電所/);
 	assert.match(residentHtml, /発電所所在地画像/);
 	assert.match(residentHtml, /hazard\.png/);
@@ -198,7 +198,7 @@ async function main() {
 		住民説明会資料HTML: { type: "files", files: [] },
 		},
 	};
-	const notion = {
+	const notion: any = {
 		pages: {
 			retrieve: async () => readyPage,
 			update: async (args: Record<string, unknown>) => {
@@ -241,6 +241,44 @@ async function main() {
 	);
 	assert.equal(comments.length, 1);
 	assert.equal(uploads.filter((upload) => upload.step === "send").length, 1);
+
+	// 複数案件は先頭採用せず、生成・保存を止める。
+	const duplicateRelationPage = {
+		...readyPage,
+		id: "resident-duplicate-project",
+		properties: {
+			...readyPage.properties,
+			関連案件: { type: "relation", relation: [{ id: "project-1" }, { id: "project-2" }] },
+		},
+	};
+	notion.pages.retrieve = async ({ page_id }: { page_id: string }) =>
+		page_id === duplicateRelationPage.id ? duplicateRelationPage : readyPage;
+	const duplicateResult = await processResidentDocumentForTest(
+		{ pageId: duplicateRelationPage.id, dryRun: false },
+		notion,
+	);
+	assert.equal(duplicateResult.action, "needs-input");
+	assert.equal(duplicateResult.missingField, "関連案件");
+	assert.match(duplicateResult.message, /関連案件が複数/);
+	assert.equal(uploads.filter((upload: Record<string, unknown>) => upload.step === "send").length, 1);
+
+	// HTML filesプロパティが無い場合は、同じレコード本文へfallbackする。
+	delete readyPage.properties.住民説明会資料HTML;
+	const appendedBlocks: Array<Record<string, unknown>> = [];
+	notion.blocks = {
+		children: {
+			append: async ({ children }: { children: Array<Record<string, unknown>> }) => {
+				appendedBlocks.push(...children);
+			},
+		},
+	};
+	const fallbackResult = await processResidentDocumentForTest(
+		{ pageId: readyPage.id, dryRun: false },
+		notion,
+	);
+	assert.equal(fallbackResult.action, "prepared");
+	assert.match(fallbackResult.message, /同じレコード本文の末尾/);
+	assert.equal(appendedBlocks.some((block) => block.type === "file"), true);
 }
 
 main().catch((error) => {
