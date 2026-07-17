@@ -2557,12 +2557,12 @@ type LandResult = {
 	pageId: string;
 	action: "evaluated" | "needs-review" | "dry-run";
 	overallGrade: string;
-	score: number | null;
+	score: number;
 	bucket: string;
 	scaleDistanceGate: string;
 	scaleDistanceEvidenceState: string;
 	scaleDistanceSource: string;
-	aZoneDecision: "行く" | "行かない" | "未確認";
+	aZoneDecision: "行く" | "行かない";
 	aZoneReason: string;
 	aZoneScore: LandAZoneScore;
 	sourceSummary: string;
@@ -26459,17 +26459,15 @@ async function processLandEvaluation(
 	): LandResult => ({
 		pageId: input.pageId,
 		action,
-		overallGrade: publicHold ? "未評価" : evaluation.overallGrade,
-		score: publicHold ? null : evaluation.score,
+		overallGrade: evaluation.overallGrade,
+		score: evaluation.score,
 		bucket: evaluation.bucket,
 		scaleDistanceGate: evaluation.scaleDistanceGate,
 		scaleDistanceEvidenceState: evaluation.scaleDistanceEvidenceState,
 		scaleDistanceSource: evaluation.scaleDistanceSource,
-		aZoneDecision: publicHold ? "未確認" : evaluation.aZoneDecision,
-		aZoneReason: publicHold ? publicHoldReason : evaluation.aZoneReason,
-		aZoneScore: publicHold
-			? suspendLandAZoneScore(evaluation.aZoneScore, publicHoldReason)
-			: evaluation.aZoneScore,
+		aZoneDecision: evaluation.aZoneDecision,
+		aZoneReason: publicHold ? `${evaluation.aZoneReason}\n${publicHoldReason}` : evaluation.aZoneReason,
+		aZoneScore: evaluation.aZoneScore,
 		sourceSummary: evaluation.sourceSummary,
 		humanCollectionItems: evaluation.humanCollectionItems,
 		bZoneHandoff: evaluation.bZoneHandoff,
@@ -26483,7 +26481,9 @@ async function processLandEvaluation(
 		cZoneReady: publicHold ? false : evaluation.cZoneReady,
 		requiresInvestigation: publicHold,
 		investigationGaps: publicInvestigationGaps,
-		message: publicHold ? `${action}: 未評価 / 採点保留。${publicHoldReason}` : message,
+		message: publicHold
+			? `${action}: Aゾーン速報判断=${evaluation.aZoneDecision} / ${evaluation.overallGrade} / ${evaluation.score}点。${publicHoldReason}`
+			: message,
 	});
 
 	if (input.dryRun) {
@@ -29111,20 +29111,6 @@ function landRequiredInputGaps(land: LandInfo): string[] {
 	return gaps;
 }
 
-function suspendLandAZoneScore(score: LandAZoneScore, reason: string): LandAZoneScore {
-	return {
-		version: score.version,
-		total100: 0,
-		total60: 0,
-		categories: score.categories.map((category) => ({
-			...category,
-			points100: 0,
-			points60: 0,
-			note: `採点保留: ${reason}${category.note ? ` / ${category.note}` : ""}`,
-		})),
-	};
-}
-
 function landReviewHoldGaps(land: LandInfo, evaluation: LandEvaluation): string[] {
 	return uniqueStrings([
 		...(evaluation.investigationGaps ?? []),
@@ -29135,14 +29121,8 @@ function landReviewHoldGaps(land: LandInfo, evaluation: LandEvaluation): string[
 
 function landReviewHoldReason(gaps: string[]): string {
 	return gaps.length > 0
-		? `未確認理由: ${gaps.join("、")}。原本または必須入力が揃うまで採点・行く/行かない判定は保留。`
-		: "未確認理由: 原本または必須入力が揃うまで採点・行く/行かない判定は保留。";
-}
-
-function suspendLandDecisionText(value: string, reason: string): string {
-	return value
-		.replace(/Aゾーン判断: (行く|行かない)/g, "Aゾーン判断: 未確認")
-		.replace(/(?:行く|行かない)理由: [^\n]+/g, reason);
+		? `未確認理由: ${gaps.join("、")}。Aゾーン速報判断は維持し、正式確定・Cゾーン採点・A完了・ISSUEDはBゾーン回収後。`
+		: "未確認理由: 原本または必須入力の確認が残る。Aゾーン速報判断は維持し、正式確定・Cゾーン採点・A完了・ISSUEDはBゾーン回収後。";
 }
 
 type LandMapContext = {
@@ -30124,6 +30104,16 @@ function gridCapacityOfficialLinks(powerArea: string): LandGridCapacityOfficialL
 			url: "https://powergrid.chuden.co.jp/goannai/hatsuden_kouri/takuso_kyokyu/rule/map/",
 		});
 	}
+	if (/関西/.test(powerArea)) {
+		links.push({
+			label: "関西電力送配電 系統連系制約・空容量一覧",
+			url: "https://www.kansai-td.co.jp/consignment/disclosure/distribution-equipment/",
+		});
+		links.push({
+			label: "関西電力送配電 事前相談・高圧系統連系申込",
+			url: "https://www.kansai-td.co.jp/application/preliminary-consultation/index.html",
+		});
+	}
 	return links;
 }
 
@@ -30981,16 +30971,16 @@ function buildLandQuickEvidence(mapContext: LandMapContext, address = ""): strin
 	}
 	const gridRecord = mapContext.gridCapacity.records[0] ?? null;
 	if (gridRecord) {
-		parts.push(
-			[
-				"系統空き確認",
-				"公表値候補",
-				"資源エネルギー庁",
-				"OCCTO/電力広域的運営推進機関",
-				mapContext.gridCapacity.officialLinks.some((link) => /中部/.test(link.label))
-					? "中部電力パワーグリッド 系統空容量・予想潮流マッピング"
-					: "",
-				gridRecord.operator ? `送配電会社: ${gridRecord.operator}` : "",
+			parts.push(
+				[
+					"系統空き確認",
+					"公表値候補",
+					"資源エネルギー庁",
+					"OCCTO/電力広域的運営推進機関",
+					mapContext.gridCapacity.officialLinks.length > 0
+						? `公式確認先: ${gridCapacityLinkLabels(mapContext.gridCapacity.officialLinks)}`
+						: "",
+					gridRecord.operator ? `送配電会社: ${gridRecord.operator}` : "",
 				gridRecord.facilityName ? `設備: ${gridRecord.facilityName}` : "",
 				gridRecord.voltageKv !== null ? `${gridRecord.voltageKv}kV` : "",
 				gridRecord.availableCapacityMw !== null
@@ -31003,16 +30993,16 @@ function buildLandQuickEvidence(mapContext: LandMapContext, address = ""): strin
 		);
 	} else {
 		parts.push(
-			[
-				"系統空き確認",
-				"公表値候補未取得",
-				"資源エネルギー庁",
-				"OCCTO/電力広域的運営推進機関",
-				mapContext.gridCapacity.officialLinks.some((link) => /中部/.test(link.label))
-					? "中部電力パワーグリッド 系統空容量・予想潮流マッピング"
-					: "",
-				"接続可否確定ではない",
-				"接続検討で確認",
+				[
+					"系統空き確認",
+					"公表値候補未取得",
+					"資源エネルギー庁",
+					"OCCTO/電力広域的運営推進機関",
+					mapContext.gridCapacity.officialLinks.length > 0
+						? `公式確認先: ${gridCapacityLinkLabels(mapContext.gridCapacity.officialLinks)}`
+						: "",
+					"接続可否確定ではない",
+					"接続検討で確認",
 			].filter(Boolean).join(" / "),
 		);
 	}
@@ -31511,10 +31501,10 @@ async function buildLandEvaluation(land: LandInfo): Promise<LandEvaluation> {
 		};
 	}
 
-	const score = Math.min(45, Math.max(0, 28 + (land.address ? 8 : 0) + (area > 0 ? 8 : 0)));
+	const aZoneScore = scoreLandAZoneV0(land);
+	const score = Math.min(45, Math.max(0, aZoneScore.total100));
 	const overallGrade = "C";
 	const bucket = "要確認";
-	const aZoneScore = scoreLandAZoneV0(land);
 	const aZone = decideLandAZone({ land, score: aZoneScore, missing });
 	const actionBucket = chooseLandActionBucket(land, score, true);
 	const caseStatus = "未案件化";
@@ -31835,7 +31825,7 @@ function buildLandCZoneReadiness(input: {
 				"Cゾーン再評価: 不可",
 				`理由=${blockers.join(" / ")}`,
 				"条件=対象土地一意性、面積原本、地番・筆構成、登記/農地/接道/系統の根拠区分が揃ってから再評価",
-				"停止線=採点、行く/行かない、A完了、ISSUEDへ進めない",
+				"停止線=Cゾーン正式採点、正式な行く/行かない、A完了、ISSUEDへ進めない",
 			].join("\n"),
 		};
 	}
@@ -32186,6 +32176,12 @@ function buildLandOfficialConfirmationGuide(powerArea: string): string {
 				"- 中部電力パワーグリッド 系統空容量・予想潮流マッピング: https://powergrid.chuden.co.jp/goannai/hatsuden_kouri/takuso_kyokyu/rule/map/ （公表値候補。接続可否確定ではない）",
 			]
 			: []),
+		...(powerArea && /関西/.test(powerArea)
+			? [
+				"- 関西電力送配電 系統連系制約・空容量一覧: https://www.kansai-td.co.jp/consignment/disclosure/distribution-equipment/ （公表値候補。接続可否確定ではない）",
+				"- 関西電力送配電 事前相談・高圧系統連系申込: https://www.kansai-td.co.jp/application/preliminary-consultation/index.html （接続検討・申込入口。公表値と正式回答を分離）",
+			]
+			: []),
 		`- 送配電会社窓口: ${gridLabel}の接続検討、連系制約、空き容量、受電地点を確認`,
 		"- 道路台帳・建築指導課・土木事務所: 幅員、道路種別、大型車搬入、接道義務を確認",
 	].join("\n");
@@ -32297,20 +32293,19 @@ async function markLandNeedsReview(
 ): Promise<void> {
 	const holdGaps = landReviewHoldGaps(land, evaluation);
 	const holdReason = landReviewHoldReason(holdGaps);
-	const suspendedAZoneScore = suspendLandAZoneScore(evaluation.aZoneScore, holdReason);
-	const aZoneScoreText = formatLandAZoneScore(suspendedAZoneScore);
+	const aZoneScoreText = formatLandAZoneScore(evaluation.aZoneScore);
 	const patches: Record<string, SafePatch> = {
 		...buildLandEvidenceCollectionPatches(land, evaluation),
 		処理ステータス: { kind: "select", value: "要確認" },
 		AIアクションバケット: { kind: "select", value: "継続監視" },
-		// Aゾーンの人間回収待ちは点数・SABCで渡さない。旧値が残像になるため明示クリアする。
-		総合評価: { kind: "clear" },
-		AI総合スコア: { kind: "clear" },
-		Aゾーン判断: { kind: "select", value: "未確認" },
-		Aゾーン判断理由: { kind: "text", value: holdReason },
-		Aゾーン配点バージョン: { kind: "text", value: suspendedAZoneScore.version },
-		Aゾーン内部スコア100: { kind: "number", value: suspendedAZoneScore.total100 },
-		Aゾーン内部スコア60: { kind: "number", value: suspendedAZoneScore.total60 },
+		// Aゾーンは速報判断として必ず「行く/行かない」を返す。正式確定・ISSUEDはB/Cで止める。
+		総合評価: { kind: "select", value: evaluation.overallGrade },
+		AI総合スコア: { kind: "number", value: evaluation.score },
+		Aゾーン判断: { kind: "select", value: evaluation.aZoneDecision },
+		Aゾーン判断理由: { kind: "text", value: `${evaluation.aZoneReason}\n${holdReason}` },
+		Aゾーン配点バージョン: { kind: "text", value: evaluation.aZoneScore.version },
+		Aゾーン内部スコア100: { kind: "number", value: evaluation.aZoneScore.total100 },
+		Aゾーン内部スコア60: { kind: "number", value: evaluation.aZoneScore.total60 },
 		Aゾーン内部採点内訳: { kind: "text", value: aZoneScoreText },
 		Aゾーン取得元サマリー: { kind: "text", value: evaluation.sourceSummary },
 		Aゾーン人間回収項目: { kind: "text", value: evaluation.humanCollectionItems },
@@ -32323,17 +32318,11 @@ async function markLandNeedsReview(
 		需要評価: { kind: "select", value: evaluation.demandRating },
 		案件化メモ: {
 			kind: "text",
-			value: suspendLandDecisionText(
-				[evaluation.landEvaluation, evaluation.cZoneReadiness].filter(Boolean).join("\n\n"),
-				holdReason,
-			),
+			value: [evaluation.landEvaluation, holdReason, evaluation.cZoneReadiness].filter(Boolean).join("\n\n"),
 		},
 		次アクション: {
 			kind: "text",
-			value: suspendLandDecisionText(
-				[evaluation.nextAction, evaluation.bZoneHandoff, evaluation.cZoneReadiness].filter(Boolean).join("\n\n"),
-				holdReason,
-			),
+			value: [evaluation.nextAction, holdReason, evaluation.bZoneHandoff, evaluation.cZoneReadiness].filter(Boolean).join("\n\n"),
 		},
 		一次AI受付メモ: { kind: "text", value: `${holdReason}\n${aZoneScoreText}\n\n${evaluation.bZoneHandoff}\n\n${evaluation.cZoneReadiness}` },
 		AI更新日時: { kind: "date", value: new Date().toISOString() },

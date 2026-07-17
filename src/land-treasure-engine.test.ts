@@ -508,27 +508,27 @@ async function main() {
 	);
 	assert.equal(secondaryEvidenceResult.action, "needs-review");
 	assert.equal(secondaryEvidenceResult.bucket, "要確認");
-	assert.equal(secondaryEvidenceResult.overallGrade, "未評価");
-	assert.equal(secondaryEvidenceResult.score, null);
-	assert.equal(secondaryEvidenceResult.aZoneDecision, "未確認");
-	assert.equal(secondaryEvidenceResult.aZoneScore?.total100, 0);
+	assert.notEqual(secondaryEvidenceResult.overallGrade, "未評価");
+	assert.equal(typeof secondaryEvidenceResult.score, "number");
+	assert.match(secondaryEvidenceResult.aZoneDecision, /行く|行かない/);
+	assert.ok((secondaryEvidenceResult.aZoneScore?.total100 ?? 0) > 0);
 	assert.equal(secondaryEvidenceResult.cZoneReady, false);
 	assert.match(secondaryEvidenceResult.cZoneReadiness ?? "", /Cゾーン再評価: 不可/);
 	assert.match(secondaryEvidenceResult.cZoneReadiness ?? "", /入力根拠区分=二次資料/);
 	assert.match(secondaryEvidenceResult.bZoneHandoff ?? "", /担当=営業担当/);
-	assert.match(secondaryEvidenceResult.bZoneHandoff ?? "", /戻し先=土地DB/);
+	assert.match(secondaryEvidenceResult.bZoneHandoff ?? "", /Notion戻し先=土地DB/);
 	const secondaryEvidenceUpdate = updates.at(-1)?.properties as Record<string, unknown>;
 	const secondaryAZoneScore100 = (secondaryEvidenceUpdate.Aゾーン内部スコア100 as { number?: number } | undefined)?.number ?? 0;
-	assert.equal(secondaryAZoneScore100, 0);
+	assert.ok(secondaryAZoneScore100 > 0);
 	assert.ok(secondaryAZoneScore100 < finalAZoneScore100);
 	assert.match(
 		JSON.stringify(secondaryEvidenceUpdate ?? {}),
 		/二次資料|原本待ち/,
 	);
-	assert.deepEqual(secondaryEvidenceUpdate.総合評価, { select: null });
-	assert.deepEqual(secondaryEvidenceUpdate.AI総合スコア, { number: null });
-	assert.match(JSON.stringify(secondaryEvidenceUpdate.案件化メモ ?? {}), /Aゾーン判断: 未確認/);
-	assert.doesNotMatch(JSON.stringify(secondaryEvidenceUpdate.案件化メモ ?? {}), /Aゾーン判断: 行く/);
+	assert.notDeepEqual(secondaryEvidenceUpdate.総合評価, { select: null });
+	assert.notDeepEqual(secondaryEvidenceUpdate.AI総合スコア, { number: null });
+	assert.match(JSON.stringify(secondaryEvidenceUpdate.案件化メモ ?? {}), /Aゾーン判断: (行く|行かない)/);
+	assert.match(JSON.stringify(secondaryEvidenceUpdate.案件化メモ ?? {}), /未確認理由/);
 	assert.match(JSON.stringify(secondaryEvidenceUpdate.Webhook引き継ぎメモ ?? {}), /Cゾーン再評価: 不可/);
 
 	activePage = duplicateTargetLandPage();
@@ -537,17 +537,17 @@ async function main() {
 		notion as never,
 	);
 	assert.equal(duplicateTargetResult.action, "needs-review");
-	assert.equal(duplicateTargetResult.overallGrade, "未評価");
-	assert.equal(duplicateTargetResult.score, null);
-	assert.equal(duplicateTargetResult.aZoneDecision, "未確認");
+	assert.notEqual(duplicateTargetResult.overallGrade, "未評価");
+	assert.equal(typeof duplicateTargetResult.score, "number");
+	assert.match(duplicateTargetResult.aZoneDecision, /行く|行かない/);
 	assert.equal(duplicateTargetResult.cZoneReady, false);
 	assert.match(duplicateTargetResult.cZoneReadiness ?? "", /対象土地一意性/);
 	assert.ok(duplicateTargetResult.investigationGaps.includes("対象土地一意性"));
 	const duplicateTargetMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
 	assert.match(duplicateTargetMemo, /対象土地一意性/);
 	assert.match(duplicateTargetMemo, /本番候補\/旧データ\/テスト/);
-	assert.deepEqual((updates.at(-1)?.properties as Record<string, unknown>).総合評価, { select: null });
-	assert.deepEqual((updates.at(-1)?.properties as Record<string, unknown>).AI総合スコア, { number: null });
+	assert.notDeepEqual((updates.at(-1)?.properties as Record<string, unknown>).総合評価, { select: null });
+	assert.notDeepEqual((updates.at(-1)?.properties as Record<string, unknown>).AI総合スコア, { number: null });
 
 	activePage = testDraftLandPage();
 	const testDraftResult = await processLandEvaluationForTest(
@@ -555,9 +555,9 @@ async function main() {
 		notion as never,
 	);
 	assert.equal(testDraftResult.action, "needs-review");
-	assert.equal(testDraftResult.overallGrade, "未評価");
-	assert.equal(testDraftResult.score, null);
-	assert.equal(testDraftResult.aZoneDecision, "未確認");
+	assert.notEqual(testDraftResult.overallGrade, "未評価");
+	assert.equal(typeof testDraftResult.score, "number");
+	assert.match(testDraftResult.aZoneDecision, /行く|行かない/);
 	assert.equal(testDraftResult.cZoneReady, false);
 	assert.match(testDraftResult.cZoneReadiness ?? "", /テスト\/下書き/);
 
@@ -621,9 +621,9 @@ async function main() {
 		{ pageId: "land-blocked-1", dryRun: false },
 		notion as never,
 	);
-	assert.equal(blockedResult.overallGrade, "未評価");
-	assert.equal(blockedResult.score, null);
-	assert.equal(blockedResult.aZoneDecision, "未確認");
+	assert.notEqual(blockedResult.overallGrade, "未評価");
+	assert.equal(typeof blockedResult.score, "number");
+	assert.match(blockedResult.aZoneDecision, /行く|行かない/);
 	assert.notEqual(blockedResult.bucket, "即アタック");
 	const blockedMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
 	assert.match(blockedMemo, /変電所だけでは/);
@@ -985,11 +985,11 @@ async function main() {
 		{ pageId: "land-address-only-1", dryRun: false },
 		notion as never,
 	);
-	assert.equal(addressOnlyResult.overallGrade, "未評価");
+	assert.notEqual(addressOnlyResult.overallGrade, "未評価");
 	assert.notEqual(addressOnlyResult.bucket, "即アタック");
-	assert.equal(addressOnlyResult.score, null);
-	assert.equal(addressOnlyResult.aZoneDecision, "未確認");
-	const addressOnlyMemo = patchPropertiesText(updates.at(-1)?.properties);
+	assert.equal(typeof addressOnlyResult.score, "number");
+	assert.match(addressOnlyResult.aZoneDecision, /行く|行かない/);
+	const addressOnlyMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
 	assert.match(addressOnlyMemo, /Google Geocoding API/);
 	assert.match(addressOnlyMemo, /Google Roads/);
 	assert.match(addressOnlyMemo, /Google Maps/);
@@ -1117,8 +1117,8 @@ async function main() {
 	const addressOnlyFinalUpdate = updates.at(-1)?.properties as Record<string, unknown>;
 	assert.deepEqual(addressOnlyFinalUpdate.処理ステータス, { select: { name: "要確認" } });
 	assert.equal("案件化状態" in addressOnlyFinalUpdate, false);
-	assert.deepEqual(addressOnlyFinalUpdate.総合評価, { select: null });
-	assert.deepEqual(addressOnlyFinalUpdate.AI総合スコア, { number: null });
+	assert.notDeepEqual(addressOnlyFinalUpdate.総合評価, { select: null });
+	assert.notDeepEqual(addressOnlyFinalUpdate.AI総合スコア, { number: null });
 	assert.match(JSON.stringify(addressOnlyFinalUpdate.Aゾーン内部採点内訳 ?? {}), /配点バージョン=v0/);
 	const sourceSummary = JSON.stringify(addressOnlyFinalUpdate.Aゾーン取得元サマリー ?? {});
 	assert.match(sourceSummary, /Aゾーン取得元サマリー/);
@@ -1145,8 +1145,8 @@ async function main() {
 	assert.match(humanCollectionItems, /Notion戻し先=/);
 	assert.match(humanCollectionItems, /証拠区分=/);
 	assert.match(humanCollectionItems, /完了条件=/);
-	assert.equal(((addressOnlyFinalUpdate.Aゾーン内部スコア100 as { number?: number } | undefined)?.number ?? 0), 0);
-	assert.match(JSON.stringify(addressOnlyFinalUpdate.Aゾーン内部採点内訳 ?? {}), /採点保留/);
+	assert.ok(((addressOnlyFinalUpdate.Aゾーン内部スコア100 as { number?: number } | undefined)?.number ?? 0) > 0);
+	assert.doesNotMatch(JSON.stringify(addressOnlyFinalUpdate.Aゾーン内部採点内訳 ?? {}), /採点保留/);
 	assert.doesNotMatch(addressOnlyMemo, /この土地、?1億|判定が全部出た|即アタック|農転不可|危険|接道OK(?!確定にはしない)/);
 
 	const mojUrlsForPublicDataGap = process.env.MOJ_CHIZU_GEOJSON_URLS;
@@ -1219,9 +1219,9 @@ async function main() {
 		notion as never,
 	);
 	assert.equal(gsiCandidateResult.action, "needs-review");
-	assert.equal(gsiCandidateResult.overallGrade, "未評価");
-	assert.equal(gsiCandidateResult.score, null);
-	assert.equal(gsiCandidateResult.aZoneDecision, "未確認");
+	assert.notEqual(gsiCandidateResult.overallGrade, "未評価");
+	assert.equal(typeof gsiCandidateResult.score, "number");
+	assert.match(gsiCandidateResult.aZoneDecision, /行く|行かない/);
 	const gsiCandidateMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
 	assert.match(gsiCandidateMemo, /国土地理院住所検索/);
 	assert.match(gsiCandidateMemo, /正式住所・地番の確定結果ではない/);
@@ -1244,9 +1244,9 @@ async function main() {
 		notion as never,
 	);
 	assert.equal(gsiDistanceCandidateResult.action, "needs-review");
-	assert.equal(gsiDistanceCandidateResult.overallGrade, "未評価");
-	assert.equal(gsiDistanceCandidateResult.score, null);
-	assert.equal(gsiDistanceCandidateResult.aZoneDecision, "未確認");
+	assert.notEqual(gsiDistanceCandidateResult.overallGrade, "未評価");
+	assert.equal(typeof gsiDistanceCandidateResult.score, "number");
+	assert.match(gsiDistanceCandidateResult.aZoneDecision, /行く|行かない/);
 	const gsiCallCountAfterDistanceCandidate = fetchedUrls.filter((url) =>
 		url.startsWith("https://msearch.gsi.go.jp/address-search/AddressSearch?"),
 	).length;
@@ -1285,12 +1285,12 @@ async function main() {
 		notion as never,
 	);
 	assert.equal(missingOfficialResult.action, "needs-review");
-	assert.equal(missingOfficialResult.overallGrade, "未評価");
+	assert.notEqual(missingOfficialResult.overallGrade, "未評価");
 	assert.notEqual(missingOfficialResult.bucket, "即アタック");
-	assert.equal(missingOfficialResult.score, null);
-	assert.equal(missingOfficialResult.aZoneDecision, "未確認");
-	assert.equal(missingOfficialResult.aZoneScore?.total100, 0);
-	const missingOfficialMemo = patchPropertiesText(updates.at(-1)?.properties);
+	assert.equal(typeof missingOfficialResult.score, "number");
+	assert.match(missingOfficialResult.aZoneDecision, /行く|行かない/);
+	assert.ok((missingOfficialResult.aZoneScore?.total100 ?? 0) > 0);
+	const missingOfficialMemo = JSON.stringify(updates.at(-1)?.properties ?? {});
 	assert.match(missingOfficialMemo, /本評価不可|公的確認|調査指示/);
 	assert.match(missingOfficialMemo, /農地・農転/);
 	assert.match(missingOfficialMemo, /登記/);
@@ -1321,9 +1321,9 @@ async function main() {
 		notion as never,
 	);
 	assert.equal(missingRequiredInputResult.action, "needs-review");
-	assert.equal(missingRequiredInputResult.overallGrade, "未評価");
-	assert.equal(missingRequiredInputResult.score, null);
-	assert.equal(missingRequiredInputResult.aZoneDecision, "未確認");
+	assert.notEqual(missingRequiredInputResult.overallGrade, "未評価");
+	assert.equal(typeof missingRequiredInputResult.score, "number");
+	assert.equal(missingRequiredInputResult.aZoneDecision, "行かない");
 	assert.equal(missingRequiredInputResult.cZoneReady, false);
 	assert.match(missingRequiredInputResult.bZoneHandoff ?? "", /所在地/);
 	assert.match(missingRequiredInputResult.bZoneHandoff ?? "", /面積/);

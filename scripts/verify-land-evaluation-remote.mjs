@@ -102,20 +102,17 @@ for (const testCase of cases) {
 		failures.push(`${testCase.name}: expected aZoneScore version v0`);
 	}
 	if (result.requiresInvestigation === true) {
-		if (result.overallGrade !== "未評価") {
-			failures.push(`${testCase.name}: requiresInvestigation must return overallGrade=未評価, got ${result.overallGrade}`);
+		if (result.overallGrade === "未評価") {
+			failures.push(`${testCase.name}: requiresInvestigation must keep an A-zone速報 grade, got 未評価`);
 		}
-		if (result.score !== null) {
-			failures.push(`${testCase.name}: requiresInvestigation must return score=null, got ${result.score}`);
+		if (typeof result.score !== "number") {
+			failures.push(`${testCase.name}: requiresInvestigation must keep an A-zone速報 score number, got ${result.score}`);
 		}
-		if (result.aZoneDecision !== "未確認") {
-			failures.push(`${testCase.name}: requiresInvestigation must return aZoneDecision=未確認, got ${result.aZoneDecision}`);
+		if (!["行く", "行かない"].includes(result.aZoneDecision)) {
+			failures.push(`${testCase.name}: requiresInvestigation must return aZoneDecision 行く/行かない, got ${result.aZoneDecision}`);
 		}
-		if ((result.aZoneScore?.total100 ?? 0) !== 0 || (result.aZoneScore?.total60 ?? 0) !== 0) {
-			failures.push(`${testCase.name}: requiresInvestigation must suspend aZoneScore totals, got ${result.aZoneScore?.total100}/${result.aZoneScore?.total60}`);
-		}
-		if (!/採点保留/.test(result.message || "")) {
-			failures.push(`${testCase.name}: requiresInvestigation message must state 採点保留`);
+		if (!/Aゾーン速報判断=/.test(result.message || "")) {
+			failures.push(`${testCase.name}: requiresInvestigation message must state Aゾーン速報判断`);
 		}
 		if (result.cZoneReady !== false) {
 			failures.push(`${testCase.name}: requiresInvestigation must return cZoneReady=false`);
